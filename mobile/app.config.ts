@@ -6,14 +6,15 @@ const config: ExpoConfig = {
   name: "fitlogr",
   slug: "fitlogr",
   owner: "davidcgweb",
+  scheme: "fitlogr",
   version: "0.1.0",
   orientation: "portrait",
-  icon: "./assets/icon.png",
-  scheme: "fitlogr",
-  userInterfaceStyle: "automatic",
+  icon: "./assets/logo.png",
+  userInterfaceStyle: "dark",
+  backgroundColor: "#000000",
   ios: {
+    supportsTablet: true,
     bundleIdentifier: "com.fitlogr.app",
-    supportsTablet: false,
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
     },
@@ -21,22 +22,23 @@ const config: ExpoConfig = {
   android: {
     package: "com.fitlogr.app",
     adaptiveIcon: {
-      foregroundImage: "./assets/adaptive-icon.png",
-      backgroundColor: "#0F172A",
+      foregroundImage: "./assets/logo.png",
+      backgroundColor: "#000000",
     },
     predictiveBackGestureEnabled: false,
   },
-  web: {
-    favicon: "./assets/favicon.png",
-  },
   plugins: [
     "expo-router",
+    "expo-secure-store",
+    "expo-sqlite",
+    "expo-status-bar",
     [
       "expo-splash-screen",
       {
-        backgroundColor: "#0F172A",
-        image: "./assets/splash-icon.png",
-        imageWidth: 160,
+        backgroundColor: "#000000",
+        image: "./assets/logo.png",
+        resizeMode: "contain",
+        imageWidth: 200,
       },
     ],
   ],

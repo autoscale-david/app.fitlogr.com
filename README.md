@@ -394,6 +394,38 @@ Use a monorepo with shared types, validation schemas, and utilities. Adapt the s
 - Complete required OAuth verification and platform permission reviews before public launch.
 - Keep this README updated as the project evolves.
 
+## Local Development
+
+Install dependencies from the repository root with Node.js 22 or newer:
+
+```bash
+npm ci
+```
+
+### Mobile app (Expo Go)
+
+```bash
+npm run dev:mobile
+```
+
+Install the current Expo Go app from the App Store or Google Play, then scan the QR code. Log, Review, and Settings run on the phone with a local SQLite database and sample meals, so you can try the evening review without a Mac and without signing in. Fast Refresh works from Windows.
+
+If the phone is not on the same network as the computer, start with a tunnel:
+
+```bash
+npm run dev:mobile -- --tunnel
+```
+
+Apple Health and Health Connect need an EAS development build. Expo Go uses the on-screen sample activity instead.
+
+### API and website
+
+```bash
+npm run dev:worker
+```
+
+Wrangler serves the site and `http://127.0.0.1:8787/api/health`. The D1 schema is in `worker/migrations` and is applied during the production deploy once `fitlogr-db` exists. Production deploys from `main` through `.github/workflows/deploy-worker.yml` using the `CLOUDFLARE_API_TOKEN` GitHub secret.
+
 ## Mission
 
 Make fitness tracking so effortless that anyone can do it, regardless of how busy their life is.

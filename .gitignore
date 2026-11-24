@@ -1,7 +1,8 @@
 # Dependencies
 node_modules/
 
-# Environment variables (never commit secrets)
+# Environment variables & local secrets (never commit real values)
+.dev.vars
 .env
 .env.*
 !.env.example
@@ -9,15 +10,14 @@ node_modules/
 # Expo & EAS
 .expo/
 mobile/.expo/
+.expo-export/
 dist/
 mobile/dist/
 web-build/
 mobile/web-build/
-expo-env.d.ts
-mobile/expo-env.d.ts
 .metro-health-check*
 
-# Generated native projects & credentials
+# Generated native projects & signing credentials
 mobile/ios/
 mobile/android/
 *.orig.*
@@ -31,10 +31,12 @@ mobile/android/
 # Cloudflare Wrangler
 .wrangler/
 
-# TypeScript
+# Testing & TypeScript
+coverage/
 *.tsbuildinfo
 
 # Logs
+*.log
 npm-debug.*
 yarn-debug.*
 yarn-error.*
