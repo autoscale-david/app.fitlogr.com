@@ -20,6 +20,7 @@ export const AuthStartRequestSchema = z.object({
   client_challenge: z.string().regex(/^[A-Za-z0-9_-]{43,128}$/),
   device: DeviceInfoSchema.optional(),
   timezone: z.string().min(1).max(80).optional(),
+  include_picker_scope: z.boolean().optional(),
 });
 export type AuthStartRequest = z.infer<typeof AuthStartRequestSchema>;
 

@@ -22,6 +22,10 @@ export class UnsupportedHealthProvider implements HealthProvider {
     return { records: [], nextCheckpoints: checkpoints };
   }
 
+  async syncHistory(): Promise<HealthSyncBatch> {
+    return { records: [], nextCheckpoints: {} };
+  }
+
   statusMessage(): string {
     return this.message;
   }

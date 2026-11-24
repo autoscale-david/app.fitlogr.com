@@ -228,6 +228,53 @@ export class HealthKitProvider implements HealthProvider {
     return { records, nextCheckpoints: next };
   }
 
+  async syncHistory(days: number): Promise<HealthSyncBatch> {
+    const permission = await this.getPermissionState();
+    if (permission !== "authorized") return { records: [], nextCheckpoints: {} };
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    start.setDate(start.getDate() - (Math.max(1, days) - 1));
+    const end = tomorrow(now);
+    const records: HealthSyncRecord[] = [];
+    const weight = await this.health.queryQuantitySamplesWithAnchor("HKQuantityTypeIdentifierBodyMass", {
+      limit: 0,
+      unit: "kg",
+      filter: { date: { startDate: start, endDate: end } },
+    });
+    records.push(...(weight.samples ?? []).map((sample) => this.quantityRecord("weight", sample, "kg")));
+    records.push(
+      ...this.dailyBuckets(
+        await this.rangeStatistics("HKQuantityTypeIdentifierActiveEnergyBurned", ["cumulativeSum"], "kcal", start, end),
+        "active_calories",
+        "agg:active_kcal:",
+        "sum",
+      ),
+    );
+    records.push(
+      ...this.dailyBuckets(
+        await this.rangeStatistics("HKQuantityTypeIdentifierBasalEnergyBurned", ["cumulativeSum"], "kcal", start, end),
+        "resting_calories",
+        "agg:resting_kcal:",
+        "sum",
+      ),
+    );
+    records.push(
+      ...this.dailyBuckets(
+        await this.rangeStatistics("HKQuantityTypeIdentifierStepCount", ["cumulativeSum"], "count", start, end),
+        "steps",
+        "agg:steps:",
+        "sum",
+      ),
+    );
+    const workouts = await this.health.queryWorkoutSamplesWithAnchor({
+      limit: 0,
+      filter: { date: { startDate: start } },
+    });
+    const samples = (workouts.workouts ?? []).map((workout) => (typeof workout.toJSON === "function" ? workout.toJSON() : workout));
+    records.push(...samples.filter((workout) => asDate(workout.startDate) >= start).map((workout) => this.workoutRecord(workout)));
+    return { records, nextCheckpoints: {} };
+  }
+
   statusMessage(permission: HealthPermissionState, available: boolean): string {
     if (!available || permission === "unavailable") return "Apple Health is not available on this device.";
     if (permission === "authorized") return "Apple Health is connected.";
@@ -246,6 +293,19 @@ export class HealthKitProvider implements HealthProvider {
       deleted: (page.deletedSamples ?? []).map((sample) => sample.uuid),
       anchor: page.newAnchor ?? anchor,
     };
+  }
+
+  private async rangeStatistics(
+    identifier: string,
+    statistics: readonly string[],
+    unit: string,
+    start: Date,
+    end: Date,
+  ): Promise<readonly StatisticsBucket[]> {
+    return this.health.queryStatisticsCollectionForQuantity(identifier, statistics, start, { day: 1 }, {
+      unit,
+      filter: { date: { startDate: start, endDate: end } },
+    });
   }
 
   private async statistics(

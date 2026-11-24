@@ -1,4 +1,16 @@
 export {
+  KCAL_PER_KG,
+  MIN_COMPLETE_INTAKE_KCAL,
+  MIN_PERIOD_DAYS,
+  MaintenanceEstimateSchema,
+  MaintenancePeriodSchema,
+  MaintenanceQuerySchema,
+  chunkByLocalDate,
+  clampEstimateDays,
+  estimateMaintenance,
+} from "./maintenance";
+export type { EstimateDay, EstimateWeight, MaintenanceEstimate, MaintenancePeriod } from "./maintenance";
+export {
   atwaterCalories,
   calorieBudget,
   caloriesRemaining,
@@ -60,6 +72,9 @@ export {
   PHOTO_LIMITS,
   PhotoExcludeRequestSchema,
   PhotoExcludeResponseSchema,
+  PickerImportSummarySchema,
+  PickerSessionSchema,
+  PickerStatusSchema,
   PhotoReferenceSchema,
   PhotoUrlResponseSchema,
   atwaterWarning,
@@ -84,6 +99,9 @@ export type {
   MealVisionItem,
   PhotoExcludeRequest,
   PhotoExcludeResponse,
+  PickerImportSummary,
+  PickerSession,
+  PickerStatus,
   PhotoReference,
   PhotoSource,
   PhotoStatus,

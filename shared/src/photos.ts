@@ -146,6 +146,31 @@ export const PhotoExcludeRequestSchema = z
   .default({ reason: "not_meal" });
 export type PhotoExcludeRequest = z.infer<typeof PhotoExcludeRequestSchema>;
 
+export const PickerSessionSchema = z.object({
+  session_id: z.string().min(1),
+  picker_uri: z.string().url(),
+  polling_config: z.object({
+    poll_interval_ms: z.number().int().positive(),
+    timeout_ms: z.number().int().positive(),
+  }),
+});
+export type PickerSession = z.infer<typeof PickerSessionSchema>;
+
+export const PickerStatusSchema = z.object({
+  session_id: z.string().min(1),
+  media_items_set: z.boolean(),
+});
+export type PickerStatus = z.infer<typeof PickerStatusSchema>;
+
+export const PickerImportSummarySchema = z.object({
+  total_picked: z.number().int(),
+  meals_imported: z.number().int(),
+  non_meals_skipped: z.number().int(),
+  duplicates_skipped: z.number().int(),
+  errors: z.number().int(),
+});
+export type PickerImportSummary = z.infer<typeof PickerImportSummarySchema>;
+
 export const PhotoExcludeResponseSchema = z.object({
   photo_id: z.string(),
   status: z.literal("excluded"),

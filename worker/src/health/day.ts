@@ -37,7 +37,7 @@ export async function buildDay(db: D1Database, userId: string, date: string): Pr
       `SELECT platform, value_num, end_time, local_date
        FROM health_records
        WHERE user_id = ? AND record_type = 'weight' AND deleted_at IS NULL AND local_date <= ?
-       ORDER BY local_date DESC, end_time DESC
+       ORDER BY local_date DESC, CASE WHEN platform = 'manual' OR is_user_edited = 1 THEN 0 ELSE 1 END, end_time DESC
        LIMIT 1`,
     )
     .bind(userId, date)

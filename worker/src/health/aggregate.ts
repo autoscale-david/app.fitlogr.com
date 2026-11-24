@@ -15,6 +15,7 @@ interface HealthRow {
   value_num: number;
   unit: string;
   metadata_json: string | null;
+  is_user_edited: number;
 }
 
 export async function recomputeHealthDates(db: D1Database, userId: string, dates: Iterable<string>, now: string): Promise<void> {
@@ -31,7 +32,7 @@ async function recomputeOneDate(db: D1Database, userId: string, localDate: strin
   const rows = await db
     .prepare(
       `SELECT id, platform, record_type, source_record_id, source_app_id, source_device_name, start_time, end_time,
-              local_date, timezone, value_num, unit, metadata_json
+              local_date, timezone, value_num, unit, metadata_json, is_user_edited
        FROM health_records
        WHERE user_id = ? AND local_date = ? AND deleted_at IS NULL`,
     )
@@ -52,7 +53,9 @@ async function recomputeOneDate(db: D1Database, userId: string, localDate: strin
   const steps = Math.round(sum(records.filter((row) => row.record_type === "steps")));
   const heart = latest(records.filter((row) => row.record_type === "heart_rate_summary"));
   const restingHeart = latest(records.filter((row) => row.record_type === "resting_heart_rate"));
-  const weight = latest(records.filter((row) => row.record_type === "weight"));
+  const weights = records.filter((row) => row.record_type === "weight");
+  const manual = latest(weights.filter((row) => row.platform === "manual" || row.is_user_edited === 1));
+  const weight = manual ?? latest(weights.filter((row) => row.platform !== "manual" && row.is_user_edited !== 1));
 
   await db
     .prepare(

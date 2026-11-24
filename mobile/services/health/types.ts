@@ -13,6 +13,7 @@ export interface HealthProvider {
   requestPermissions(): Promise<HealthPermissionState>;
   getPermissionState(): Promise<HealthPermissionState>;
   syncIncremental(checkpoints: Record<string, string | null>): Promise<HealthSyncBatch>;
+  syncHistory(days: number): Promise<HealthSyncBatch>;
   statusMessage(permission: HealthPermissionState, available: boolean): string;
 }
 

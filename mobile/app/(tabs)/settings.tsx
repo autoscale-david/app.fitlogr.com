@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { GoogleReconnectBanner, SyncStatusBanner } from "../../components/AccountBanners";
+import { ImportHistoryCard } from "../../components/ImportHistoryCard";
+import { MaintenanceEstimateCard } from "../../components/MaintenanceEstimateCard";
 import { HealthSyncCard } from "../../components/HealthSyncCard";
 import type { Goals } from "../../services/db";
 import { AuthCancelled, useStore } from "../../services/store";
@@ -105,6 +107,8 @@ export default function SettingsScreen() {
         )}
       </View>
 
+      <ImportHistoryCard signedIn={store.mode === "account"} />
+
       <HealthSyncCard connection={store.health} syncing={store.syncing} onSync={() => void store.syncHealth()} />
 
       <View style={styles.card}>
@@ -118,6 +122,7 @@ export default function SettingsScreen() {
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Daily targets</Text>
         <NumberField label="Base calories" value={draft.baseKcal} onChange={(baseKcal) => save({ ...draft, baseKcal })} />
+        <MaintenanceEstimateCard />
         <NumberField label="Protein (g)" value={draft.proteinTarget} onChange={(proteinTarget) => save({ ...draft, proteinTarget })} />
         <NumberField label="Carbs (g)" value={draft.carbsTarget} onChange={(carbsTarget) => save({ ...draft, carbsTarget })} />
         <NumberField label="Fat (g)" value={draft.fatTarget} onChange={(fatTarget) => save({ ...draft, fatTarget })} />

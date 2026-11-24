@@ -20,6 +20,10 @@ export class HealthConnectProvider implements HealthProvider {
     return { records: [], nextCheckpoints: checkpoints };
   }
 
+  async syncHistory(): Promise<HealthSyncBatch> {
+    return { records: [], nextCheckpoints: {} };
+  }
+
   statusMessage(): string {
     return "Android Health Connect support is coming in a later build.";
   }

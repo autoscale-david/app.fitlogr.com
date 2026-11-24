@@ -73,6 +73,9 @@ export default function LogScreen() {
           </View>
         </View>
       </View>
+      <Pressable onPress={() => router.push("/(tabs)/settings")} hitSlop={8}>
+        <Text style={styles.importLink}>Import history</Text>
+      </Pressable>
 
       <View style={styles.weekRow}>
         <Pressable onPress={() => setSelected(addDays(selected, -7))} hitSlop={8}>
@@ -155,6 +158,7 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   todayButton: { flexDirection: "row", alignItems: "center", gap: 4 },
   today: { color: colors.text, fontSize: 34, fontWeight: "800", letterSpacing: -0.6 },
+  importLink: { color: colors.green, fontWeight: "700", marginTop: 6 },
   headerRight: { flexDirection: "row", alignItems: "center", gap: 10 },
   weightPill: {
     flexDirection: "row",
