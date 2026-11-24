@@ -1,0 +1,22 @@
+{
+  "name": "fitlogr",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Free AI fitness tracking. Take photos. Wear your watch. Know your progress.",
+  "workspaces": [
+    "shared",
+    "worker",
+    "mobile"
+  ],
+  "scripts": {
+    "typecheck": "npm run typecheck -w @fitlogr/shared && npm run typecheck -w @fitlogr/worker && npm run typecheck -w @fitlogr/mobile",
+    "test": "npm run test -w @fitlogr/shared && npm run test -w @fitlogr/worker",
+    "dev:worker": "npm run dev -w @fitlogr/worker",
+    "dev:mobile": "npm run start -w @fitlogr/mobile",
+    "migrate:local": "npm run migrate:local -w @fitlogr/worker",
+    "deploy:worker": "npm run deploy -w @fitlogr/worker"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

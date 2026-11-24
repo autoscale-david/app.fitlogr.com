@@ -1,0 +1,18 @@
+export interface Env {
+  DB?: D1Database;
+  ASSETS?: Fetcher;
+  GOOGLE_OAUTH_CLIENT_ID?: string;
+  GOOGLE_OAUTH_CLIENT_SECRET?: string;
+  OPENROUTER_API_KEY?: string;
+  TOKEN_ENCRYPTION_KEY?: string;
+  SESSION_SECRET?: string;
+  GOOGLE_CLOUD_PROJECT_ID?: string;
+  GOOGLE_OAUTH_REDIRECT_URI?: string;
+  GOOGLE_PHOTOS_ALBUM_NAME?: string;
+  OPENROUTER_BASE_URL?: string;
+  OPENROUTER_VISION_MODEL?: string;
+  OPENROUTER_TEXT_MODEL?: string;
+  APP_URL?: string;
+  API_BASE_URL?: string;
+  ENVIRONMENT?: string;
+}

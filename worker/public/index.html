@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>fitlogr — Take photos. Wear your watch. Know your progress.</title>
+    <meta
+      name="description"
+      content="Free AI fitness tracking. Photograph meals, sync your watch, and review the day in seconds."
+    />
+    <link rel="icon" href="/logo.png" />
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #070708;
+        --text: #f3f4f5;
+        --muted: #a0a4a8;
+        --green: #1fbe63;
+        --card: #141516;
+        --line: #26282b;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Segoe UI", Helvetica, Arial, sans-serif;
+        background: radial-gradient(1200px 600px at 50% -10%, #132018 0%, var(--bg) 55%);
+        color: var(--text);
+      }
+      main { max-width: 880px; margin: 0 auto; padding: 72px 24px 80px; }
+      img.logo { width: min(520px, 100%); height: auto; display: block; margin: 0 auto 28px; }
+      h1 { font-size: clamp(32px, 5vw, 52px); line-height: 1.1; letter-spacing: -0.03em; text-align: center; margin: 0 0 12px; }
+      .lead { text-align: center; color: var(--muted); font-size: 18px; margin: 0 auto 36px; max-width: 560px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+      article { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 18px 18px 16px; }
+      h2 { margin: 0 0 8px; font-size: 16px; }
+      p { margin: 0; color: var(--muted); line-height: 1.45; }
+      footer { margin-top: 36px; text-align: center; color: var(--muted); }
+      a { color: var(--green); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <img class="logo" src="/logo.png" alt="fitlogr" />
+      <h1>Take photos. Wear your watch. Know your progress.</h1>
+      <p class="lead">Free AI fitness tracking for busy people. No subscriptions, no manual calorie logging.</p>
+      <section class="grid">
+        <article>
+          <h2>Photograph the meal</h2>
+          <p>Use your normal camera. fitlogr finds the photo and estimates calories and macros.</p>
+        </article>
+        <article>
+          <h2>Wear your watch</h2>
+          <p>Weight, workouts, steps, and calorie burn sync from Apple Health or Health Connect.</p>
+        </article>
+        <article>
+          <h2>Review tonight</h2>
+          <p>Open the app once. See what you ate, what you burned, and whether you are on track.</p>
+        </article>
+      </section>
+      <footer>
+        <a href="/privacy/">Privacy</a> · <a href="/terms/">Terms</a> · <a href="/support/">Support</a>
+      </footer>
+    </main>
+  </body>
+</html>
