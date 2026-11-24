@@ -1,5 +1,5 @@
 import type { SQLiteDatabase } from "expo-sqlite";
-import type { UnitSystem } from "@fitlogr/shared";
+import { dailyCalorieExpenditure, type UnitSystem } from "@fitlogr/shared";
 import { LB_PER_KG } from "../theme";
 import { addDays, atLocalTime, localDateISO } from "./dates";
 
@@ -57,6 +57,9 @@ export interface DayLog {
   carbsG: number;
   fatG: number;
   activeBurnedKcal: number;
+  restingBurnedKcal: number;
+  steps: number | null;
+  heartRateBpm: number | null;
 }
 
 export const DEFAULT_GOALS: Goals = {
@@ -113,6 +116,21 @@ export async function migrate(db: SQLiteDatabase): Promise<void> {
       fat_g REAL NOT NULL,
       sort_order INTEGER NOT NULL DEFAULT 0
     );
+    CREATE TABLE IF NOT EXISTS daily_activity (
+      local_date TEXT PRIMARY KEY NOT NULL,
+      active_kcal REAL,
+      resting_kcal REAL,
+      steps INTEGER,
+      avg_hr REAL,
+      min_hr REAL,
+      max_hr REAL,
+      resting_hr REAL
+    );
+    CREATE TABLE IF NOT EXISTS health_checkpoints (
+      source TEXT PRIMARY KEY NOT NULL,
+      cursor_value TEXT,
+      updated_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS sync_outbox (
       id TEXT PRIMARY KEY NOT NULL,
       entity_type TEXT NOT NULL,
@@ -134,6 +152,7 @@ export async function migrate(db: SQLiteDatabase): Promise<void> {
     "ALTER TABLE meals ADD COLUMN photo_id TEXT",
     "ALTER TABLE meal_items ADD COLUMN estimated_grams REAL",
     "ALTER TABLE meal_items ADD COLUMN is_user_edited INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE weights ADD COLUMN source_record_id TEXT",
   ]) {
     await addColumn(db, statement);
   }
@@ -206,10 +225,19 @@ export async function loadDay(db: SQLiteDatabase, localDate: string): Promise<Da
     "SELECT weight_kg FROM weights WHERE local_date <= ? ORDER BY local_date DESC LIMIT 1",
     localDate,
   );
-
-  // Workout calories stand in for the day's active burn until HealthKit /
-  // Health Connect daily totals arrive. They are not added a second time.
-  const activeBurnedKcal = Math.round(workouts.reduce((sum, workout) => sum + workout.caloriesKcal, 0));
+  const activity = await db.getFirstAsync<{
+    active_kcal: number | null;
+    resting_kcal: number | null;
+    steps: number | null;
+    avg_hr: number | null;
+  }>("SELECT active_kcal, resting_kcal, steps, avg_hr FROM daily_activity WHERE local_date = ?", localDate);
+  const workoutKcal = workouts.reduce((sum, workout) => sum + workout.caloriesKcal, 0);
+  // A daily active-energy total already includes workout calories. Workouts fill in only when that total is absent.
+  const energy = dailyCalorieExpenditure({
+    activeCaloriesKcal: activity ? activity.active_kcal : null,
+    restingCaloriesKcal: activity?.resting_kcal ?? null,
+    workoutCaloriesKcal: workoutKcal,
+  });
   return {
     meals,
     workouts,
@@ -218,7 +246,10 @@ export async function loadDay(db: SQLiteDatabase, localDate: string): Promise<Da
     proteinG: Math.round(meals.reduce((sum, meal) => sum + meal.proteinG, 0)),
     carbsG: Math.round(meals.reduce((sum, meal) => sum + meal.carbsG, 0)),
     fatG: Math.round(meals.reduce((sum, meal) => sum + meal.fatG, 0)),
-    activeBurnedKcal,
+    activeBurnedKcal: energy.activeCaloriesKcal,
+    restingBurnedKcal: energy.restingCaloriesKcal,
+    steps: activity?.steps ?? null,
+    heartRateBpm: activity?.avg_hr ?? null,
   };
 }
 
@@ -226,13 +257,14 @@ export async function loggedDates(db: SQLiteDatabase): Promise<string[]> {
   const rows = await db.getAllAsync<{ local_date: string }>(
     `SELECT local_date FROM meals
      UNION SELECT local_date FROM workouts
+     UNION SELECT local_date FROM daily_activity
      ORDER BY local_date`,
   );
   return rows.map((row) => row.local_date);
 }
 
 export async function restoreSample(db: SQLiteDatabase): Promise<void> {
-  await db.execAsync("DELETE FROM meals; DELETE FROM workouts; DELETE FROM weights;");
+  await db.execAsync("DELETE FROM meals; DELETE FROM workouts; DELETE FROM weights; DELETE FROM daily_activity;");
   await seedSample(db);
 }
 
@@ -353,14 +385,20 @@ export async function writeAccount(db: SQLiteDatabase, email: string, displayNam
 }
 
 export async function enterAccountMode(db: SQLiteDatabase): Promise<void> {
-  await db.execAsync("DELETE FROM meals; DELETE FROM meal_items; DELETE FROM workouts; DELETE FROM weights; DELETE FROM sync_outbox; DELETE FROM local_media_assets;");
+  await db.execAsync(
+    "DELETE FROM meals; DELETE FROM meal_items; DELETE FROM workouts; DELETE FROM weights; DELETE FROM daily_activity; DELETE FROM health_checkpoints; DELETE FROM sync_outbox; DELETE FROM local_media_assets;",
+  );
   await writeSetting(db, "data_mode", "account");
   await writeSetting(db, "sync_cursor", "");
+  await writeSetting(db, "health_synced_at", "");
   await writeSetting(db, "seeded", "1");
 }
 
 export async function enterDemoMode(db: SQLiteDatabase): Promise<void> {
-  await db.execAsync("DELETE FROM meals; DELETE FROM meal_items; DELETE FROM workouts; DELETE FROM weights; DELETE FROM sync_outbox; DELETE FROM local_media_assets;");
+  await db.execAsync(
+    "DELETE FROM meals; DELETE FROM meal_items; DELETE FROM workouts; DELETE FROM weights; DELETE FROM daily_activity; DELETE FROM health_checkpoints; DELETE FROM sync_outbox; DELETE FROM local_media_assets;",
+  );
+  await writeSetting(db, "health_synced_at", "");
   await writeSetting(db, "account_email", "");
   await writeSetting(db, "account_display_name", "");
   await writeSetting(db, "sync_cursor", "");
@@ -521,7 +559,7 @@ export async function removeMeal(db: SQLiteDatabase, id: string): Promise<void> 
 
 export async function writeWeightKg(db: SQLiteDatabase, localDate: string, weightKg: number): Promise<void> {
   await db.runAsync(
-    "INSERT INTO weights (local_date, weight_kg) VALUES (?, ?) ON CONFLICT(local_date) DO UPDATE SET weight_kg = excluded.weight_kg",
+    "INSERT INTO weights (local_date, weight_kg, source_record_id) VALUES (?, ?, NULL) ON CONFLICT(local_date) DO UPDATE SET weight_kg = excluded.weight_kg, source_record_id = NULL",
     localDate,
     weightKg,
   );

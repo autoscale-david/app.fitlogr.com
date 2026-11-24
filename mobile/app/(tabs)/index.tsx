@@ -109,6 +109,13 @@ export default function LogScreen() {
               {day.eatenKcal.toLocaleString()} eaten · {goals.baseKcal.toLocaleString()} base +{" "}
               {day.activeBurnedKcal.toLocaleString()} burned
             </Text>
+            {day.steps != null || day.heartRateBpm != null ? (
+              <Text style={styles.calorieSub}>
+                {day.steps != null ? `${day.steps.toLocaleString()} steps` : ""}
+                {day.steps != null && day.heartRateBpm != null ? " · " : ""}
+                {day.heartRateBpm != null ? `${Math.round(day.heartRateBpm)} bpm` : ""}
+              </Text>
+            ) : null}
           </View>
 
           <MacroBars

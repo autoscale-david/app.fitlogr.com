@@ -3,6 +3,7 @@ import { AppState } from "react-native";
 import { openDatabaseAsync, type SQLiteDatabase } from "expo-sqlite";
 import { AI_PHOTO_CONSENT_VERSION } from "@fitlogr/shared";
 import { api, SessionExpired } from "./api";
+import { getHealthProvider, readHealthConnection, syncAppleHealth, type HealthConnection } from "./health";
 import { AuthCancelled, signInWithGoogle } from "./auth";
 import {
   enterAccountMode,
@@ -47,6 +48,7 @@ interface Store {
   pending: number;
   syncError: string | null;
   photoConsent: boolean;
+  health: HealthConnection | null;
   loadDay: (date: string) => Promise<DayLog>;
   loggedDates: () => Promise<string[]>;
   saveGoals: (goals: Goals) => Promise<void>;
@@ -54,6 +56,7 @@ interface Store {
   signIn: () => Promise<void>;
   signOut: () => Promise<void>;
   sync: (force?: boolean) => Promise<void>;
+  syncHealth: () => Promise<void>;
   readMeal: (id: string) => Promise<(MealRecord & { pendingCreate: boolean }) | null>;
   saveMeal: (meal: MealRecord, pendingCreate: boolean) => Promise<void>;
   deleteMeal: (id: string, pendingCreate: boolean, photoId?: string | null) => Promise<void>;
@@ -76,6 +79,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [pending, setPending] = useState(0);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [photoConsent, setPhotoConsent] = useState(false);
+  const [health, setHealth] = useState<HealthConnection | null>(null);
 
   async function refreshPending(database: SQLiteDatabase) {
     setPending(await pendingChanges(database));
@@ -84,6 +88,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   async function runSync(database: SQLiteDatabase, force = false) {
     const currentMode = (await readSetting(database, "data_mode")) === "account" ? "account" : "demo";
     if (currentMode !== "account") {
+      setHealth(await readHealthConnection(database));
       setRefreshToken((token) => token + 1);
       return;
     }
@@ -91,8 +96,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     try {
       await syncAccount(database, force);
       await retryPendingPhotos(database);
+      let healthError: string | null = null;
+      try {
+        await syncAppleHealth(database, { force, upload: true });
+        await syncAccount(database, true);
+      } catch (error) {
+        if (error instanceof SessionExpired) throw error;
+        healthError = error instanceof Error ? error.message : "Apple Health sync failed";
+      }
       setGoals(await readGoals(database));
-      setSyncError(null);
+      setHealth(await readHealthConnection(database));
+      setSyncError(healthError);
       setRefreshToken((token) => token + 1);
     } catch (error) {
       if (error instanceof SessionExpired) {
@@ -146,6 +160,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           setAccount(nextAccount);
           setPhotoConsent(nextConsent);
           setPending(await pendingChanges(database));
+          setHealth(await readHealthConnection(database));
         }
         if (!cancelled && session.refreshToken) await sync(database, true);
       })
@@ -176,6 +191,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       pending,
       syncError,
       photoConsent,
+      health,
       loadDay: (date) => {
         if (!db) throw new Error("Database is not open");
         return loadDay(db, date);
@@ -235,6 +251,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       sync: (force = false) => {
         if (!db) return Promise.resolve();
         return sync(db, force);
+      },
+      syncHealth: async () => {
+        if (!db) return;
+        try {
+          const provider = getHealthProvider();
+          if (provider.id === "healthkit" && (await provider.getPermissionState()) !== "authorized") {
+            await provider.requestPermissions();
+          }
+        } catch (error) {
+          setSyncError(error instanceof Error ? error.message : "Apple Health sync failed");
+          setHealth(await readHealthConnection(db));
+          return;
+        }
+        if (mode !== "account") {
+          setHealth(await readHealthConnection(db));
+          return;
+        }
+        await sync(db, true);
       },
       readMeal: (id) => {
         if (!db) throw new Error("Database is not open");
@@ -303,7 +337,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setRefreshToken((token) => token + 1);
       },
     }),
-    [account, db, goals, mode, pending, photoConsent, refreshToken, syncError, syncing],
+    [account, db, goals, health, mode, pending, photoConsent, refreshToken, syncError, syncing],
   );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
