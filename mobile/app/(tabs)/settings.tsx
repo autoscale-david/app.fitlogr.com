@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { HealthSyncCard } from "../../components/HealthSyncCard";
 import type { Goals } from "../../services/db";
 import { AuthCancelled, useStore } from "../../services/store";
 import { colors } from "../../theme";
@@ -82,6 +83,8 @@ export default function SettingsScreen() {
           </>
         )}
       </View>
+
+      <HealthSyncCard connection={store.health} syncing={store.syncing} onSync={() => void store.syncHealth()} />
 
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Units</Text>

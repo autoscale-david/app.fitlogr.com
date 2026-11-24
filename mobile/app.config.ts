@@ -1,6 +1,12 @@
 import type { ExpoConfig } from "expo/config";
 
 const EAS_PROJECT_ID = "1964593c-a6a0-49e5-a35b-240cf2bf254e";
+const PHOTO_LIBRARY =
+  "fitlogr looks at recent photos to find meals and estimate calories. A photo is compressed and sent only after you agree.";
+const CAMERA = "fitlogr uses the camera so you can photograph a meal and estimate its calories.";
+const HEALTH_SHARE =
+  "fitlogr reads your weight, workouts, calories burned, steps, and heart rate from Apple Health to fill in your daily log.";
+const HEALTH_UPDATE = "fitlogr reads Apple Health for your daily log and keeps those records in your fitlogr account.";
 
 const config: ExpoConfig = {
   name: "fitlogr",
@@ -17,10 +23,14 @@ const config: ExpoConfig = {
     bundleIdentifier: "com.fitlogr.app",
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
-      NSPhotoLibraryUsageDescription:
-        "fitlogr looks at recent photos to find meals and estimate calories. A photo is compressed and sent only after you agree.",
-      NSCameraUsageDescription: "fitlogr uses the camera so you can photograph a meal and estimate its calories.",
+      NSPhotoLibraryUsageDescription: PHOTO_LIBRARY,
+      NSCameraUsageDescription: CAMERA,
       NSPhotoLibraryAddUsageDescription: "fitlogr does not add photos to your library.",
+      NSHealthShareUsageDescription: HEALTH_SHARE,
+      NSHealthUpdateUsageDescription: HEALTH_UPDATE,
+    },
+    entitlements: {
+      "com.apple.developer.healthkit": true,
     },
   },
   android: {
@@ -41,20 +51,26 @@ const config: ExpoConfig = {
     [
       "expo-image-picker",
       {
-        photosPermission:
-          "fitlogr looks at recent photos to find meals and estimate calories. A photo is compressed and sent only after you agree.",
-        cameraPermission: "fitlogr uses the camera so you can photograph a meal and estimate its calories.",
+        photosPermission: PHOTO_LIBRARY,
+        cameraPermission: CAMERA,
         microphonePermission: false,
       },
     ],
     [
       "expo-media-library",
       {
-        photosPermission:
-          "fitlogr looks at recent photos to find meals and estimate calories. A photo is compressed and sent only after you agree.",
+        photosPermission: PHOTO_LIBRARY,
         savePhotosPermission: false,
         isAccessMediaLocationEnabled: false,
         granularPermissions: ["photo"],
+      },
+    ],
+    [
+      "@kingstinct/react-native-healthkit",
+      {
+        NSHealthShareUsageDescription: HEALTH_SHARE,
+        NSHealthUpdateUsageDescription: HEALTH_UPDATE,
+        background: false,
       },
     ],
     [
