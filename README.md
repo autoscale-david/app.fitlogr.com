@@ -1,150 +1,97 @@
 # fitlogr
 
-**Free AI-powered fitness tracking for busy people.**
+**100% free AI fitness tracking for busy people.**
 
-fitlogr is a 100% free AI fitness app designed to make calorie and fitness tracking as effortless as possible. No tedious food logging, manual calorie counting, or complicated workout tracking.
+fitlogr makes calorie and fitness tracking effortless. No tedious food logging, manual calorie counting, or complicated workout tracking.
 
 ## How It Works
 
-1. **Take a photo of every meal before eating.** Save your photos to Google Photos as usual. fitlogr discovers meal photos and uses AI to estimate calories and nutritional content.
-2. **Wear a fitness watch throughout the day.** fitlogr automatically syncs available weight, calorie burn, workout, and activity data from Apple Health and Android Health Connect.
-3. **Review your daily progress in seconds each evening.** See your calorie intake, calorie expenditure, nutritional balance, and progress toward your fitness goals.
+1. **Take a photo of every meal before eating.** Use your phone's regular camera. fitlogr automatically discovers meal photos and uses AI to estimate calories and nutritional content.
+2. **Wear a fitness watch throughout the day.** fitlogr automatically synchronizes weight, calorie burn, workouts, and activity data from Apple Health or Android Health Connect.
+3. **Review your daily progress in seconds each evening.** Understand your calorie balance, nutrition, and progress toward your fitness goals.
 
 ## Product Principles
 
 - **100% free:** No subscriptions, premium tiers, or paywalls.
-- **Friction-free:** Minimize manual data entry and unnecessary interactions.
-- **AI-first:** Automatically turn everyday photos and fitness data into actionable insights.
-- **Cross-platform:** Support iOS and Android from a single codebase.
-- **Cloud-connected:** Seamlessly synchronize fitness progress across devices.
-- **Privacy-first:** Collect only the data necessary to provide the service.
-- **Keep it simple:** Enable users to manage their fitness in less than one minute per day.
+- **Friction-free:** Minimize manual data entry and user interactions.
+- **AI-first:** Automatically turn photos and fitness data into useful insights.
+- **Cross-platform:** Support iOS and Android with seamless synchronization.
+- **Privacy-first:** Store meal photos in the user's own Google Photos account.
+- **Cost-efficient:** Minimize operating costs to keep fitlogr free.
 
-## User Requirements
-
-All users are required to:
-
-- Have a Google account.
-- Sign into fitlogr using their Google account.
-- Install Google Photos and enable automatic photo backup.
-- Use the same Google account for fitlogr and Google Photos across all devices.
-- Grant the necessary photo and health data permissions.
-
-A compatible fitness watch and smart scale are recommended but not required.
-
-## Authentication & Account Management
-
-Google Sign-In is the primary authentication mechanism for fitlogr.
-
-- Require Google account authentication during onboarding.
-- Use Google OAuth 2.0 and OpenID Connect.
-- Do not maintain a separate username and password system.
-- Associate all user records with a unique, persistent account identifier based on the Google account's subject identifier.
-- Support persistent login sessions across devices.
-- Validate Google identity tokens on the backend.
-- Support account deletion and data export.
-- Account for Apple App Store authentication requirements before public distribution.
+Users should not need to open fitlogr after every meal or workout.
 
 ## Core Features
 
 ### Nutrition Tracking
 
-- Google Photos as the user's primary cloud photo library.
-- Automatic meal photo discovery through authorized device photo libraries.
-- Google Photos Picker integration for importing cloud-only photos.
-- AI-powered food recognition and portion estimation.
-- Estimated calories, protein, carbohydrates, and fat.
-- Automatic meal categorization by date and time.
-- Duplicate photo and meal detection across devices.
-- Manual correction of AI-generated estimates.
-- Optional direct meal capture within fitlogr.
-- Save photos captured within fitlogr to Google Photos with user authorization.
+- Automatically discover meal photos from the device's photo library.
+- Use AI to identify food, estimate portion sizes, calories, protein, carbohydrates, and fat.
+- Automatically organize meals by capture date and time.
+- Upload meal photos to a dedicated `fitlogr` album in Google Photos.
+- Detect duplicate photos and meals.
+- Allow users to correct nutritional estimates or exclude photos.
 
 ### Fitness Tracking
 
-- Apple HealthKit integration on iOS.
-- Health Connect integration on Android.
-- Google Health API integration where appropriate.
-- Automatic synchronization of available:
-  - Body weight
-  - Active calories burned
-  - Resting calories burned
-  - Workouts
-  - Steps
-  - Exercise duration
-  - Heart rate
-- Support compatible smartwatches, fitness trackers, and smart scales through platform health integrations.
+Automatically synchronize available health data from Apple HealthKit on iOS and Health Connect on Android:
 
-### Daily Dashboard
+- Body weight
+- Active and resting calories burned
+- Workouts and exercise duration
+- Steps and heart rate
 
-- Total calories consumed.
-- Total calories burned.
-- Net calorie surplus or deficit.
-- Daily protein, carbohydrate, and fat intake.
-- Current weight and weight trends.
-- Progress toward personal fitness goals.
-- AI-generated daily summary.
-- Recommended adjustments for the following day.
+Support compatible fitness watches, fitness trackers, and smart scales through platform health integrations.
 
-### Historical Progress
+### Fitness Dashboard
 
-- Daily, weekly, monthly, and yearly views.
-- Weight trends.
-- Calorie intake and expenditure trends.
-- Nutritional trends.
-- Fitness activity trends.
-- Progress toward target weight.
+- Daily calorie intake, expenditure, and surplus or deficit.
+- Daily macronutrient breakdown.
+- Meal photos and nutritional estimates.
+- Workout and activity summaries.
+- Weight trends and historical progress.
+- Configurable weight, calorie, and nutritional goals.
+- Concise AI-generated daily insights.
 
-### Cross-Device Synchronization
+## User Accounts & Synchronization
 
-Users should be able to switch between iPhone and Android devices without losing any fitness history or progress.
-
-- Google account serves as the shared user identity.
-- Google Photos serves as the shared photo library.
-- Cloudflare D1 serves as the authoritative database for fitlogr records.
-- Automatically synchronize meals, nutritional estimates, workouts, weight measurements, fitness goals, preferences, and historical progress.
-- Allow users to capture meals on one device and review their progress on another.
-- Allow users to switch between Apple and Android fitness ecosystems while retaining their historical data.
-- Avoid duplicate records when multiple devices synchronize overlapping data.
+- Require users to connect a Google account and authorize Google Photos.
+- Use the Google account as the shared identity across devices.
+- Allow users to capture meals on one device and review progress on another.
+- Synchronize nutrition records, health data, goals, preferences, and historical progress.
+- Use local caching for offline access and synchronize when connectivity returns.
+- Prevent duplicate records across devices.
+- Support account deletion and data export.
+- Support alternative authentication if required by Apple App Store policies, while maintaining Google Photos connectivity.
 
 ## App Environment
 
-The mobile application should be developed using a single cross-platform codebase supporting both iOS and Android.
+Maintain a single cross-platform mobile codebase.
 
 | Component | Technology |
 |---|---|
 | Development IDE | Cursor |
 | Mobile framework | React Native |
 | Development platform | Expo |
-| Programming language | TypeScript |
+| Language | TypeScript |
 | Navigation | Expo Router |
-| Authentication | Google Sign-In / OAuth 2.0 |
-| Cloud photo storage | Google Photos |
-| Photo integration | Google Photos APIs |
-| Local photo access | Expo MediaLibrary / native integrations |
+| Authentication | Google OAuth 2.0 |
+| Photo discovery | Expo MediaLibrary |
+| Photo storage | Google Photos |
 | Local database | Expo SQLite |
 | Secure storage | Expo SecureStore |
-| iOS health data | Apple HealthKit |
-| Android health data | Health Connect |
+| iOS health integration | Apple HealthKit |
+| Android health integration | Health Connect |
 | Development builds | Expo EAS |
-| iOS beta distribution | Apple TestFlight |
-| Android beta distribution | Google Play Internal Testing |
+| iOS distribution | Apple TestFlight / App Store |
+| Android distribution | Google Play |
 | Source control | GitHub |
 
-### Development Requirements
-
-- Support development on Windows without requiring a local Mac.
-- Maintain a single codebase for iOS and Android.
-- Use Expo Go for initial UI development and rapid prototyping.
-- Use Expo development builds for native Google authentication, health integrations, and advanced permissions.
-- Support Fast Refresh during development.
-- Abstract platform-specific functionality behind shared interfaces.
-- Test on physical iOS and Android devices throughout development.
-- Minimize unnecessary third-party dependencies.
+Support development on Windows without requiring a local Mac. Use Expo Go where compatible and Expo EAS development builds for native integrations. Support Fast Refresh and testing on physical iOS and Android devices throughout development.
 
 ## Production Environment
 
-The production website and backend API are served by Cloudflare Workers on fitlogr.com.
+The website and backend API are served by a Cloudflare Worker hosted on fitlogr.com.
 
 | Component | Configuration |
 |---|---|
@@ -152,235 +99,299 @@ The production website and backend API are served by Cloudflare Workers on fitlo
 | API | https://fitlogr.com/api/ |
 | Hosting | Cloudflare Workers |
 | Backend language | TypeScript |
-| Deployment tool | Cloudflare Wrangler |
 | Database | Cloudflare D1 |
 | Photo storage | Google Photos |
-| Temporary object storage | Cloudflare R2, if required |
-| Background processing | Cloudflare Queues, if required |
-| AI inference | Configurable multimodal AI provider |
-| Authentication | Google OAuth 2.0 |
-| DNS | Cloudflare |
-| SSL/TLS | Cloudflare |
+| AI inference | OpenRouter |
+| Deployment | Cloudflare Wrangler |
 | CI/CD | GitHub Actions |
 
 ### Cloudflare Configuration
 
-- Cloudflare Zone ID: `4da8c98a66722b963535773610a7d0d8`
-- Cloudflare Account ID: `42aad73fe98811972eccd8907196d722`
-- Cloudflare API Token: `CLOUDFLARE_API_TOKEN`
+- Zone ID: `4da8c98a66722b963535773610a7d0d8`
+- Account ID: `42aad73fe98811972eccd8907196d722`
+- API Token: `CLOUDFLARE_API_TOKEN`
 
-The Cloudflare API token is supplied through environment variables or GitHub Actions Secrets and must never be committed to the repository or embedded in the mobile application.
-
-Use the existing Cloudflare account and zone when deploying production infrastructure. Reuse existing resources where appropriate.
+Reuse existing infrastructure where appropriate.
 
 ### Google Cloud Configuration
 
-Configure a Google Cloud project for fitlogr with the following services:
+- Project ID: `fitlogr-app`
+- OAuth application name: `fitlogr`
+- OAuth audience: External
+- Authorized origin: `https://fitlogr.com`
+- Redirect URI: `https://fitlogr.com/api/auth/google/callback`
 
-- Google OAuth 2.0
-- Google Photos Picker API
+Required integrations:
+
+- Google OAuth 2.0 / OpenID Connect
 - Google Photos Library API
-- Google Health API, if required
 
-Configure OAuth clients for:
+Optional integrations:
 
-- iOS application
-- Android application
-- Web application and backend
+- Google Photos Picker API
+- Google Health API
 
-Environment variables:
+Use the same centralized Web OAuth client for all Google Photos API operations across iOS and Android.
 
-- `GOOGLE_CLIENT_ID`
-- `GOOGLE_CLIENT_SECRET`
-- `GOOGLE_IOS_CLIENT_ID`
-- `GOOGLE_ANDROID_CLIENT_ID`
+### OpenRouter Configuration
 
-Store confidential credentials securely using Cloudflare Worker Secrets or GitHub Actions Secrets, as appropriate.
+- Website: https://openrouter.ai
+- API Base URL: `https://openrouter.ai/api/v1`
+- API Key: `OPENROUTER_API_KEY`
 
-## Proposed Repository Structure
+Use OpenRouter for cloud-based photo analysis, nutritional estimation, and AI-generated fitness insights. AI models must be configurable on the backend without requiring mobile application updates.
 
+## Credentials & Secrets
+
+Use the following configured Cursor secrets:
+
+| Secret | Purpose |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare deployment |
+| `GOOGLE_OAUTH_CLIENT_ID` | Google Web OAuth client ID |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | Google Web OAuth client secret |
+| `OPENROUTER_API_KEY` | AI inference |
+| `TOKEN_ENCRYPTION_KEY` | Encrypt stored OAuth tokens |
+| `SESSION_SECRET` | Secure application sessions |
+
+Additional configuration:
+
+```dotenv
+CLOUDFLARE_ACCOUNT_ID=42aad73fe98811972eccd8907196d722
+CLOUDFLARE_ZONE_ID=4da8c98a66722b963535773610a7d0d8
+
+GOOGLE_CLOUD_PROJECT_ID=fitlogr-app
+GOOGLE_OAUTH_REDIRECT_URI=https://fitlogr.com/api/auth/google/callback
+GOOGLE_PHOTOS_ALBUM_NAME=fitlogr
+
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_VISION_MODEL=
+OPENROUTER_TEXT_MODEL=
+
+APP_URL=https://fitlogr.com
+API_BASE_URL=https://fitlogr.com/api
 ```
-fitlogr/
-├── app/
-│   ├── screens/
-│   ├── components/
-│   ├── services/
-│   ├── hooks/
-│   ├── assets/
-│   └── app.json
-├── worker/
-│   ├── src/
-│   │   ├── api/
-│   │   ├── services/
-│   │   └── index.ts
-│   ├── public/
-│   ├── migrations/
-│   └── wrangler.toml
-├── shared/
-│   ├── types/
-│   └── utilities/
-├── docs/
-├── .github/
-│   └── workflows/
-├── .gitignore
-├── .env.example
-└── README.md
-```
+
+- Reuse the exact configured secret names.
+- Configure runtime credentials through Cloudflare Worker Secrets.
+- Configure deployment credentials through GitHub Actions Secrets.
+- Never commit secret values or expose them to mobile applications.
+- Maintain a documented `.env.example`.
+- Generate fresh production encryption and session keys locally before public launch.
 
 ## System Architecture
 
-```
-                 Google Account
-                       │
-              Google Photos Library
-                 ▲           ▲
-                 │           │
-            Photo Backup  Photo Backup
-                 │           │
-          iPhone Photos    Android Photos
-                 │           │
-          Apple Health    Health Connect
-                 │           │
-          fitlogr (iOS)   fitlogr (Android)
-                 │           │
-                 └─────┬─────┘
-                       │
-                    HTTPS API
-                       │
-              Cloudflare Workers
+```text
+            fitlogr iOS / Android
+             React Native + Expo
+                      |
+          +-----------+-----------+
+          |                       |
+    Device Photos           Health Data
+    Local Discovery         HealthKit / HC
+          |                       |
+          +-----------+-----------+
+                      |
+                   HTTPS API
+                      |
+              Cloudflare Worker
                  fitlogr.com
-                       │
-                ┌──────┴──────┐
-                │             │
-          Cloudflare D1    AI Engine
-          User Progress    Food Analysis
-          Nutrition Data   Daily Insights
-          Fitness Data
+                      |
+       +--------------+--------------+
+       |              |              |
+ Cloudflare D1   Google Photos    OpenRouter
+ User Accounts   fitlogr Album    AI Analysis
+ Fitness Data    Meal Photos      Nutrition
+ Meal Records                     Insights
 ```
 
-### Data Storage Principles
+Cloudflare D1 is the authoritative database for user and fitness records. Google Photos is the authoritative storage for meal photos.
 
-| Data | Storage |
-|---|---|
-| Original meal photos | Google Photos |
-| User identity | Google account |
-| User profile and preferences | Cloudflare D1 |
-| Meal records | Cloudflare D1 |
-| AI nutritional estimates | Cloudflare D1 |
-| Workout records | Cloudflare D1 |
-| Weight measurements | Cloudflare D1 |
-| Historical progress | Cloudflare D1 |
-| Synchronization checkpoints | Cloudflare D1 / local SQLite |
-| Local application cache | Expo SQLite |
-| Authentication tokens | SecureStore / secure backend storage |
+Do not maintain permanent photo storage on fitlogr infrastructure.
 
-Google Photos should be the primary persistent photo storage solution. Avoid maintaining a separate permanent copy of users' original photos on fitlogr infrastructure.
+## Google Authentication
+
+- Use Google OAuth 2.0 authorization code flow with secure system-browser authentication.
+- Validate OAuth state, identity tokens, and applicable PKCE parameters.
+- Identify users by their persistent Google account subject identifier (`sub`).
+- Request offline access and automatically refresh Google access tokens.
+- Encrypt stored OAuth refresh tokens using AES-256-GCM with a unique random IV per encryption operation.
+- Use `TOKEN_ENCRYPTION_KEY` as a Base64-encoded 256-bit encryption key.
+- Use `SESSION_SECRET` for secure session signing where applicable.
+- Maintain secure application sessions independently of Google access tokens.
+- Centralize Google Photos API operations through the backend.
+- Handle revoked permissions and account reconnection gracefully.
+
+## Photo Discovery & Google Photos
+
+Google Photos restricts third-party access to photos not created by the requesting application. fitlogr addresses this through automatic local photo discovery and app-managed uploads.
+
+### Photo Processing
+
+1. Discover new photos from the device's authorized photo library.
+2. Identify potential meal photos using on-device classification where practical.
+3. Deduplicate photos using content hashes and image fingerprints.
+4. Compress candidate meal photos and submit them for AI analysis.
+5. Upload identified meal photos to the user's `fitlogr` Google Photos album.
+6. Store nutritional estimates and Google Photos media item IDs in Cloudflare D1.
+7. Make meal records and photos available across all connected devices.
+
+### Google Photos Integration
+
+- Automatically create a dedicated `fitlogr` album.
+- Upload meal photos using the Google Photos Library API.
+- Store persistent album and media item IDs rather than temporary image URLs.
+- Retrieve fresh image URLs when displaying historical meals.
+- Use Google Photos Picker for optional historical photo imports.
+- Handle deleted photos, revoked permissions, and exhausted storage quotas.
+- Inform users that normal Google Photos backups may create additional copies of meal photos.
+
+Google Photos automatic backup of the entire device library is not required.
+
+### OAuth Scopes
+
+Required:
+
+```text
+openid
+email
+profile
+https://www.googleapis.com/auth/photoslibrary.appendonly
+https://www.googleapis.com/auth/photoslibrary.readonly.appcreateddata
+```
+
+Optional, for historical imports:
+
+```text
+https://www.googleapis.com/auth/photospicker.mediaitems.readonly
+```
 
 ## AI Processing
 
-AI should automate the most time-consuming aspects of fitness tracking.
+All OpenRouter requests must originate from the Cloudflare Worker.
 
-The AI pipeline should:
+Use multimodal AI models to:
 
-1. Identify newly available, authorized photos.
-2. Determine whether a photo contains food.
-3. Detect duplicate photos of the same meal.
-4. Identify individual food items.
-5. Estimate portion sizes.
-6. Estimate calories and macronutrients.
-7. Assign the meal to the appropriate date and time.
-8. Return structured nutritional data with confidence indicators.
-9. Synchronize analysis results to the user's account.
-10. Allow users to review and correct estimates.
-11. Generate concise daily fitness summaries.
+- Determine whether an image contains a meal.
+- Identify individual food items.
+- Estimate portion sizes and weights.
+- Estimate calories and macronutrients.
+- Generate concise daily fitness insights.
 
-AI providers should be interchangeable through a common backend interface.
+Require validated structured JSON responses containing:
 
-Prioritize inference accuracy, low latency, and low cost. Cache analysis results and avoid processing the same image more than once, including when accessed from different devices.
+- Food classification and confidence.
+- Meal name.
+- Individual food items and estimated quantities.
+- Calories, protein, carbohydrates, and fat per item.
+- Total nutritional estimates.
 
-AI-generated nutritional information must be presented as an estimate rather than an exact measurement.
+Calculate nutritional totals on the backend. Clearly present AI-generated values as estimates and allow manual corrections.
 
-## Synchronization Strategy
+### Cost Optimization
 
-### Photo Synchronization
+- Prefer inexpensive, accurate multimodal models.
+- Filter non-food photos locally wherever possible.
+- Compress images before inference.
+- Cache results and avoid duplicate processing.
+- Configure model fallbacks.
+- Track inference costs per request and user.
+- Apply rate limits and abuse prevention.
+- Avoid repeatedly generating unchanged daily summaries.
 
-- Require users to enable Google Photos automatic backup on their devices.
-- Discover new meal photos through authorized local photo library access.
-- Support importing existing cloud photos through Google Photos Picker.
-- Use content hashes and image fingerprints to detect duplicate photos across devices.
-- Store photo identifiers and nutritional analysis results in the central database.
-- Avoid reprocessing photos that have already been analyzed.
-- Do not rely on unrestricted background access to the Google Photos cloud library.
-- Do not assume Google Photos provides a permanent direct URL for every photo.
+## Health Data & Synchronization
 
-### Health Synchronization
+- Read authorized data from Apple HealthKit and Android Health Connect.
+- Normalize health records into a common cross-platform format.
+- Preserve source identifiers, timestamps, units, and device information.
+- Distinguish active calories, resting calories, and total calories burned.
+- Avoid double-counting workouts already included in daily activity totals.
+- Synchronize incrementally whenever the app opens and in the background where supported.
+- Maintain synchronization checkpoints per device and data source.
+- Support offline caching, automatic retries, and manual synchronization.
+- Preserve user corrections during subsequent synchronization.
+- Use the user's local time zone for daily totals.
 
-- Incrementally import health records from Apple Health and Health Connect.
-- Maintain synchronization checkpoints for each device and data source.
-- Normalize health records into a common cross-platform data format.
-- Preserve source identifiers and timestamps.
-- Prevent duplicate workouts, weight measurements, and calorie records.
-- Avoid double-counting workout calories already included in daily activity totals.
-- Synchronize normalized health data to the user's central account, subject to consent and platform policies.
+The evening review experience must remain functional even when background synchronization is restricted by the operating system.
 
-### General Synchronization
+## Database Design
 
-- Automatically synchronize when the app opens.
-- Use background synchronization where permitted by the operating system.
-- Support offline operation and synchronize pending changes when connectivity is restored.
-- Provide a manual synchronization option.
-- Handle synchronization conflicts consistently.
-- Use local time zones when calculating daily totals.
-- Handle revoked permissions gracefully.
-- Synchronize user corrections and preferences across all devices.
+Use Cloudflare D1 with version-controlled migrations.
 
-The user should not need to open fitlogr after every meal or workout.
+Suggested core tables:
 
-## Data Privacy & Security
+| Table | Purpose |
+|---|---|
+| `users` | User identities and profiles |
+| `user_settings` | Preferences and fitness goals |
+| `user_devices` | Connected devices |
+| `user_oauth_tokens` | Encrypted OAuth credentials |
+| `user_google_photos` | Google Photos album information |
+| `photos` | Media IDs, hashes, and processing status |
+| `meals` | Meal records and nutritional totals |
+| `meal_items` | Individual food items |
+| `health_records` | Normalized fitness and health data |
+| `daily_summaries` | Aggregated daily statistics |
+| `sync_checkpoints` | Synchronization state |
+| `ai_requests` | AI usage and cost tracking |
 
-- Request only the Google, photo, and health permissions required for core functionality.
-- Explain clearly why each permission is requested.
-- Prefer on-device photo filtering before sending relevant meal photos for AI analysis.
-- Never upload unrelated personal photos.
-- Avoid permanently storing original meal photos on fitlogr infrastructure.
-- Encrypt data in transit and at rest.
-- Keep API credentials and infrastructure secrets on the server.
-- Implement authentication, authorization, and API rate limiting.
-- Ensure users can only access their own records.
-- Allow users to export and permanently delete their fitlogr data.
-- Do not delete original Google Photos content when deleting fitlogr records.
+Enforce user-level data isolation, appropriate indexes, foreign keys, and deduplication constraints.
+
+Do not store photo binaries or unencrypted OAuth tokens in D1.
+
+## Repository Structure
+
+```text
+fitlogr/
+├── mobile/             # React Native / Expo app
+│   ├── app/
+│   ├── components/
+│   ├── services/
+│   ├── hooks/
+│   └── assets/
+├── worker/             # Website and backend API
+│   ├── src/
+│   ├── public/
+│   ├── migrations/
+│   └── wrangler.toml
+├── shared/             # Shared TypeScript types and schemas
+├── docs/
+├── .github/workflows/
+├── .env.example
+├── .gitignore
+├── package.json
+└── README.md
+```
+
+Use a monorepo with shared types, validation schemas, and utilities. Adapt the structure to the existing repository where appropriate.
+
+## Privacy & Security
+
+- Request only necessary Google, photo, and health permissions.
+- Clearly disclose how photos and health data are processed.
+- Avoid transmitting unrelated personal photos.
+- Obtain appropriate consent before sending candidate photos to cloud AI providers.
+- Store meal photos in the user's own Google Photos account.
+- Encrypt sensitive credentials at rest and all data in transit.
+- Authenticate and authorize all private API endpoints.
+- Never expose server-side secrets or log sensitive user data.
 - Never sell personal health information or use it for targeted advertising.
-- Do not use personal health data or photos for AI training without explicit consent and applicable platform authorization.
-- Comply with applicable Google API user data policies, Apple App Store policies, and Google Play health data policies.
-
-## Operating Cost Principles
-
-fitlogr must remain financially sustainable while being offered for free.
-
-- Prefer serverless infrastructure over dedicated servers.
-- Leverage users' existing Google Photos storage.
-- Minimize AI inference costs per user.
-- Use lightweight models for food detection and more capable models for nutritional estimation when needed.
-- Resize and compress images before transmission.
-- Cache analysis results and eliminate duplicate processing across devices.
-- Minimize storage and bandwidth requirements.
-- Monitor infrastructure costs per active user.
-- Implement safeguards against API abuse.
-- Avoid architectural dependencies that create unnecessary recurring expenses.
+- Do not use personal photos or health data for AI training without appropriate consent and authorization.
+- Allow users to export and delete their fitlogr data.
+- Do not automatically delete Google Photos content when a fitlogr account is deleted.
+- Comply with Google API policies, Apple App Store policies, Google Play policies, and applicable privacy regulations.
 
 ## Development Guidelines
 
-- Keep the application simple, fast, and intuitive.
-- Prioritize automation over manual data entry.
+- Prioritize simplicity, automation, and speed.
+- Maintain a single cross-platform codebase.
 - Write reusable, strongly typed, modular code.
-- Maintain compatibility with both iOS and Android.
-- Treat the backend as the authoritative source for synchronized fitness records.
-- Treat Google Photos as the primary photo library.
-- Document architectural decisions and external dependencies.
-- Do not introduce paid services without evaluating their long-term operating costs.
-- Do not hardcode credentials or API keys.
-- Do not deploy breaking changes without testing.
-- Maintain backward compatibility with previously released mobile applications.
+- Reuse existing infrastructure and configured secrets.
+- Minimize dependencies and recurring operating expenses.
+- Test authentication, photo processing, health integrations, synchronization, and data isolation.
+- Test on physical iOS and Android devices.
+- Maintain backward compatibility with released mobile applications.
+- Complete required OAuth verification and platform permission reviews before public launch.
 - Keep this README updated as the project evolves.
 
 ## Mission
