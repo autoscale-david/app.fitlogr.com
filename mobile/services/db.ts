@@ -253,6 +253,19 @@ export async function loadDay(db: SQLiteDatabase, localDate: string): Promise<Da
   };
 }
 
+export async function listWeights(
+  db: SQLiteDatabase,
+  from: string,
+  to: string,
+): Promise<{ localDate: string; weightKg: number }[]> {
+  return db.getAllAsync<{ localDate: string; weightKg: number }>(
+    `SELECT local_date as localDate, weight_kg as weightKg
+     FROM weights WHERE local_date >= ? AND local_date <= ? ORDER BY local_date`,
+    from,
+    to,
+  );
+}
+
 export async function loggedDates(db: SQLiteDatabase): Promise<string[]> {
   const rows = await db.getAllAsync<{ local_date: string }>(
     `SELECT local_date FROM meals

@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  AccountDeleteRequestSchema,
+  AccountExportSchema,
   AuthStartRequestSchema,
+  DailyInsightSchema,
   MealWriteSchema,
   SettingsUpdateSchema,
   SyncChangesResponseSchema,
+  TrendsQuerySchema,
+  TrendsResponseSchema,
   WeightWriteSchema,
 } from "./schemas/index";
 
@@ -55,5 +60,48 @@ describe("stage 2 API schemas", () => {
         health_records: [],
       }).success,
     ).toBe(true);
+  });
+});
+
+describe("stage 5 review schemas", () => {
+  it("accepts an insight, a trend window, and a confirmed account deletion", () => {
+    expect(
+      DailyInsightSchema.safeParse({
+        date: "2026-11-23",
+        insight: "A steady day under the calorie goal.",
+        cached: true,
+        generated_at: "2026-11-24T04:00:00.000Z",
+        model: null,
+      }).success,
+    ).toBe(true);
+    expect(TrendsQuerySchema.safeParse({ days: "30" }).success).toBe(true);
+    expect(TrendsQuerySchema.safeParse({ days: "90" }).success).toBe(false);
+    expect(AccountDeleteRequestSchema.safeParse({ confirm: true }).success).toBe(true);
+    expect(AccountDeleteRequestSchema.safeParse({ confirm: false }).success).toBe(false);
+    expect(
+      TrendsResponseSchema.safeParse({
+        timezone: "America/Los_Angeles",
+        days: 7,
+        from: "2026-11-17",
+        to: "2026-11-23",
+        calorie_target_kcal: 1900,
+        points: [
+          {
+            date: "2026-11-23",
+            calories_in_kcal: 640,
+            calories_burned_kcal: 1900,
+            surplus_deficit_kcal: -1260,
+            protein_g: 50,
+            carbs_g: 60,
+            fat_g: 16,
+            workout_minutes: 35,
+            workout_count: 1,
+            meal_count: 1,
+            weight_kg: 79.2,
+          },
+        ],
+      }).success,
+    ).toBe(true);
+    expect(AccountExportSchema.safeParse({ exported_at: "not-a-date" }).success).toBe(false);
   });
 });

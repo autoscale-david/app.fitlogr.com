@@ -38,3 +38,25 @@ export { SettingsSchema, SettingsUpdateSchema } from "./settings";
 export type { Settings, SettingsUpdate } from "./settings";
 export { SyncChangesResponseSchema, SyncQuerySchema } from "./sync";
 export type { SyncChangesResponse, SyncQuery } from "./sync";
+export {
+  AccountDeleteRequestSchema,
+  AccountDeleteResponseSchema,
+  AccountExportSchema,
+  AccountPhotoExportSchema,
+  AccountSummaryExportSchema,
+  DailyInsightSchema,
+  TrendPointSchema,
+  TrendsQuerySchema,
+  TrendsResponseSchema,
+} from "./review";
+export type {
+  AccountDeleteRequest,
+  AccountDeleteResponse,
+  AccountExport,
+  AccountPhotoExport,
+  AccountSummaryExport,
+  DailyInsight,
+  TrendPoint,
+  TrendsQuery,
+  TrendsResponse,
+} from "./review";
