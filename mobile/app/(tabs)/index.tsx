@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { calorieBudget, caloriesRemaining } from "@fitlogr/shared";
 import { CalorieRing } from "../../components/CalorieRing";
 import { MealCard, WorkoutCard } from "../../components/LogCard";
+import { MealPhotoPicker } from "../../components/MealPhotoPicker";
 import { MacroBars } from "../../components/MacroBars";
 import { WeekStrip } from "../../components/WeekStrip";
 import { addDays, formatHeading, localDateISO, startOfWeek } from "../../services/dates";
@@ -132,6 +133,7 @@ export default function LogScreen() {
               ),
             )
           )}
+          <MealPhotoPicker />
           <Pressable style={styles.addMeal} onPress={() => router.push({ pathname: "/meal/[id]", params: { id: "new", date: selected } })}>
             <Text style={styles.addMealText}>Add a meal</Text>
           </Pressable>

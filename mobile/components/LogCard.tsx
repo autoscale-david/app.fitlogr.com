@@ -3,15 +3,20 @@ import { StyleSheet, Text, View } from "react-native";
 import type { MealRecord, WorkoutRecord } from "../services/db";
 import { formatCompactTime } from "../services/dates";
 import { colors } from "../theme";
+import { MealPhoto } from "./MealPhoto";
 
 export function MealCard({ meal }: { meal: MealRecord }) {
   const icon = meal.name.includes("Chicken") ? "restaurant-outline" : meal.name.includes("Shake") ? "cafe-outline" : "nutrition-outline";
   const tint = meal.name.includes("Chicken") ? "#C47A45" : meal.name.includes("Shake") ? "#C46B8A" : "#7D9A45";
   return (
     <View style={styles.card}>
-      <View style={[styles.thumb, { backgroundColor: tint }]}>
-        <Ionicons name={icon} size={28} color="#F7F3EA" />
-      </View>
+      {meal.photoId ? (
+        <MealPhoto photoId={meal.photoId} />
+      ) : (
+        <View style={[styles.thumb, { backgroundColor: tint }]}>
+          <Ionicons name={icon} size={28} color="#F7F3EA" />
+        </View>
+      )}
       <View style={styles.body}>
         <View style={styles.titleRow}>
           <Text style={styles.title} numberOfLines={1}>

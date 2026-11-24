@@ -11,6 +11,19 @@ export interface Goals {
   fatTarget: number;
 }
 
+export interface MealItemRecord {
+  id: string;
+  name: string;
+  quantity: number;
+  unit: string;
+  estimatedGrams: number | null;
+  caloriesKcal: number;
+  proteinG: number;
+  carbsG: number;
+  fatG: number;
+  isUserEdited: boolean;
+}
+
 export interface MealRecord {
   id: string;
   localDate: string;
@@ -21,6 +34,8 @@ export interface MealRecord {
   carbsG: number;
   fatG: number;
   badge: "ai" | "edited";
+  photoId?: string | null;
+  items?: MealItemRecord[];
 }
 
 export interface WorkoutRecord {
@@ -116,9 +131,24 @@ export async function migrate(db: SQLiteDatabase): Promise<void> {
     "ALTER TABLE meals ADD COLUMN is_user_edited INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE meals ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE meals ADD COLUMN pending_create INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE meals ADD COLUMN photo_id TEXT",
+    "ALTER TABLE meal_items ADD COLUMN estimated_grams REAL",
+    "ALTER TABLE meal_items ADD COLUMN is_user_edited INTEGER NOT NULL DEFAULT 0",
   ]) {
     await addColumn(db, statement);
   }
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS local_media_assets (
+      local_asset_id TEXT PRIMARY KEY NOT NULL,
+      uri TEXT,
+      content_sha256 TEXT,
+      perceptual_hash TEXT,
+      captured_at TEXT,
+      scan_status TEXT NOT NULL,
+      remote_photo_id TEXT,
+      updated_at TEXT NOT NULL
+    );
+  `);
   const seeded = await db.getFirstAsync<{ value: string }>(
     "SELECT value FROM settings WHERE key = ?",
     "seeded",
@@ -162,7 +192,7 @@ export async function writeGoals(db: SQLiteDatabase, goals: Goals): Promise<void
 export async function loadDay(db: SQLiteDatabase, localDate: string): Promise<DayLog> {
   const meals = await db.getAllAsync<MealRecord>(
     `SELECT id, local_date as localDate, name, eaten_at as eatenAt, calories_kcal as caloriesKcal,
-            protein_g as proteinG, carbs_g as carbsG, fat_g as fatG, badge
+            protein_g as proteinG, carbs_g as carbsG, fat_g as fatG, badge, photo_id as photoId
      FROM meals WHERE local_date = ? ORDER BY eaten_at`,
     localDate,
   );
@@ -323,14 +353,14 @@ export async function writeAccount(db: SQLiteDatabase, email: string, displayNam
 }
 
 export async function enterAccountMode(db: SQLiteDatabase): Promise<void> {
-  await db.execAsync("DELETE FROM meals; DELETE FROM meal_items; DELETE FROM workouts; DELETE FROM weights; DELETE FROM sync_outbox;");
+  await db.execAsync("DELETE FROM meals; DELETE FROM meal_items; DELETE FROM workouts; DELETE FROM weights; DELETE FROM sync_outbox; DELETE FROM local_media_assets;");
   await writeSetting(db, "data_mode", "account");
   await writeSetting(db, "sync_cursor", "");
   await writeSetting(db, "seeded", "1");
 }
 
 export async function enterDemoMode(db: SQLiteDatabase): Promise<void> {
-  await db.execAsync("DELETE FROM meals; DELETE FROM meal_items; DELETE FROM workouts; DELETE FROM weights; DELETE FROM sync_outbox;");
+  await db.execAsync("DELETE FROM meals; DELETE FROM meal_items; DELETE FROM workouts; DELETE FROM weights; DELETE FROM sync_outbox; DELETE FROM local_media_assets;");
   await writeSetting(db, "account_email", "");
   await writeSetting(db, "account_display_name", "");
   await writeSetting(db, "sync_cursor", "");
@@ -342,13 +372,46 @@ export async function enterDemoMode(db: SQLiteDatabase): Promise<void> {
 export async function readMeal(db: SQLiteDatabase, id: string): Promise<(MealRecord & { pendingCreate: boolean }) | null> {
   const row = await db.getFirstAsync<MealRecord & { pendingCreate: number }>(
     `SELECT id, local_date as localDate, name, eaten_at as eatenAt, calories_kcal as caloriesKcal,
-            protein_g as proteinG, carbs_g as carbsG, fat_g as fatG, badge,
+            protein_g as proteinG, carbs_g as carbsG, fat_g as fatG, badge, photo_id as photoId,
             pending_create as pendingCreate
      FROM meals WHERE id = ?`,
     id,
   );
   if (!row) return null;
-  return { ...row, pendingCreate: Boolean(row.pendingCreate) };
+  const items = await readMealItems(db, id);
+  return { ...row, pendingCreate: Boolean(row.pendingCreate), items };
+}
+
+export async function readMealItems(db: SQLiteDatabase, mealId: string): Promise<MealItemRecord[]> {
+  const rows = await db.getAllAsync<{
+    id: string;
+    name: string;
+    quantity: number;
+    unit: string;
+    estimatedGrams: number | null;
+    caloriesKcal: number;
+    proteinG: number;
+    carbsG: number;
+    fatG: number;
+    isUserEdited: number;
+  }>(
+    `SELECT id, name, quantity, unit, estimated_grams as estimatedGrams, calories_kcal as caloriesKcal,
+            protein_g as proteinG, carbs_g as carbsG, fat_g as fatG, is_user_edited as isUserEdited
+     FROM meal_items WHERE meal_id = ? ORDER BY sort_order`,
+    mealId,
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    quantity: row.quantity,
+    unit: row.unit,
+    estimatedGrams: row.estimatedGrams,
+    caloriesKcal: row.caloriesKcal,
+    proteinG: row.proteinG,
+    carbsG: row.carbsG,
+    fatG: row.fatG,
+    isUserEdited: Boolean(row.isUserEdited),
+  }));
 }
 
 export async function writeMeal(db: SQLiteDatabase, meal: MealRecord, pendingCreate: boolean): Promise<void> {
@@ -382,6 +445,73 @@ export async function writeMeal(db: SQLiteDatabase, meal: MealRecord, pendingCre
     updatedAt,
     pendingCreate ? 1 : 0,
   );
+  if (meal.items) await replaceMealItems(db, meal.id, meal.items);
+}
+
+export async function writeServerMeal(
+  db: SQLiteDatabase,
+  meal: MealRecord & { mealType?: string; timezone?: string; isUserEdited?: boolean; updatedAt?: string },
+): Promise<void> {
+  const updatedAt = meal.updatedAt || new Date().toISOString();
+  await db.runAsync(
+    `INSERT INTO meals (
+       id, local_date, name, eaten_at, calories_kcal, protein_g, carbs_g, fat_g, badge,
+       meal_type, timezone, is_user_edited, updated_at, pending_create, photo_id
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       local_date = excluded.local_date,
+       name = excluded.name,
+       eaten_at = excluded.eaten_at,
+       calories_kcal = excluded.calories_kcal,
+       protein_g = excluded.protein_g,
+       carbs_g = excluded.carbs_g,
+       fat_g = excluded.fat_g,
+       badge = excluded.badge,
+       meal_type = excluded.meal_type,
+       timezone = excluded.timezone,
+       is_user_edited = excluded.is_user_edited,
+       updated_at = excluded.updated_at,
+       pending_create = 0,
+       photo_id = excluded.photo_id`,
+    meal.id,
+    meal.localDate,
+    meal.name,
+    meal.eatenAt,
+    meal.caloriesKcal,
+    meal.proteinG,
+    meal.carbsG,
+    meal.fatG,
+    meal.badge,
+    meal.mealType ?? "meal",
+    meal.timezone ?? "UTC",
+    meal.isUserEdited ? 1 : 0,
+    updatedAt,
+    meal.photoId ?? null,
+  );
+  if (meal.items) await replaceMealItems(db, meal.id, meal.items);
+}
+
+async function replaceMealItems(db: SQLiteDatabase, mealId: string, items: MealItemRecord[]): Promise<void> {
+  await db.runAsync("DELETE FROM meal_items WHERE meal_id = ?", mealId);
+  for (const [index, item] of items.entries()) {
+    await db.runAsync(
+      `INSERT INTO meal_items (
+         id, meal_id, name, quantity, unit, estimated_grams, calories_kcal, protein_g, carbs_g, fat_g, sort_order, is_user_edited
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      item.id,
+      mealId,
+      item.name,
+      item.quantity,
+      item.unit,
+      item.estimatedGrams,
+      item.caloriesKcal,
+      item.proteinG,
+      item.carbsG,
+      item.fatG,
+      index,
+      item.isUserEdited ? 1 : 0,
+    );
+  }
 }
 
 export async function removeMeal(db: SQLiteDatabase, id: string): Promise<void> {

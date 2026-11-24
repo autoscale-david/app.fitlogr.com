@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { AppState } from "react-native";
 import { openDatabaseAsync, type SQLiteDatabase } from "expo-sqlite";
+import { AI_PHOTO_CONSENT_VERSION } from "@fitlogr/shared";
 import { api, SessionExpired } from "./api";
 import { AuthCancelled, signInWithGoogle } from "./auth";
 import {
@@ -28,7 +29,8 @@ import {
   type MealRecord,
 } from "./db";
 import { clearSession, readSession, saveSession } from "./session";
-import { queueMeal, queueMealDelete, queueSettings, queueWeight, syncAccount } from "./sync";
+import { capturedToday, importPreparedPhoto, prepareMealImage, retryPendingPhotos, scanRecentPhotos } from "./photos";
+import { queueMeal, queueMealDelete, queuePhotoExclude, queueSettings, queueWeight, syncAccount } from "./sync";
 
 interface Account {
   email: string;
@@ -44,6 +46,7 @@ interface Store {
   syncing: boolean;
   pending: number;
   syncError: string | null;
+  photoConsent: boolean;
   loadDay: (date: string) => Promise<DayLog>;
   loggedDates: () => Promise<string[]>;
   saveGoals: (goals: Goals) => Promise<void>;
@@ -53,8 +56,11 @@ interface Store {
   sync: (force?: boolean) => Promise<void>;
   readMeal: (id: string) => Promise<(MealRecord & { pendingCreate: boolean }) | null>;
   saveMeal: (meal: MealRecord, pendingCreate: boolean) => Promise<void>;
-  deleteMeal: (id: string, pendingCreate: boolean) => Promise<void>;
+  deleteMeal: (id: string, pendingCreate: boolean, photoId?: string | null) => Promise<void>;
   logWeight: (localDate: string, weightKg: number) => Promise<void>;
+  acceptPhotoConsent: () => Promise<void>;
+  addMealPhoto: (uri: string) => Promise<string>;
+  scanMealPhotos: () => Promise<string>;
 }
 
 const StoreContext = createContext<Store | null>(null);
@@ -69,6 +75,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [syncing, setSyncing] = useState(false);
   const [pending, setPending] = useState(0);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [photoConsent, setPhotoConsent] = useState(false);
 
   async function refreshPending(database: SQLiteDatabase) {
     setPending(await pendingChanges(database));
@@ -83,6 +90,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setSyncing(true);
     try {
       await syncAccount(database, force);
+      await retryPendingPhotos(database);
       setGoals(await readGoals(database));
       setSyncError(null);
       setRefreshToken((token) => token + 1);
@@ -130,11 +138,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         const nextGoals = await readGoals(database);
         const nextAccount = nextMode === "account" ? await readAccount(database) : null;
+        const nextConsent = (await readSetting(database, "ai_photo_consent_version")) === AI_PHOTO_CONSENT_VERSION;
         if (!cancelled) {
           setDb(database);
           setGoals(nextGoals);
           setMode(nextMode);
           setAccount(nextAccount);
+          setPhotoConsent(nextConsent);
           setPending(await pendingChanges(database));
         }
         if (!cancelled && session.refreshToken) await sync(database, true);
@@ -165,6 +175,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       syncing,
       pending,
       syncError,
+      photoConsent,
       loadDay: (date) => {
         if (!db) throw new Error("Database is not open");
         return loadDay(db, date);
@@ -196,6 +207,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         await saveSession(session);
         await enterAccountMode(db);
         await writeAccount(db, session.user.email, session.user.display_name);
+        if ((await readSetting(db, "ai_photo_consent_version")) === AI_PHOTO_CONSENT_VERSION) {
+          await writeSetting(db, "ai_photo_consent_pending", "1");
+          setPhotoConsent(true);
+        }
         setMode("account");
         setAccount({ email: session.user.email, displayName: session.user.display_name });
         setGoals(await readGoals(db));
@@ -235,15 +250,47 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         setRefreshToken((token) => token + 1);
       },
-      deleteMeal: async (id, pendingCreate) => {
+      deleteMeal: async (id, pendingCreate, photoId) => {
         if (!db) return;
         await removeMeal(db, id);
         if (mode === "account") {
-          await queueMealDelete(db, id, pendingCreate);
+          if (photoId) await queuePhotoExclude(db, photoId);
+          else await queueMealDelete(db, id, pendingCreate);
           await refreshPending(db);
           void sync(db, true);
         }
         setRefreshToken((token) => token + 1);
+      },
+      acceptPhotoConsent: async () => {
+        if (!db) return;
+        await writeSetting(db, "ai_photo_consent_version", AI_PHOTO_CONSENT_VERSION);
+        await writeSetting(db, "ai_photo_consent_at", new Date().toISOString());
+        setPhotoConsent(true);
+        if (mode !== "account") return;
+        try {
+          await api.send("PUT", "/settings", { accept_ai_consent: true, ai_consent_version: AI_PHOTO_CONSENT_VERSION });
+          await writeSetting(db, "ai_photo_consent_pending", "0");
+        } catch {
+          await writeSetting(db, "ai_photo_consent_pending", "1");
+        }
+      },
+      addMealPhoto: async (uri) => {
+        if (!db || mode !== "account") return "Sign in with Google before analyzing a meal photo.";
+        const prepared = await prepareMealImage(uri);
+        const result = await importPreparedPhoto(db, prepared, { ...capturedToday(), source: "manual" });
+        setRefreshToken((token) => token + 1);
+        if (result.reconnect) setSyncError(result.message);
+        void sync(db, true);
+        return result.message;
+      },
+      scanMealPhotos: async () => {
+        if (!db || mode !== "account" || !photoConsent) return "";
+        const result = await scanRecentPhotos(db);
+        if (result.imported > 0) {
+          setRefreshToken((token) => token + 1);
+          void sync(db, true);
+        }
+        return result.status === "empty" ? "" : result.message;
       },
       logWeight: async (localDate, weightKg) => {
         if (!db) return;
@@ -256,7 +303,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setRefreshToken((token) => token + 1);
       },
     }),
-    [account, db, goals, mode, pending, refreshToken, syncError, syncing],
+    [account, db, goals, mode, pending, photoConsent, refreshToken, syncError, syncing],
   );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

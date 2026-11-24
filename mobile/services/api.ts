@@ -112,4 +112,36 @@ export const api = {
   sync: (since?: string) =>
     apiRequest<SyncChangesResponse>("GET", `/sync/changes?limit=200${since ? `&since=${encodeURIComponent(since)}` : ""}`),
   send: apiRequest,
+  upload: apiForm,
 };
+
+export async function apiForm<T>(path: string, form: FormData): Promise<T> {
+  return sendForm<T>(path, form, false);
+}
+
+async function sendForm<T>(path: string, form: FormData, retried: boolean): Promise<T> {
+  const session = await readSession();
+  let response: Response;
+  try {
+    response = await fetch(`${apiBaseUrl()}${path}`, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        ...(session.accessToken ? { authorization: `Bearer ${session.accessToken}` } : {}),
+      },
+      body: form,
+    });
+  } catch {
+    throw new OfflineError();
+  }
+  if (response.status === 401 && !retried && session.refreshToken) {
+    await refreshTokens();
+    return sendForm<T>(path, form, true);
+  }
+  const payload = (await response.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null;
+  if (!response.ok) {
+    if (response.status === 401) throw new SessionExpired();
+    throw new ApiError(response.status, payload?.error?.code ?? "INTERNAL_ERROR", payload?.error?.message ?? "Request failed");
+  }
+  return payload as T;
+}
