@@ -1,0 +1,15 @@
+{
+  "name": "fitlogr",
+  "private": true,
+  "workspaces": [
+    "mobile"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev:mobile": "npm --workspace @fitlogr/mobile run start",
+    "typecheck": "npm --workspace @fitlogr/mobile run typecheck",
+    "mobile:doctor": "npm --workspace @fitlogr/mobile run doctor"
+  }
+}
