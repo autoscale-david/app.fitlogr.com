@@ -13,6 +13,7 @@ export interface Env {
   OPENROUTER_VISION_MODEL?: string;
   OPENROUTER_VISION_FALLBACK_MODELS?: string;
   OPENROUTER_TEXT_MODEL?: string;
+  OPENROUTER_TEXT_FALLBACK_MODELS?: string;
   APP_URL?: string;
   API_BASE_URL?: string;
   ENVIRONMENT?: string;

@@ -39,6 +39,15 @@ export {
   UserProfileSchema,
   WeightQuerySchema,
   WeightWriteSchema,
+  AccountDeleteRequestSchema,
+  AccountDeleteResponseSchema,
+  AccountExportSchema,
+  AccountPhotoExportSchema,
+  AccountSummaryExportSchema,
+  DailyInsightSchema,
+  TrendPointSchema,
+  TrendsQuerySchema,
+  TrendsResponseSchema,
 } from "./schemas/index";
 export {
   AI_PHOTO_CONSENT_VERSION,
@@ -114,6 +123,15 @@ export type {
   UserProfile,
   WeightQuery,
   WeightWrite,
+  AccountDeleteRequest,
+  AccountDeleteResponse,
+  AccountExport,
+  AccountPhotoExport,
+  AccountSummaryExport,
+  DailyInsight,
+  TrendPoint,
+  TrendsQuery,
+  TrendsResponse,
 } from "./schemas/index";
 export {
   APPLE_HEALTH_NATIVE_BUILD_MESSAGE,

@@ -1,13 +1,14 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { AppState } from "react-native";
 import { openDatabaseAsync, type SQLiteDatabase } from "expo-sqlite";
-import { AI_PHOTO_CONSENT_VERSION } from "@fitlogr/shared";
-import { api, SessionExpired } from "./api";
+import { AI_PHOTO_CONSENT_VERSION, type DailyInsight, type TrendsResponse } from "@fitlogr/shared";
+import { api, ApiError, SessionExpired } from "./api";
 import { getHealthProvider, readHealthConnection, syncAppleHealth, type HealthConnection } from "./health";
 import { AuthCancelled, signInWithGoogle } from "./auth";
 import {
   enterAccountMode,
   enterDemoMode,
+  listWeights,
   loadDay,
   loggedDates,
   migrate,
@@ -30,6 +31,7 @@ import {
   type MealRecord,
 } from "./db";
 import { clearSession, readSession, saveSession } from "./session";
+import { shareAccountExport } from "./exportAccount";
 import { capturedToday, importPreparedPhoto, prepareMealImage, retryPendingPhotos, scanRecentPhotos } from "./photos";
 import { queueMeal, queueMealDelete, queuePhotoExclude, queueSettings, queueWeight, syncAccount } from "./sync";
 
@@ -49,7 +51,15 @@ interface Store {
   syncError: string | null;
   photoConsent: boolean;
   health: HealthConnection | null;
+  googleReconnectRequired: boolean;
+  lastSyncedAt: string | null;
   loadDay: (date: string) => Promise<DayLog>;
+  listWeights: (from: string, to: string) => Promise<{ localDate: string; weightKg: number }[]>;
+  loadInsight: (date: string) => Promise<DailyInsight | null>;
+  loadTrends: (days: 7 | 14 | 30) => Promise<TrendsResponse | null>;
+  reconnectGoogle: () => Promise<void>;
+  exportAccount: () => Promise<void>;
+  deleteAccount: () => Promise<void>;
   loggedDates: () => Promise<string[]>;
   saveGoals: (goals: Goals) => Promise<void>;
   restoreSample: () => Promise<void>;
@@ -80,6 +90,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [photoConsent, setPhotoConsent] = useState(false);
   const [health, setHealth] = useState<HealthConnection | null>(null);
+  const [googleReconnectRequired, setGoogleReconnectRequired] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
 
   async function refreshPending(database: SQLiteDatabase) {
     setPending(await pendingChanges(database));
@@ -107,8 +119,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setGoals(await readGoals(database));
       setHealth(await readHealthConnection(database));
       setSyncError(healthError);
+      const stamp = new Date().toISOString();
+      await writeSetting(database, "last_synced_at", stamp);
+      setLastSyncedAt(stamp);
+      try {
+        const me = await api.me();
+        const reconnect = me.google.status === "revoked" || me.google.status === "error";
+        await writeSetting(database, "google_status", me.google.status);
+        setGoogleReconnectRequired(reconnect);
+      } catch (error) {
+        if (error instanceof ApiError && error.code === "google_reconnect_required") {
+          await writeSetting(database, "google_status", "revoked");
+          setGoogleReconnectRequired(true);
+        }
+      }
       setRefreshToken((token) => token + 1);
     } catch (error) {
+      if (error instanceof ApiError && error.code === "google_reconnect_required") {
+        await writeSetting(database, "google_status", "revoked");
+        setGoogleReconnectRequired(true);
+      }
       if (error instanceof SessionExpired) {
         await clearSession();
         await enterDemoMode(database);
@@ -161,6 +191,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           setPhotoConsent(nextConsent);
           setPending(await pendingChanges(database));
           setHealth(await readHealthConnection(database));
+          const syncedAt = await readSetting(database, "last_synced_at");
+          const googleStatus = await readSetting(database, "google_status");
+          setLastSyncedAt(syncedAt || null);
+          setGoogleReconnectRequired(googleStatus === "revoked" || googleStatus === "error");
         }
         if (!cancelled && session.refreshToken) await sync(database, true);
       })
@@ -192,6 +226,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       syncError,
       photoConsent,
       health,
+      googleReconnectRequired,
+      lastSyncedAt,
       loadDay: (date) => {
         if (!db) throw new Error("Database is not open");
         return loadDay(db, date);
@@ -199,6 +235,79 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       loggedDates: () => {
         if (!db) throw new Error("Database is not open");
         return loggedDates(db);
+      },
+      listWeights: (from, to) => {
+        if (!db) throw new Error("Database is not open");
+        return listWeights(db, from, to);
+      },
+      loadInsight: async (date) => {
+        if (!db || mode !== "account") return null;
+        try {
+          const body = await api.send<DailyInsight>("GET", `/insights/${date}`);
+          await writeSetting(db, "insight_cache", JSON.stringify(body));
+          return body;
+        } catch (error) {
+          if (error instanceof ApiError && error.code === "google_reconnect_required") {
+            await writeSetting(db, "google_status", "revoked");
+            setGoogleReconnectRequired(true);
+          }
+          const raw = await readSetting(db, "insight_cache");
+          if (!raw) return null;
+          try {
+            const cached = JSON.parse(raw) as DailyInsight;
+            if (cached.date !== date) return null;
+            return { ...cached, cached: true };
+          } catch {
+            return null;
+          }
+        }
+      },
+      loadTrends: async (days) => {
+        if (mode !== "account") return null;
+        try {
+          return await api.send<TrendsResponse>("GET", `/review/trends?days=${days}`);
+        } catch (error) {
+          if (error instanceof ApiError && error.code === "google_reconnect_required") {
+            setGoogleReconnectRequired(true);
+          }
+          return null;
+        }
+      },
+      reconnectGoogle: async () => {
+        if (!db) return;
+        const session = await signInWithGoogle();
+        await saveSession(session);
+        await writeSetting(db, "google_status", "active");
+        setGoogleReconnectRequired(false);
+        if (mode !== "account") {
+          await enterAccountMode(db);
+          await writeAccount(db, session.user.email, session.user.display_name);
+          setMode("account");
+          setAccount({ email: session.user.email, displayName: session.user.display_name });
+        }
+        await sync(db, true);
+      },
+      exportAccount: async () => {
+        if (mode !== "account") throw new Error("Sign in to export your fitlogr data");
+        const data = await api.send<unknown>("GET", "/account/export");
+        await shareAccountExport(JSON.stringify(data, null, 2));
+      },
+      deleteAccount: async () => {
+        if (!db || mode !== "account") return;
+        await api.send("DELETE", "/account", { confirm: true });
+        await clearSession();
+        await enterDemoMode(db);
+        await writeSetting(db, "google_status", "");
+        await writeSetting(db, "last_synced_at", "");
+        await writeSetting(db, "insight_cache", "");
+        setMode("demo");
+        setAccount(null);
+        setGoogleReconnectRequired(false);
+        setLastSyncedAt(null);
+        setSyncError(null);
+        setPending(0);
+        setGoals(await readGoals(db));
+        setRefreshToken((token) => token + 1);
       },
       saveGoals: async (next) => {
         if (!db) return;
@@ -241,8 +350,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         await clearSession();
         await enterDemoMode(db);
+        await writeSetting(db, "google_status", "");
+        await writeSetting(db, "last_synced_at", "");
         setMode("demo");
         setAccount(null);
+        setGoogleReconnectRequired(false);
+        setLastSyncedAt(null);
         setSyncError(null);
         setGoals(await readGoals(db));
         setPending(0);
@@ -313,7 +426,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const prepared = await prepareMealImage(uri);
         const result = await importPreparedPhoto(db, prepared, { ...capturedToday(), source: "manual" });
         setRefreshToken((token) => token + 1);
-        if (result.reconnect) setSyncError(result.message);
+        if (result.reconnect) {
+          setSyncError(result.message);
+          await writeSetting(db, "google_status", "revoked");
+          setGoogleReconnectRequired(true);
+        }
         void sync(db, true);
         return result.message;
       },
@@ -337,7 +454,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setRefreshToken((token) => token + 1);
       },
     }),
-    [account, db, goals, health, mode, pending, photoConsent, refreshToken, syncError, syncing],
+    [account, db, goals, googleReconnectRequired, health, lastSyncedAt, mode, pending, photoConsent, refreshToken, syncError, syncing],
   );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

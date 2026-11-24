@@ -11,15 +11,14 @@ binding = "ASSETS"
 run_worker_first = [ "/api/*" ]
 not_found_handling = "404-page"
 
-# Production deploy intentionally has no D1 binding yet.
-# CLOUDFLARE_API_TOKEN can deploy Workers, but listing D1 databases returns
-# HTTP 401 Authentication error (code 10000). A top-level [[d1_databases]]
-# block would make `wrangler deploy` and the GitHub migration step require
-# fitlogr-db. Keep that block absent until the token has Account / D1 Edit
-# and `wrangler d1 create fitlogr-db` can return a real database_id.
-#
-# Local development uses [env.local] (`npm run dev:worker`).
-# Empty routes stop this environment from inheriting fitlogr.com. Never deploy --env local.
+# Production D1. Local development uses [env.local] (`npm run dev:worker`).
+# Empty routes stop that environment from inheriting fitlogr.com. Never deploy --env local.
+
+[[d1_databases]]
+binding = "DB"
+database_name = "fitlogr-db"
+database_id = "6327af00-c0fe-44c7-b691-f52246ed9a6c"
+migrations_dir = "migrations"
 
 [env.local]
 routes = []
@@ -32,6 +31,7 @@ GOOGLE_PHOTOS_ALBUM_NAME = "fitlogr"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_VISION_MODEL = "google/gemini-2.5-flash-lite"
 OPENROUTER_TEXT_MODEL = "google/gemini-2.5-flash-lite"
+OPENROUTER_TEXT_FALLBACK_MODELS = "openai/gpt-4o-mini"
 APP_URL = "https://fitlogr.com"
 API_BASE_URL = "https://fitlogr.com/api"
 
@@ -48,6 +48,7 @@ GOOGLE_PHOTOS_ALBUM_NAME = "fitlogr"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_VISION_MODEL = "google/gemini-2.5-flash-lite"
 OPENROUTER_TEXT_MODEL = "google/gemini-2.5-flash-lite"
+OPENROUTER_TEXT_FALLBACK_MODELS = "openai/gpt-4o-mini"
 APP_URL = "https://fitlogr.com"
 API_BASE_URL = "https://fitlogr.com/api"
 ENVIRONMENT = "production"

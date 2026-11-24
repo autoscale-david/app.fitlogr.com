@@ -57,11 +57,27 @@ describe("stage 2 API", () => {
     const states = await database.prepare("SELECT COUNT(*) AS n FROM oauth_states").first<{ n: number }>();
     expect(states?.n).toBe(0);
 
+    const evil = await post("/api/auth/google/start", {
+      redirect_uri: "https://evil.com/auth/callback",
+      client_challenge: "a".repeat(43),
+    });
+    expect(evil.status).toBe(400);
+    const stillEmpty = await database.prepare("SELECT COUNT(*) AS n FROM oauth_states").first<{ n: number }>();
+    expect(stillEmpty?.n).toBe(0);
+
     const allowed = await post("/api/auth/google/start", {
       redirect_uri: "exp://192.168.1.20:8081/--/auth/callback",
       client_challenge: "a".repeat(43),
     });
     expect(allowed.status).toBe(200);
+
+    const preview = await post("/api/auth/google/start", {
+      redirect_uri: "exp://u.expo.dev/update/01a20c91-e031-7a2a-816c-f0d510b91266/--/auth/callback",
+      client_challenge: "b".repeat(43),
+    });
+    expect(preview.status).toBe(200);
+    const started = (await preview.json()) as { authorize_url: string };
+    expect(new URL(started.authorize_url).hostname).toBe("accounts.google.com");
   });
 
   it("signs in with PKCE, encrypts the Google refresh token, and exchanges a single-use code", async () => {

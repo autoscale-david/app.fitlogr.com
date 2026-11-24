@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import { ApiError, errorBody, jsonError } from "./http";
 import { registerHealthRoutes } from "./health/routes";
 import { registerPhotoRoutes } from "./photos/routes";
+import { registerAccountRoutes } from "./routes/account";
+import { registerReviewRoutes } from "./routes/review";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerMealRoutes } from "./routes/meals";
 import { registerSettingsRoutes } from "./routes/settings";
@@ -60,6 +62,8 @@ export function createApp(deps: AppDeps = { fetch: globalThis.fetch.bind(globalT
   registerPhotoRoutes(app);
   registerSyncRoutes(app);
   registerHealthRoutes(app);
+  registerReviewRoutes(app);
+  registerAccountRoutes(app);
 
   app.notFound((c) => {
     if (c.req.path.startsWith("/api/")) {

@@ -47,6 +47,7 @@ const config: ExpoConfig = {
     "expo-secure-store",
     "expo-sqlite",
     "expo-web-browser",
+    "expo-sharing",
     "expo-status-bar",
     [
       "expo-image-picker",

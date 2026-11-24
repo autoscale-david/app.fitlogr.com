@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { GoogleReconnectBanner, SyncStatusBanner } from "../../components/AccountBanners";
 import { HealthSyncCard } from "../../components/HealthSyncCard";
 import type { Goals } from "../../services/db";
 import { AuthCancelled, useStore } from "../../services/store";
@@ -11,6 +12,10 @@ export default function SettingsScreen() {
   const store = useStore();
   const [draft, setDraft] = useState<Goals | null>(store.goals);
   const [busy, setBusy] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
     setDraft(store.goals);
@@ -34,19 +39,35 @@ export default function SettingsScreen() {
       <Text style={styles.title}>Settings</Text>
       <Image source={require("../../assets/logo.png")} style={styles.logo} resizeMode="contain" />
 
+      <GoogleReconnectBanner
+        visible={store.googleReconnectRequired}
+        busy={reconnecting}
+        onReconnect={() => {
+          setReconnecting(true);
+          store
+            .reconnectGoogle()
+            .catch((error: unknown) => {
+              if (error instanceof AuthCancelled) return;
+              Alert.alert("Reconnect Google", error instanceof Error ? error.message : "Reconnect failed");
+            })
+            .finally(() => setReconnecting(false));
+        }}
+      />
+      <SyncStatusBanner
+        visible={store.mode === "account"}
+        pending={store.pending}
+        lastSyncedAt={store.lastSyncedAt}
+        syncing={store.syncing}
+        error={store.syncError}
+        onRetry={() => void store.sync(true)}
+      />
+
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Account</Text>
         {store.account ? (
           <>
             <Text style={styles.body}>{store.account.displayName || "Google account"}</Text>
             <Text style={styles.body}>{store.account.email}</Text>
-            <Text style={styles.sync}>
-              {store.syncing ? "Syncing…" : store.pending > 0 ? `${store.pending} change${store.pending === 1 ? "" : "s"} waiting to sync` : "Synced with fitlogr.com"}
-            </Text>
-            {store.syncError ? <Text style={styles.error}>{store.syncError}</Text> : null}
-            <Pressable style={styles.secondaryInline} onPress={() => void store.sync(true)}>
-              <Text style={styles.secondaryText}>Sync now</Text>
-            </Pressable>
             <Pressable
               style={styles.secondaryInline}
               onPress={() => {
@@ -101,6 +122,65 @@ export default function SettingsScreen() {
         <NumberField label="Carbs (g)" value={draft.carbsTarget} onChange={(carbsTarget) => save({ ...draft, carbsTarget })} />
         <NumberField label="Fat (g)" value={draft.fatTarget} onChange={(fatTarget) => save({ ...draft, fatTarget })} />
       </View>
+
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Data & privacy</Text>
+        {store.mode === "account" ? (
+          <>
+            <Text style={styles.body}>Download a JSON copy of your fitlogr profile, meals, photos metadata, health records, and daily summaries.</Text>
+            <Pressable
+              style={styles.secondaryInline}
+              disabled={exporting}
+              onPress={() => {
+                setExporting(true);
+                store
+                  .exportAccount()
+                  .catch((error: unknown) => {
+                    Alert.alert("Export", error instanceof Error ? error.message : "Export failed");
+                  })
+                  .finally(() => setExporting(false));
+              }}
+            >
+              {exporting ? <ActivityIndicator color={colors.text} /> : <Text style={styles.secondaryText}>Export My Data</Text>}
+            </Pressable>
+            <Pressable style={styles.danger} onPress={() => setConfirmDelete(true)}>
+              <Text style={styles.dangerText}>Delete Account</Text>
+            </Pressable>
+          </>
+        ) : (
+          <Text style={styles.body}>Sign in to export or delete the fitlogr account. The sample day stays on this phone.</Text>
+        )}
+      </View>
+
+      <Modal visible={confirmDelete} transparent animationType="fade" onRequestClose={() => setConfirmDelete(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.cardTitle}>Delete your fitlogr account?</Text>
+            <Text style={styles.body}>
+              This permanently deletes your fitlogr profile, meals, health records, and settings. Your Google Photos library, including the fitlogr album and meal photos, will not be deleted.
+            </Text>
+            <Pressable
+              style={styles.danger}
+              disabled={deleting}
+              onPress={() => {
+                setDeleting(true);
+                store
+                  .deleteAccount()
+                  .then(() => setConfirmDelete(false))
+                  .catch((error: unknown) => {
+                    Alert.alert("Delete account", error instanceof Error ? error.message : "Could not delete the account");
+                  })
+                  .finally(() => setDeleting(false));
+              }}
+            >
+              {deleting ? <ActivityIndicator color={colors.fat} /> : <Text style={styles.dangerText}>Delete fitlogr data</Text>}
+            </Pressable>
+            <Pressable style={styles.secondaryInline} onPress={() => setConfirmDelete(false)}>
+              <Text style={styles.secondaryText}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
 
       {store.mode === "demo" ? (
         <Pressable style={styles.secondary} onPress={() => void store.restoreSample()}>
@@ -211,4 +291,20 @@ const styles = StyleSheet.create({
   sync: { color: colors.muted, marginTop: 8 },
   error: { color: colors.fat, marginTop: 8 },
   version: { color: colors.faint, textAlign: "center", marginTop: 16 },
+  danger: {
+    marginTop: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#5A2A30",
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  dangerText: { color: colors.fat, fontWeight: "700" },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.72)",
+    justifyContent: "center",
+    padding: 24,
+  },
+  modalCard: { backgroundColor: colors.card, borderRadius: 18, padding: 16 },
 });
