@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { isAllowedAppRedirect, redirectWithParams } from "./redirects";
+import { describeRejectedRedirect, isAllowedAppRedirect, redirectWithParams } from "./redirects";
 
 const UPDATE = "01a20c91-e031-7a2a-816c-f0d510b91266";
+const GROUP = "7e8bd250-083f-4331-b52b-70f882a4be4d";
 const PROJECT = "1964593c-a6a0-49e5-a35b-240cf2bf254e";
 
 describe("app redirect allowlist", () => {
@@ -29,6 +30,15 @@ describe("app redirect allowlist", () => {
       "exp://192.168.1.20:8081/--/auth/callback",
       "exps://192.168.0.12:8081/--/auth/callback",
       "exp://abc.anonymous.exp.direct/--/auth/callback",
+      `exp://u.expo.dev/${PROJECT}/group/${GROUP}/--/auth/callback`,
+      `exp://u.expo.dev/${PROJECT}/group/${GROUP}//--/auth/callback`,
+      `exps://u.expo.dev/${PROJECT}/group/${GROUP}//--/auth/callback?runtime-version=0.1.0&channel-name=preview`,
+      `exp://u.expo.dev/${PROJECT}/group/${GROUP}/--/auth/callback?runtime-version=0.1.0&channel-name=preview`,
+      `exp:///u.expo.dev/${PROJECT}/group/${GROUP}/--/auth/callback`,
+      "exp://expo.dev/@davidcgweb/fitlogr/--/auth/callback",
+      "exps://expo.dev/@davidcgweb/fitlogr//--/auth/callback",
+      "fitlogr:///auth/callback",
+      "exp+fitlogr:///auth/callback",
       "https://auth.expo.io/@davidcgweb/fitlogr",
       "https://auth.expo.io/@davidcgweb/fitlogr/auth/callback",
       "https://auth.expo.io/@davidcgweb/fitlogr/--/auth/callback",
@@ -50,6 +60,10 @@ describe("app redirect allowlist", () => {
       "exps://evil.com/update/abc/--/auth/callback",
       "exp://u.expo.dev.evil.com/update/abc/--/auth/callback",
       "exp://u.expo.dev/other-app/--/auth/callback",
+      `exp://u.expo.dev/other-project/group/${GROUP}/--/auth/callback`,
+      "exp://expo.dev/evil/--/auth/callback",
+      "exp://expo.dev/@attacker/fitlogr/--/auth/callback",
+      `exp://u.expo.dev/${PROJECT}/group/${GROUP}/--/steal`,
       "exp://u.expo.dev/update/--/auth/callback",
       `exp://exp.host/@attacker/fitlogr/--/auth/callback`,
       "exp://exp.host/@davidcgweb/other/--/auth/callback",
@@ -88,5 +102,27 @@ describe("app redirect allowlist", () => {
     expect(updateUrl.searchParams.get("exchange_code")).toBe("code-1");
     expect(withCode).toContain("&exchange_code=code-1");
     expect(withCode.includes("?exchange_code=")).toBe(false);
+  });
+
+  it("parses the EAS Update group callback the way workerd does", () => {
+    const doubled = `exp://u.expo.dev/${PROJECT}/group/${GROUP}//--/auth/callback?runtime-version=0.1.0&channel-name=preview`;
+    const parsed = new URL(doubled);
+    expect(parsed.protocol).toBe("exp:");
+    expect(parsed.hostname).toBe("u.expo.dev");
+    expect(parsed.pathname).toBe(`/${PROJECT}/group/${GROUP}//--/auth/callback`);
+    expect(parsed.search).toBe("?runtime-version=0.1.0&channel-name=preview");
+    expect(isAllowedAppRedirect(doubled)).toBe(true);
+
+    const triple = `exp:///u.expo.dev/${PROJECT}/group/${GROUP}/--/auth/callback`;
+    const emptyHost = new URL(triple);
+    expect(emptyHost.hostname).toBe("");
+    expect(emptyHost.pathname).toBe(`/u.expo.dev/${PROJECT}/group/${GROUP}/--/auth/callback`);
+    expect(isAllowedAppRedirect(triple)).toBe(true);
+
+    const described = describeRejectedRedirect(
+      "exp://evil.com/--/auth/callback?next=https://evil.example/secret",
+    );
+    expect(described).toBe("exp://evil.com/--/auth/callback");
+    expect(described.includes("secret")).toBe(false);
   });
 });

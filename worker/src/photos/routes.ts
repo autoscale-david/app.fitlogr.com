@@ -3,9 +3,27 @@ import { CheckHashesRequestSchema, PhotoExcludeRequestSchema } from "@fitlogr/sh
 import { currentAuth, requireAuth } from "../auth/middleware";
 import { ApiError, errorBody, readJson, requireDb } from "../http";
 import type { AppEnv } from "../types";
+import { createPickerSession, importPickerSession, pickerSessionStatus } from "./picker";
 import { RateLimitError, analyzeUploadedPhoto, checkPhotoHashes, excludePhoto, freshPhotoUrl } from "./service";
 
 export function registerPhotoRoutes(app: Hono<AppEnv>): void {
+  app.post("/api/photos/picker/sessions", requireAuth(), async (c) => {
+    const session = await createPickerSession(requireDb(c.env.DB), c.env, c.get("deps"), currentAuth(c.get("auth")).userId);
+    return c.json(session);
+  });
+
+  app.get("/api/photos/picker/sessions/:sessionId", requireAuth(), async (c) => {
+    const sessionId = requireSessionId(c.req.param("sessionId"));
+    const status = await pickerSessionStatus(requireDb(c.env.DB), c.env, c.get("deps"), currentAuth(c.get("auth")).userId, sessionId);
+    return c.json(status);
+  });
+
+  app.post("/api/photos/picker/sessions/:sessionId/import", requireAuth(), async (c) => {
+    const sessionId = requireSessionId(c.req.param("sessionId"));
+    const summary = await importPickerSession(requireDb(c.env.DB), c.env, c.get("deps"), currentAuth(c.get("auth")).userId, sessionId);
+    return c.json(summary);
+  });
+
   app.post("/api/photos/check-hashes", requireAuth(), async (c) => {
     const body = await readJson(c.req.raw, CheckHashesRequestSchema);
     const result = await checkPhotoHashes(requireDb(c.env.DB), currentAuth(c.get("auth")).userId, body.items);
@@ -50,6 +68,11 @@ export function registerPhotoRoutes(app: Hono<AppEnv>): void {
     const result = await excludePhoto(requireDb(c.env.DB), currentAuth(c.get("auth")).userId, c.req.param("id"), c.get("deps").now());
     return c.json(result);
   });
+}
+
+function requireSessionId(value: string): string {
+  if (!/^[A-Za-z0-9_-]{6,200}$/.test(value)) throw new ApiError(400, "VALIDATION_ERROR", "Picker session is not valid");
+  return value;
 }
 
 async function readMetadata(value: File | string | null): Promise<unknown> {

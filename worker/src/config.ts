@@ -30,6 +30,12 @@ export const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/photoslibrary.readonly.appcreateddata",
 ] as const;
 
+export const PICKER_SCOPE = "https://www.googleapis.com/auth/photospicker.mediaitems.readonly";
+
+export function googleScopes(includePickerScope: boolean): string[] {
+  return includePickerScope ? [...GOOGLE_SCOPES, PICKER_SCOPE] : [...GOOGLE_SCOPES];
+}
+
 export const ACCESS_TOKEN_SECONDS = 60 * 60;
 export const REFRESH_TOKEN_SECONDS = 90 * 24 * 60 * 60;
 export const OAUTH_STATE_SECONDS = 10 * 60;

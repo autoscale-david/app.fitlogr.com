@@ -3,7 +3,7 @@ import { AppState } from "react-native";
 import { openDatabaseAsync, type SQLiteDatabase } from "expo-sqlite";
 import { AI_PHOTO_CONSENT_VERSION, type DailyInsight, type TrendsResponse } from "@fitlogr/shared";
 import { api, ApiError, SessionExpired } from "./api";
-import { getHealthProvider, readHealthConnection, syncAppleHealth, type HealthConnection } from "./health";
+import { getHealthProvider, readHealthConnection, syncAppleHealth, syncHealthHistory, type HealthConnection } from "./health";
 import { AuthCancelled, signInWithGoogle } from "./auth";
 import {
   enterAccountMode,
@@ -32,7 +32,7 @@ import {
 } from "./db";
 import { clearSession, readSession, saveSession } from "./session";
 import { shareAccountExport } from "./exportAccount";
-import { capturedToday, importPreparedPhoto, prepareMealImage, retryPendingPhotos, scanRecentPhotos } from "./photos";
+import { capturedToday, importPreparedPhoto, prepareMealImage, retryPendingPhotos, scanMealPhotosFromPastDays, scanRecentPhotos, type HistoryProgress, type HistoryScanResult } from "./photos";
 import { queueMeal, queueMealDelete, queuePhotoExclude, queueSettings, queueWeight, syncAccount } from "./sync";
 
 interface Account {
@@ -74,6 +74,9 @@ interface Store {
   acceptPhotoConsent: () => Promise<void>;
   addMealPhoto: (uri: string) => Promise<string>;
   scanMealPhotos: () => Promise<string>;
+  grantPickerAccess: () => Promise<void>;
+  scanHistory: (days: number, onProgress: (progress: HistoryProgress) => void, signal: AbortSignal) => Promise<HistoryScanResult>;
+  importHealthHistory: (days: number) => Promise<string>;
 }
 
 const StoreContext = createContext<Store | null>(null);
@@ -273,6 +276,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return null;
         }
       },
+      grantPickerAccess: async () => {
+        if (!db) return;
+        const session = await signInWithGoogle({ includePickerScope: true });
+        await saveSession(session);
+        await writeSetting(db, "google_status", "active");
+        setGoogleReconnectRequired(false);
+        if (mode !== "account") {
+          await enterAccountMode(db);
+          await writeAccount(db, session.user.email, session.user.display_name);
+          setMode("account");
+          setAccount({ email: session.user.email, displayName: session.user.display_name });
+        }
+      },
       reconnectGoogle: async () => {
         if (!db) return;
         const session = await signInWithGoogle();
@@ -432,6 +448,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           setGoogleReconnectRequired(true);
         }
         void sync(db, true);
+        return result.message;
+      },
+      scanHistory: async (days, onProgress, signal) => {
+        if (!db || mode !== "account") {
+          return {
+            status: "unavailable",
+            capped: false,
+            scanned: 0,
+            skipped: 0,
+            meals: 0,
+            nonMeals: 0,
+            errors: 0,
+            message: "Sign in with Google before importing history.",
+          };
+        }
+        const result = await scanMealPhotosFromPastDays(db, { days, onProgress, signal });
+        setRefreshToken((token) => token + 1);
+        return result;
+      },
+      importHealthHistory: async (days) => {
+        if (!db || mode !== "account") return "Sign in with Google before importing Apple Health.";
+        const result = await syncHealthHistory(db, days);
+        setRefreshToken((token) => token + 1);
         return result.message;
       },
       scanMealPhotos: async () => {
