@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { calorieBudget, caloriesRemaining } from "@fitlogr/shared";
 import { CalorieRing } from "../../components/CalorieRing";
@@ -54,6 +55,7 @@ export default function LogScreen() {
     <ScrollView
       style={styles.screen}
       contentContainerStyle={{ paddingTop: insets.top + 8, paddingHorizontal: 16, paddingBottom: 28 }}
+      refreshControl={<RefreshControl refreshing={store.syncing} onRefresh={() => void store.sync(true)} tintColor={colors.green} />}
     >
       <View style={styles.header}>
         <Pressable style={styles.todayButton} onPress={() => setSelected(today)}>
@@ -61,12 +63,10 @@ export default function LogScreen() {
           <Ionicons name="chevron-down" size={18} color={colors.muted} />
         </Pressable>
         <View style={styles.headerRight}>
-          {weight ? (
-            <View style={styles.weightPill}>
-              <View style={styles.weightDot} />
-              <Text style={styles.weightText}>{weight}</Text>
-            </View>
-          ) : null}
+          <Pressable style={styles.weightPill} onPress={() => router.push({ pathname: "/weight", params: { date: selected } })}>
+            <View style={styles.weightDot} />
+            <Text style={styles.weightText}>{weight ?? "Log weight"}</Text>
+          </Pressable>
           <View style={styles.avatar}>
             <Ionicons name="person" size={18} color="#F2D2C4" />
           </View>
@@ -124,12 +124,17 @@ export default function LogScreen() {
           ) : (
             entries.map((entry) =>
               entry.kind === "meal" ? (
-                <MealCard key={entry.meal.id} meal={entry.meal} />
+                <Pressable key={entry.meal.id} onPress={() => router.push({ pathname: "/meal/[id]", params: { id: entry.meal.id } })}>
+                  <MealCard meal={entry.meal} />
+                </Pressable>
               ) : (
                 <WorkoutCard key={entry.workout.id} workout={entry.workout} />
               ),
             )
           )}
+          <Pressable style={styles.addMeal} onPress={() => router.push({ pathname: "/meal/[id]", params: { id: "new", date: selected } })}>
+            <Text style={styles.addMealText}>Add a meal</Text>
+          </Pressable>
         </>
       )}
     </ScrollView>
@@ -183,4 +188,13 @@ const styles = StyleSheet.create({
     marginTop: 22,
   },
   empty: { color: colors.muted, textAlign: "center", marginTop: 18 },
+  addMeal: {
+    marginTop: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#2E3338",
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  addMealText: { color: colors.text, fontWeight: "700" },
 });

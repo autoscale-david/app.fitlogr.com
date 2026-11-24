@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
-import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { Goals } from "../../services/db";
-import { useStore } from "../../services/store";
+import { AuthCancelled, useStore } from "../../services/store";
 import { colors } from "../../theme";
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const store = useStore();
   const [draft, setDraft] = useState<Goals | null>(store.goals);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     setDraft(store.goals);
@@ -34,18 +35,52 @@ export default function SettingsScreen() {
 
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Account</Text>
-        <Text style={styles.body}>Not connected. Google sign-in is the next stage, after this screen is comfortable in Expo Go.</Text>
-        <Pressable
-          style={styles.button}
-          onPress={() =>
-            Alert.alert(
-              "Google sign-in",
-              "Sign-in will connect this phone to fitlogr.com and Google Photos. The Log screen already works offline.",
-            )
-          }
-        >
-          <Text style={styles.buttonText}>Continue with Google</Text>
-        </Pressable>
+        {store.account ? (
+          <>
+            <Text style={styles.body}>{store.account.displayName || "Google account"}</Text>
+            <Text style={styles.body}>{store.account.email}</Text>
+            <Text style={styles.sync}>
+              {store.syncing ? "Syncing…" : store.pending > 0 ? `${store.pending} change${store.pending === 1 ? "" : "s"} waiting to sync` : "Synced with fitlogr.com"}
+            </Text>
+            {store.syncError ? <Text style={styles.error}>{store.syncError}</Text> : null}
+            <Pressable style={styles.secondaryInline} onPress={() => void store.sync(true)}>
+              <Text style={styles.secondaryText}>Sync now</Text>
+            </Pressable>
+            <Pressable
+              style={styles.secondaryInline}
+              onPress={() => {
+                Alert.alert("Sign out", "This phone returns to the sample preview. Your fitlogr account stays on the server.", [
+                  { text: "Cancel", style: "cancel" },
+                  { text: "Sign out", style: "destructive", onPress: () => void store.signOut() },
+                ]);
+              }}
+            >
+              <Text style={styles.secondaryText}>Sign out</Text>
+            </Pressable>
+          </>
+        ) : (
+          <>
+            <Text style={styles.body}>
+              Connect Google to save goals, meals, and weight on fitlogr.com. Until then, this phone shows the sample day.
+            </Text>
+            <Pressable
+              style={styles.button}
+              disabled={busy}
+              onPress={() => {
+                setBusy(true);
+                store
+                  .signIn()
+                  .catch((error: unknown) => {
+                    if (error instanceof AuthCancelled) return;
+                    Alert.alert("Google sign-in", error instanceof Error ? error.message : "Sign-in failed");
+                  })
+                  .finally(() => setBusy(false));
+              }}
+            >
+              {busy ? <ActivityIndicator color="#062214" /> : <Text style={styles.buttonText}>Continue with Google</Text>}
+            </Pressable>
+          </>
+        )}
       </View>
 
       <View style={styles.card}>
@@ -64,15 +99,12 @@ export default function SettingsScreen() {
         <NumberField label="Fat (g)" value={draft.fatTarget} onChange={(fatTarget) => save({ ...draft, fatTarget })} />
       </View>
 
-      <Pressable
-        style={styles.secondary}
-        onPress={() => {
-          void store.restoreSample();
-        }}
-      >
-        <Text style={styles.secondaryText}>Restore sample day</Text>
-      </Pressable>
-      <Text style={styles.version}>fitlogr 0.1.0 · local preview</Text>
+      {store.mode === "demo" ? (
+        <Pressable style={styles.secondary} onPress={() => void store.restoreSample()}>
+          <Text style={styles.secondaryText}>Restore sample day</Text>
+        </Pressable>
+      ) : null}
+      <Text style={styles.version}>{store.mode === "account" ? "fitlogr 0.1.0 · Google account" : "fitlogr 0.1.0 · sample preview"}</Text>
     </ScrollView>
   );
 }
@@ -165,5 +197,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   secondaryText: { color: colors.text, fontWeight: "700" },
+  secondaryInline: {
+    marginTop: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#2E3338",
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  sync: { color: colors.muted, marginTop: 8 },
+  error: { color: colors.fat, marginTop: 8 },
   version: { color: colors.faint, textAlign: "center", marginTop: 16 },
 });
