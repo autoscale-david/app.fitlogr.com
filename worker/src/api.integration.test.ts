@@ -62,8 +62,17 @@ describe("stage 2 API", () => {
       client_challenge: "a".repeat(43),
     });
     expect(evil.status).toBe(400);
+    const evilBody = (await evil.json()) as { error: { message: string } };
+    expect(evilBody.error.message).toBe("Redirect URL is not allowed (https://evil.com/auth/callback)");
     const stillEmpty = await database.prepare("SELECT COUNT(*) AS n FROM oauth_states").first<{ n: number }>();
     expect(stillEmpty?.n).toBe(0);
+
+    const group = await post("/api/auth/google/start", {
+      redirect_uri:
+        "exp://u.expo.dev/1964593c-a6a0-49e5-a35b-240cf2bf254e/group/7e8bd250-083f-4331-b52b-70f882a4be4d//--/auth/callback",
+      client_challenge: "c".repeat(43),
+    });
+    expect(group.status).toBe(200);
 
     const allowed = await post("/api/auth/google/start", {
       redirect_uri: "exp://192.168.1.20:8081/--/auth/callback",

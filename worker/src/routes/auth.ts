@@ -5,7 +5,7 @@ import {
   AuthStartRequestSchema,
   LogoutRequestSchema,
 } from "@fitlogr/shared";
-import { isAllowedAppRedirect, redirectWithParams } from "../auth/redirects";
+import { describeRejectedRedirect, isAllowedAppRedirect, redirectWithParams } from "../auth/redirects";
 import { currentAuth, requireAuth } from "../auth/middleware";
 import { issueSession, revokeAllSessions, revokeSession, rotateSession } from "../auth/sessions";
 import { EXCHANGE_CODE_SECONDS, OAUTH_STATE_SECONDS, requireAuthConfig } from "../config";
@@ -35,7 +35,9 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
     const db = requireDb(c.env.DB);
     const body = await readJson(c.req.raw, AuthStartRequestSchema);
     if (!isAllowedAppRedirect(body.redirect_uri)) {
-      throw new ApiError(400, "VALIDATION_ERROR", "Redirect URL is not allowed");
+      const described = describeRejectedRedirect(body.redirect_uri);
+      console.warn("rejected app redirect", described);
+      throw new ApiError(400, "VALIDATION_ERROR", `Redirect URL is not allowed (${described})`);
     }
     const now = c.get("deps").now();
     const stamp = nowIso(now);
