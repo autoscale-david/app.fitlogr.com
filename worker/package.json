@@ -4,11 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev --local",
+    "dev": "wrangler dev --local --env local",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "migrate:local": "wrangler d1 migrations apply fitlogr-db --local",
+    "migrate:local": "wrangler d1 migrations apply fitlogr-db --local --env local",
     "migrate:remote": "wrangler d1 migrations apply fitlogr-db --remote"
   },
   "dependencies": {

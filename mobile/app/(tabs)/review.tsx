@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { caloriesRemaining } from "@fitlogr/shared";
 import { addDays, formatReviewDate, localDateISO } from "../../services/dates";
@@ -29,9 +29,10 @@ export default function ReviewScreen() {
     <ScrollView
       style={styles.screen}
       contentContainerStyle={{ paddingTop: insets.top + 12, paddingHorizontal: 16, paddingBottom: 28 }}
+      refreshControl={<RefreshControl refreshing={store.syncing} onRefresh={() => void store.sync(true)} tintColor={colors.green} />}
     >
       <Text style={styles.title}>Review</Text>
-      <Text style={styles.subtitle}>The last 7 days, from the phone.</Text>
+      <Text style={styles.subtitle}>{store.mode === "account" ? "The last 7 days, including synced days." : "The last 7 days, from this phone."}</Text>
       {!store.ready || !store.goals ? (
         <ActivityIndicator color={colors.green} style={{ marginTop: 40 }} />
       ) : (

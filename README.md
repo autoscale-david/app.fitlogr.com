@@ -424,7 +424,11 @@ Apple Health and Health Connect need an EAS development build. Expo Go uses the 
 npm run dev:worker
 ```
 
-Wrangler serves the site and `http://127.0.0.1:8787/api/health`. The D1 schema is in `worker/migrations` and is applied during the production deploy once `fitlogr-db` exists. Production deploys from `main` through `.github/workflows/deploy-worker.yml` using the `CLOUDFLARE_API_TOKEN` GitHub secret.
+Wrangler serves the site and `http://127.0.0.1:8787/api/health`. `npm run dev:worker` uses a local D1 database (`wrangler --env local`), applies `worker/migrations`, and reports `db_ok: true` when that database answers `SELECT 1`.
+
+Copy the secret names from `.env.example` into `worker/.dev.vars` before exercising Google sign-in locally. The production Worker config does not bind D1 until `CLOUDFLARE_API_TOKEN` can create `fitlogr-db`. A token that can deploy Workers but receives HTTP 401 from the D1 API must not be used to attach a missing database, or the live `fitlogr.com` deploy will fail.
+
+Google sign-in uses the system browser. Expo Go returns through the `exp://` or `https://auth.expo.io` URL from `Linking.createURL('auth/callback')`. A native build returns through `fitlogr://auth/callback`. Both are allowlisted. Sample meals stay on the phone only while you are signed out. Signing in clears that preview and syncs the account. Signing out restores the sample day.
 
 ## Mission
 

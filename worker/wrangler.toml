@@ -11,14 +11,35 @@ binding = "ASSETS"
 run_worker_first = [ "/api/*" ]
 not_found_handling = "404-page"
 
-# database_id is filled in after `wrangler d1 create fitlogr-db`.
-# The binding stays commented until the Cloudflare token can create D1,
-# so a site deploy is not blocked on that permission.
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "fitlogr-db"
-# database_id = "00000000-0000-0000-0000-000000000000"
-# migrations_dir = "migrations"
+# Production deploy intentionally has no D1 binding yet.
+# CLOUDFLARE_API_TOKEN can deploy Workers, but listing D1 databases returns
+# HTTP 401 Authentication error (code 10000). A top-level [[d1_databases]]
+# block would make `wrangler deploy` and the GitHub migration step require
+# fitlogr-db. Keep that block absent until the token has Account / D1 Edit
+# and `wrangler d1 create fitlogr-db` can return a real database_id.
+#
+# Local development uses [env.local] (`npm run dev:worker`).
+# Empty routes stop this environment from inheriting fitlogr.com. Never deploy --env local.
+
+[env.local]
+routes = []
+
+[env.local.vars]
+ENVIRONMENT = "development"
+GOOGLE_CLOUD_PROJECT_ID = "fitlogr-app"
+GOOGLE_OAUTH_REDIRECT_URI = "https://fitlogr.com/api/auth/google/callback"
+GOOGLE_PHOTOS_ALBUM_NAME = "fitlogr"
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_VISION_MODEL = "google/gemini-2.5-flash-lite"
+OPENROUTER_TEXT_MODEL = "google/gemini-2.5-flash-lite"
+APP_URL = "https://fitlogr.com"
+API_BASE_URL = "https://fitlogr.com/api"
+
+[[env.local.d1_databases]]
+binding = "DB"
+database_name = "fitlogr-db"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
 
 [vars]
 GOOGLE_CLOUD_PROJECT_ID = "fitlogr-app"

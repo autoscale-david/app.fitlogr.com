@@ -85,6 +85,40 @@ CREATE TABLE IF NOT EXISTS weights (
 
 export async function migrate(db: SQLiteDatabase): Promise<void> {
   await db.execAsync(SCHEMA);
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS meal_items (
+      id TEXT PRIMARY KEY NOT NULL,
+      meal_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      quantity REAL NOT NULL DEFAULT 1,
+      unit TEXT NOT NULL DEFAULT 'serving',
+      calories_kcal REAL NOT NULL,
+      protein_g REAL NOT NULL,
+      carbs_g REAL NOT NULL,
+      fat_g REAL NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS sync_outbox (
+      id TEXT PRIMARY KEY NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      method TEXT NOT NULL,
+      path TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      next_retry_at TEXT,
+      created_at TEXT NOT NULL
+    );
+  `);
+  for (const statement of [
+    "ALTER TABLE meals ADD COLUMN meal_type TEXT NOT NULL DEFAULT 'meal'",
+    "ALTER TABLE meals ADD COLUMN timezone TEXT NOT NULL DEFAULT 'UTC'",
+    "ALTER TABLE meals ADD COLUMN is_user_edited INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE meals ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE meals ADD COLUMN pending_create INTEGER NOT NULL DEFAULT 0",
+  ]) {
+    await addColumn(db, statement);
+  }
   const seeded = await db.getFirstAsync<{ value: string }>(
     "SELECT value FROM settings WHERE key = ?",
     "seeded",
@@ -92,6 +126,8 @@ export async function migrate(db: SQLiteDatabase): Promise<void> {
   if (!seeded) {
     await seedSample(db);
   }
+  const mode = await readSetting(db, "data_mode");
+  if (!mode) await writeSetting(db, "data_mode", "demo");
 }
 
 export async function readGoals(db: SQLiteDatabase): Promise<Goals> {
@@ -254,4 +290,123 @@ function meal(
 function numberOr(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+export type DataMode = "demo" | "account";
+
+export async function readSetting(db: SQLiteDatabase, key: string): Promise<string | null> {
+  const row = await db.getFirstAsync<{ value: string }>("SELECT value FROM settings WHERE key = ?", key);
+  return row?.value ?? null;
+}
+
+export async function writeSetting(db: SQLiteDatabase, key: string, value: string): Promise<void> {
+  await db.runAsync(
+    "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    key,
+    value,
+  );
+}
+
+export async function readMode(db: SQLiteDatabase): Promise<DataMode> {
+  return (await readSetting(db, "data_mode")) === "account" ? "account" : "demo";
+}
+
+export async function readAccount(db: SQLiteDatabase): Promise<{ email: string; displayName: string | null } | null> {
+  const email = await readSetting(db, "account_email");
+  if (!email) return null;
+  return { email, displayName: await readSetting(db, "account_display_name") };
+}
+
+export async function writeAccount(db: SQLiteDatabase, email: string, displayName: string | null): Promise<void> {
+  await writeSetting(db, "account_email", email);
+  await writeSetting(db, "account_display_name", displayName ?? "");
+}
+
+export async function enterAccountMode(db: SQLiteDatabase): Promise<void> {
+  await db.execAsync("DELETE FROM meals; DELETE FROM meal_items; DELETE FROM workouts; DELETE FROM weights; DELETE FROM sync_outbox;");
+  await writeSetting(db, "data_mode", "account");
+  await writeSetting(db, "sync_cursor", "");
+  await writeSetting(db, "seeded", "1");
+}
+
+export async function enterDemoMode(db: SQLiteDatabase): Promise<void> {
+  await db.execAsync("DELETE FROM meals; DELETE FROM meal_items; DELETE FROM workouts; DELETE FROM weights; DELETE FROM sync_outbox;");
+  await writeSetting(db, "account_email", "");
+  await writeSetting(db, "account_display_name", "");
+  await writeSetting(db, "sync_cursor", "");
+  await writeSetting(db, "settings_updated_at", "");
+  await seedSample(db);
+  await writeSetting(db, "data_mode", "demo");
+}
+
+export async function readMeal(db: SQLiteDatabase, id: string): Promise<(MealRecord & { pendingCreate: boolean }) | null> {
+  const row = await db.getFirstAsync<MealRecord & { pendingCreate: number }>(
+    `SELECT id, local_date as localDate, name, eaten_at as eatenAt, calories_kcal as caloriesKcal,
+            protein_g as proteinG, carbs_g as carbsG, fat_g as fatG, badge,
+            pending_create as pendingCreate
+     FROM meals WHERE id = ?`,
+    id,
+  );
+  if (!row) return null;
+  return { ...row, pendingCreate: Boolean(row.pendingCreate) };
+}
+
+export async function writeMeal(db: SQLiteDatabase, meal: MealRecord, pendingCreate: boolean): Promise<void> {
+  const updatedAt = new Date().toISOString();
+  await db.runAsync(
+    `INSERT INTO meals (
+       id, local_date, name, eaten_at, calories_kcal, protein_g, carbs_g, fat_g, badge,
+       meal_type, timezone, is_user_edited, updated_at, pending_create
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'meal', 'UTC', 1, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       local_date = excluded.local_date,
+       name = excluded.name,
+       eaten_at = excluded.eaten_at,
+       calories_kcal = excluded.calories_kcal,
+       protein_g = excluded.protein_g,
+       carbs_g = excluded.carbs_g,
+       fat_g = excluded.fat_g,
+       badge = excluded.badge,
+       is_user_edited = 1,
+       updated_at = excluded.updated_at,
+       pending_create = excluded.pending_create`,
+    meal.id,
+    meal.localDate,
+    meal.name,
+    meal.eatenAt,
+    meal.caloriesKcal,
+    meal.proteinG,
+    meal.carbsG,
+    meal.fatG,
+    meal.badge,
+    updatedAt,
+    pendingCreate ? 1 : 0,
+  );
+}
+
+export async function removeMeal(db: SQLiteDatabase, id: string): Promise<void> {
+  await db.runAsync("DELETE FROM meal_items WHERE meal_id = ?", id);
+  await db.runAsync("DELETE FROM meals WHERE id = ?", id);
+}
+
+export async function writeWeightKg(db: SQLiteDatabase, localDate: string, weightKg: number): Promise<void> {
+  await db.runAsync(
+    "INSERT INTO weights (local_date, weight_kg) VALUES (?, ?) ON CONFLICT(local_date) DO UPDATE SET weight_kg = excluded.weight_kg",
+    localDate,
+    weightKg,
+  );
+}
+
+export async function pendingChanges(db: SQLiteDatabase): Promise<number> {
+  const row = await db.getFirstAsync<{ n: number }>("SELECT COUNT(*) AS n FROM sync_outbox");
+  return row?.n ?? 0;
+}
+
+async function addColumn(db: SQLiteDatabase, sql: string): Promise<void> {
+  try {
+    await db.execAsync(sql);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/duplicate column/i.test(message)) throw error;
+  }
 }
