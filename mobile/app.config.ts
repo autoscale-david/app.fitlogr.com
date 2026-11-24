@@ -17,10 +17,15 @@ const config: ExpoConfig = {
     bundleIdentifier: "com.fitlogr.app",
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
+      NSPhotoLibraryUsageDescription:
+        "fitlogr looks at recent photos to find meals and estimate calories. A photo is compressed and sent only after you agree.",
+      NSCameraUsageDescription: "fitlogr uses the camera so you can photograph a meal and estimate its calories.",
+      NSPhotoLibraryAddUsageDescription: "fitlogr does not add photos to your library.",
     },
   },
   android: {
     package: "com.fitlogr.app",
+    permissions: ["android.permission.CAMERA", "android.permission.READ_MEDIA_IMAGES"],
     adaptiveIcon: {
       foregroundImage: "./assets/logo.png",
       backgroundColor: "#000000",
@@ -33,6 +38,25 @@ const config: ExpoConfig = {
     "expo-sqlite",
     "expo-web-browser",
     "expo-status-bar",
+    [
+      "expo-image-picker",
+      {
+        photosPermission:
+          "fitlogr looks at recent photos to find meals and estimate calories. A photo is compressed and sent only after you agree.",
+        cameraPermission: "fitlogr uses the camera so you can photograph a meal and estimate its calories.",
+        microphonePermission: false,
+      },
+    ],
+    [
+      "expo-media-library",
+      {
+        photosPermission:
+          "fitlogr looks at recent photos to find meals and estimate calories. A photo is compressed and sent only after you agree.",
+        savePhotosPermission: false,
+        isAccessMediaLocationEnabled: false,
+        granularPermissions: ["photo"],
+      },
+    ],
     [
       "expo-splash-screen",
       {

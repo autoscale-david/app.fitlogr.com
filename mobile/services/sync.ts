@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from "expo-sqlite";
-import type { Goals, MealRecord } from "./db";
-import { readSetting, writeGoals, writeSetting, writeWeightKg } from "./db";
+import type { Goals, MealItemRecord, MealRecord } from "./db";
+import { readSetting, writeGoals, writeServerMeal, writeSetting, writeWeightKg } from "./db";
 import { deviceTimeZone } from "./dates";
 import { ApiError, OfflineError, SessionExpired, api } from "./api";
 import { randomUuid } from "./encoding";
@@ -38,19 +38,23 @@ export async function queueMeal(db: SQLiteDatabase, meal: MealRecord, pendingCre
     eaten_at: meal.eatenAt,
     local_date: meal.localDate,
     timezone: deviceTimeZone(),
-    items: [
-      {
-        name: meal.name,
-        quantity: 1,
-        unit: "serving",
-        calories_kcal: meal.caloriesKcal,
-        protein_g: meal.proteinG,
-        carbs_g: meal.carbsG,
-        fat_g: meal.fatG,
-      },
-    ],
+    items: (meal.items && meal.items.length > 0 ? meal.items : [fallbackItem(meal)]).map((item) => ({
+      id: item.id,
+      name: item.name,
+      quantity: item.quantity,
+      unit: item.unit,
+      estimated_grams: item.estimatedGrams,
+      calories_kcal: item.caloriesKcal,
+      protein_g: item.proteinG,
+      carbs_g: item.carbsG,
+      fat_g: item.fatG,
+    })),
   };
   await replaceOutbox(db, "meal", meal.id, pendingCreate ? "POST" : "PATCH", pendingCreate ? "/meals" : `/meals/${meal.id}`, body);
+}
+
+export async function queuePhotoExclude(db: SQLiteDatabase, photoId: string): Promise<void> {
+  await replaceOutbox(db, "photo", photoId, "POST", `/photos/${photoId}/exclude`, { reason: "not_meal" });
 }
 
 export async function queueMealDelete(db: SQLiteDatabase, mealId: string, pendingCreate: boolean): Promise<void> {
@@ -60,8 +64,16 @@ export async function queueMealDelete(db: SQLiteDatabase, mealId: string, pendin
 }
 
 export async function syncAccount(db: SQLiteDatabase, force: boolean): Promise<void> {
+  await pushPhotoConsent(db);
   await drainOutbox(db, force);
   await pullChanges(db);
+}
+
+async function pushPhotoConsent(db: SQLiteDatabase): Promise<void> {
+  if ((await readSetting(db, "ai_photo_consent_pending")) !== "1") return;
+  const version = await readSetting(db, "ai_photo_consent_version");
+  await api.send("PUT", "/settings", { accept_ai_consent: true, ai_consent_version: version });
+  await writeSetting(db, "ai_photo_consent_pending", "0");
 }
 
 async function drainOutbox(db: SQLiteDatabase, force: boolean): Promise<void> {
@@ -133,56 +145,34 @@ async function pullChanges(db: SQLiteDatabase): Promise<void> {
           await db.runAsync("DELETE FROM meals WHERE id = ?", meal.id);
           continue;
         }
-        await db.runAsync(
-          `INSERT INTO meals (
-             id, local_date, name, eaten_at, calories_kcal, protein_g, carbs_g, fat_g, badge,
-             meal_type, timezone, is_user_edited, updated_at, pending_create
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-           ON CONFLICT(id) DO UPDATE SET
-             local_date = excluded.local_date,
-             name = excluded.name,
-             eaten_at = excluded.eaten_at,
-             calories_kcal = excluded.calories_kcal,
-             protein_g = excluded.protein_g,
-             carbs_g = excluded.carbs_g,
-             fat_g = excluded.fat_g,
-             badge = excluded.badge,
-             meal_type = excluded.meal_type,
-             timezone = excluded.timezone,
-             is_user_edited = excluded.is_user_edited,
-             updated_at = excluded.updated_at,
-             pending_create = 0`,
-          meal.id,
-          meal.local_date,
-          meal.name,
-          meal.eaten_at,
-          meal.calories_kcal,
-          meal.protein_g,
-          meal.carbs_g,
-          meal.fat_g,
-          meal.is_user_edited ? "edited" : "ai",
-          meal.meal_type,
-          meal.timezone,
-          meal.is_user_edited ? 1 : 0,
-          meal.updated_at,
-        );
-        await db.runAsync("DELETE FROM meal_items WHERE meal_id = ?", meal.id);
-        for (const item of meal.items.filter((entry) => !entry.deleted_at)) {
-          await db.runAsync(
-            `INSERT INTO meal_items (id, meal_id, name, quantity, unit, calories_kcal, protein_g, carbs_g, fat_g, sort_order)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            item.id,
-            meal.id,
-            item.name,
-            item.quantity,
-            item.unit,
-            item.calories_kcal,
-            item.protein_g,
-            item.carbs_g,
-            item.fat_g,
-            item.sort_order,
-          );
-        }
+        await writeServerMeal(db, {
+          id: meal.id,
+          localDate: meal.local_date,
+          name: meal.name,
+          eatenAt: meal.eaten_at,
+          caloriesKcal: meal.calories_kcal,
+          proteinG: meal.protein_g,
+          carbsG: meal.carbs_g,
+          fatG: meal.fat_g,
+          badge: meal.is_user_edited ? "edited" : "ai",
+          photoId: meal.photo_id,
+          mealType: meal.meal_type,
+          timezone: meal.timezone,
+          isUserEdited: meal.is_user_edited,
+          updatedAt: meal.updated_at,
+          items: meal.items.filter((entry) => !entry.deleted_at).map((item) => ({
+            id: item.id,
+            name: item.name,
+            quantity: item.quantity,
+            unit: item.unit,
+            estimatedGrams: item.estimated_grams,
+            caloriesKcal: item.calories_kcal,
+            proteinG: item.protein_g,
+            carbsG: item.carbs_g,
+            fatG: item.fat_g,
+            isUserEdited: item.is_user_edited,
+          })),
+        });
       }
       for (const record of changes.health_records) {
         if (record.record_type !== "weight") continue;
@@ -198,6 +188,21 @@ async function pullChanges(db: SQLiteDatabase): Promise<void> {
     since = changes.cursor;
     if (!changes.has_more) return;
   }
+}
+
+function fallbackItem(meal: MealRecord): MealItemRecord {
+  return {
+    id: `${meal.id}-item`,
+    name: meal.name,
+    quantity: 1,
+    unit: "serving",
+    estimatedGrams: null,
+    caloriesKcal: meal.caloriesKcal,
+    proteinG: meal.proteinG,
+    carbsG: meal.carbsG,
+    fatG: meal.fatG,
+    isUserEdited: true,
+  };
 }
 
 async function replaceOutbox(

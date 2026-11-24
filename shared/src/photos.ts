@@ -1,0 +1,292 @@
+import { z } from "zod";
+import { MealItemInputSchema, MealPatchSchema, MealSchema, MealTypeSchema } from "./schemas/meals";
+import { atwaterCalories, sumMacros, type MacroTotals } from "./nutrition";
+
+/** 64-bit difference-hash length, stored as 16 lowercase hex characters. */
+export const DHashSchema = z.string().regex(/^[a-f0-9]{16}$/);
+export const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
+
+export const PHOTO_LIMITS = {
+  maxImageBytes: 2 * 1024 * 1024,
+  maxBatch: 100,
+  maxEdgePx: 1280,
+  jpegQuality: 0.8,
+  dailyVision: 30,
+  burstVision: 10,
+  burstWindowMs: 5 * 60 * 1000,
+  nearDuplicateDistance: 8,
+  mealConfidenceMin: 0.55,
+} as const;
+
+export const AI_PHOTO_CONSENT_VERSION = "2026-11-23";
+
+export const HashCheckStatusSchema = z.enum(["new", "duplicate", "near_duplicate", "excluded", "non_meal"]);
+export type HashCheckStatus = z.infer<typeof HashCheckStatusSchema>;
+
+export const CheckHashItemSchema = z.object({
+  content_sha256: Sha256Schema,
+  perceptual_hash: DHashSchema.nullable().optional(),
+  captured_at: z.iso.datetime().optional(),
+});
+export type CheckHashItem = z.infer<typeof CheckHashItemSchema>;
+
+export const CheckHashesRequestSchema = z.object({
+  items: z.array(CheckHashItemSchema).min(1).max(PHOTO_LIMITS.maxBatch),
+});
+export type CheckHashesRequest = z.infer<typeof CheckHashesRequestSchema>;
+
+export const CheckHashResultSchema = z.object({
+  content_sha256: Sha256Schema,
+  status: HashCheckStatusSchema,
+  photo_id: z.string().nullable(),
+  meal_id: z.string().nullable(),
+});
+export type CheckHashResult = z.infer<typeof CheckHashResultSchema>;
+
+export const CheckHashesResponseSchema = z.object({
+  results: z.array(CheckHashResultSchema),
+});
+export type CheckHashesResponse = z.infer<typeof CheckHashesResponseSchema>;
+
+export const PhotoSourceSchema = z.enum(["device_library", "google_picker", "manual"]);
+export type PhotoSource = z.infer<typeof PhotoSourceSchema>;
+
+export const AnalyzePhotoMetadataSchema = z.object({
+  client_photo_id: z.string().min(1).max(80).optional(),
+  content_sha256: Sha256Schema,
+  perceptual_hash: DHashSchema.nullable().optional(),
+  captured_at: z.iso.datetime(),
+  local_date: z.iso.date(),
+  timezone: z.string().min(1).max(80),
+  device_id: z.string().min(1).max(80).optional(),
+  source: PhotoSourceSchema.optional(),
+  force_meal: z.boolean().optional(),
+});
+export type AnalyzePhotoMetadata = z.infer<typeof AnalyzePhotoMetadataSchema>;
+
+const VisionItemObjectSchema = z.object({
+  name: z.string().min(1).max(100),
+  quantity: z.number().positive().max(100),
+  unit: z.string().min(1).max(30),
+  estimated_grams: z.number().positive().max(5000).nullable(),
+  calories_kcal: z.number().min(0).max(5000),
+  protein_g: z.number().min(0).max(500),
+  carbs_g: z.number().min(0).max(1000),
+  fat_g: z.number().min(0).max(500),
+  confidence: z.number().min(0).max(1),
+});
+
+export const MealVisionItemSchema = z.preprocess(normalizeVisionItem, VisionItemObjectSchema);
+export type MealVisionItem = z.infer<typeof VisionItemObjectSchema>;
+
+const VisionObjectSchema = z
+  .object({
+    classification: z.enum(["meal", "not_meal"]),
+    is_meal: z.boolean(),
+    confidence: z.number().min(0).max(1),
+    meal_name: z.string().min(1).max(120).nullable(),
+    suggested_meal_type: MealTypeSchema.nullable(),
+    notes: z.string().max(300).nullable(),
+    items: z.array(MealVisionItemSchema).max(30),
+  })
+  .refine((value) => value.is_meal === (value.classification === "meal"), {
+    message: "classification does not match is_meal",
+  });
+
+/** OpenRouter vision payload. Totals are intentionally absent; the server sums items. */
+export const MealVisionSchema = z.preprocess(normalizeVision, VisionObjectSchema);
+export type MealVision = z.infer<typeof VisionObjectSchema>;
+
+export const PhotoStatusSchema = z.enum([
+  "analyzed_meal",
+  "analyzed_non_meal",
+  "excluded",
+  "duplicate",
+  "upload_failed",
+  "quota_exceeded",
+]);
+export type PhotoStatus = z.infer<typeof PhotoStatusSchema>;
+
+export const GooglePhotoStatusSchema = z.enum(["none", "uploaded", "missing", "quota_exceeded", "failed"]);
+export type GooglePhotoStatus = z.infer<typeof GooglePhotoStatusSchema>;
+
+export const PhotoReferenceSchema = z.object({
+  id: z.string(),
+  status: PhotoStatusSchema,
+  is_meal: z.boolean(),
+  google_media_item_id: z.string().nullable(),
+  google_status: GooglePhotoStatusSchema,
+  content_sha256: Sha256Schema,
+  duplicate_of_photo_id: z.string().nullable(),
+});
+export type PhotoReference = z.infer<typeof PhotoReferenceSchema>;
+
+export const AnalyzePhotoResponseSchema = z.object({
+  outcome: z.enum(["meal", "not_meal", "duplicate"]),
+  photo: PhotoReferenceSchema,
+  meal: MealSchema.nullable(),
+});
+export type AnalyzePhotoResponse = z.infer<typeof AnalyzePhotoResponseSchema>;
+
+export const PhotoUrlStatusSchema = z.enum(["ok", "missing", "quota_exceeded", "unavailable"]);
+export type PhotoUrlStatus = z.infer<typeof PhotoUrlStatusSchema>;
+
+export const PhotoUrlResponseSchema = z.object({
+  photo_id: z.string(),
+  status: PhotoUrlStatusSchema,
+  url: z.string().nullable(),
+  expires_at: z.string().nullable(),
+});
+export type PhotoUrlResponse = z.infer<typeof PhotoUrlResponseSchema>;
+
+export const PhotoExcludeRequestSchema = z
+  .object({
+    reason: z.enum(["not_meal", "user_excluded"]).optional(),
+  })
+  .default({ reason: "not_meal" });
+export type PhotoExcludeRequest = z.infer<typeof PhotoExcludeRequestSchema>;
+
+export const PhotoExcludeResponseSchema = z.object({
+  photo_id: z.string(),
+  status: z.literal("excluded"),
+  meal_id: z.string().nullable(),
+});
+export type PhotoExcludeResponse = z.infer<typeof PhotoExcludeResponseSchema>;
+
+/** Item-level correction. PATCH /api/meals/:id applies this and sets is_user_edited. */
+export const MealCorrectionSchema = MealPatchSchema;
+export type MealCorrection = z.infer<typeof MealCorrectionSchema>;
+
+export const MealItemCorrectionSchema = MealItemInputSchema;
+export type MealItemCorrection = z.infer<typeof MealItemCorrectionSchema>;
+
+export interface KnownPhotoHash {
+  id: string;
+  content_sha256: string;
+  perceptual_hash: string | null;
+  status: string;
+  meal_id: string | null;
+}
+
+export function hammingDistance(left: string, right: string): number {
+  if (left.length !== right.length || left.length === 0) return 64;
+  let distance = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    const a = Number.parseInt(left[index] ?? "", 16);
+    const b = Number.parseInt(right[index] ?? "", 16);
+    if (Number.isNaN(a) || Number.isNaN(b)) return 64;
+    let xor = a ^ b;
+    while (xor) {
+      distance += xor & 1;
+      xor >>= 1;
+    }
+  }
+  return distance;
+}
+
+/** Horizontal dHash. `luma` is row-major grayscale for a 9×8 image (64 comparisons). */
+export function dHashFromLuma(luma: Uint8Array, width = 9, height = 8): string {
+  if (width !== 9 || height !== 8 || luma.length < width * height) {
+    throw new Error("dHash expects a 9x8 grayscale image");
+  }
+  let hex = "";
+  for (let y = 0; y < height; y += 1) {
+    let nibble = 0;
+    for (let x = 0; x < width - 1; x += 1) {
+      const bit = (luma[y * width + x] ?? 0) < (luma[y * width + x + 1] ?? 0) ? 1 : 0;
+      nibble = (nibble << 1) | bit;
+      if (x % 4 === 3) {
+        hex += nibble.toString(16);
+        nibble = 0;
+      }
+    }
+  }
+  return hex;
+}
+
+export function totalsFromVisionItems(items: readonly MealVisionItem[]): MacroTotals {
+  return sumMacros(items);
+}
+
+export function isConfirmedMeal(analysis: MealVision, forceMeal = false): boolean {
+  const calledMeal = analysis.classification === "meal" && analysis.is_meal;
+  if (!calledMeal && !forceMeal) return false;
+  if (analysis.confidence < PHOTO_LIMITS.mealConfidenceMin && !forceMeal) return false;
+  return analysis.items.length > 0 || forceMeal;
+}
+
+export function atwaterWarning(items: readonly MealVisionItem[]): string | null {
+  const names = items
+    .filter((item) => {
+      const expected = atwaterCalories(item.protein_g, item.carbs_g, item.fat_g);
+      if (expected < 20) return false;
+      return Math.abs(item.calories_kcal - expected) / expected > 0.5;
+    })
+    .map((item) => item.name);
+  if (names.length === 0) return null;
+  return `Calorie check differs from 4/4/9 for: ${names.join(", ")}`.slice(0, 300);
+}
+
+export function matchHash(item: CheckHashItem, known: readonly KnownPhotoHash[]): CheckHashResult {
+  const exact = known.find((photo) => photo.content_sha256 === item.content_sha256);
+  if (exact) return toHashResult(item.content_sha256, exact, "exact");
+  const hash = item.perceptual_hash;
+  if (hash) {
+    let nearest: KnownPhotoHash | null = null;
+    let nearestDistance = PHOTO_LIMITS.nearDuplicateDistance + 1;
+    for (const photo of known) {
+      if (!photo.perceptual_hash) continue;
+      const distance = hammingDistance(hash, photo.perceptual_hash);
+      if (distance <= PHOTO_LIMITS.nearDuplicateDistance && distance < nearestDistance) {
+        nearest = photo;
+        nearestDistance = distance;
+      }
+    }
+    if (nearest) return toHashResult(item.content_sha256, nearest, "near");
+  }
+  return { content_sha256: item.content_sha256, status: "new", photo_id: null, meal_id: null };
+}
+
+function toHashResult(contentSha256: string, photo: KnownPhotoHash, kind: "exact" | "near"): CheckHashResult {
+  let status: HashCheckStatus;
+  if (photo.status === "excluded") status = "excluded";
+  else if (photo.status === "analyzed_non_meal") status = "non_meal";
+  else status = kind === "near" ? "near_duplicate" : "duplicate";
+  return {
+    content_sha256: contentSha256,
+    status,
+    photo_id: photo.id,
+    meal_id: photo.meal_id,
+  };
+}
+
+function normalizeVision(input: unknown): unknown {
+  if (!input || typeof input !== "object") return input;
+  const record = { ...(input as Record<string, unknown>) };
+  if (record.classification === undefined && typeof record.is_meal === "boolean") {
+    record.classification = record.is_meal ? "meal" : "not_meal";
+  }
+  if (record.is_meal === undefined && (record.classification === "meal" || record.classification === "not_meal")) {
+    record.is_meal = record.classification === "meal";
+  }
+  if (record.meal_name === undefined && typeof record.mealName === "string") record.meal_name = record.mealName;
+  if (record.meal_name === "") record.meal_name = null;
+  if (record.suggested_meal_type === undefined) record.suggested_meal_type = null;
+  if (record.notes === undefined) record.notes = null;
+  if (Array.isArray(record.items)) record.items = record.items.map((item) => normalizeVisionItem(item));
+  return record;
+}
+
+function normalizeVisionItem(input: unknown): unknown {
+  if (!input || typeof input !== "object") return input;
+  const record = { ...(input as Record<string, unknown>) };
+  if (record.estimated_grams === undefined && typeof record.grams === "number") record.estimated_grams = record.grams;
+  if (record.estimated_grams === undefined) record.estimated_grams = null;
+  if (record.calories_kcal === undefined && typeof record.calories === "number") record.calories_kcal = record.calories;
+  if (record.protein_g === undefined && typeof record.protein === "number") record.protein_g = record.protein;
+  if (record.carbs_g === undefined && typeof record.carbs === "number") record.carbs_g = record.carbs;
+  if (record.fat_g === undefined && typeof record.fat === "number") record.fat_g = record.fat;
+  if (record.unit === undefined) record.unit = "serving";
+  if (record.quantity === undefined) record.quantity = 1;
+  return record;
+}

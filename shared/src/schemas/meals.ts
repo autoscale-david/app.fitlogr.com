@@ -77,6 +77,7 @@ export const MealSchema = z.object({
   created_at: z.string(),
   updated_at: z.string(),
   deleted_at: z.string().nullable(),
+  photo_id: z.string().nullable(),
   items: z.array(MealItemSchema),
 });
 export type Meal = z.infer<typeof MealSchema>;

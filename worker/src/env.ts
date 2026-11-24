@@ -11,6 +11,7 @@ export interface Env {
   GOOGLE_PHOTOS_ALBUM_NAME?: string;
   OPENROUTER_BASE_URL?: string;
   OPENROUTER_VISION_MODEL?: string;
+  OPENROUTER_VISION_FALLBACK_MODELS?: string;
   OPENROUTER_TEXT_MODEL?: string;
   APP_URL?: string;
   API_BASE_URL?: string;

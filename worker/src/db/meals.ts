@@ -7,6 +7,7 @@ import { recomputeDailyIntake } from "./summaries";
 
 interface MealRow {
   id: string;
+  photo_id: string | null;
   name: string;
   meal_type: Meal["meal_type"];
   eaten_at: string;
@@ -42,7 +43,7 @@ interface ItemRow {
   deleted_at: string | null;
 }
 
-const MEAL_COLUMNS = `id, name, meal_type, eaten_at, local_date, timezone, calories_kcal, protein_g, carbs_g, fat_g,
+const MEAL_COLUMNS = `id, photo_id, name, meal_type, eaten_at, local_date, timezone, calories_kcal, protein_g, carbs_g, fat_g,
   is_ai_estimate, is_user_edited, user_edited_at, created_at, updated_at, deleted_at`;
 
 export async function listMeals(db: D1Database, userId: string, from?: string, to?: string): Promise<Meal[]> {
@@ -289,6 +290,7 @@ function toMeal(row: MealRow, items: MealItem[]): Meal {
     created_at: row.created_at,
     updated_at: row.updated_at,
     deleted_at: row.deleted_at,
+    photo_id: row.photo_id,
     items,
   };
 }
