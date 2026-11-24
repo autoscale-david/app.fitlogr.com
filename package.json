@@ -13,6 +13,7 @@
     "test": "npm run test -w @fitlogr/shared && npm run test -w @fitlogr/worker",
     "dev:worker": "npm run dev -w @fitlogr/worker",
     "dev:mobile": "npm run start -w @fitlogr/mobile",
+    "mobile:doctor": "npm run doctor -w @fitlogr/mobile",
     "migrate:local": "npm run migrate:local -w @fitlogr/worker",
     "deploy:worker": "npm run deploy -w @fitlogr/worker"
   },
