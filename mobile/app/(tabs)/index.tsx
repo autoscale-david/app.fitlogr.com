@@ -207,7 +207,7 @@ export default function LogScreen() {
               accessibilityLabel={`${targetBannerText(banner)}. Plan: ${planPillLabel(snapshot)}`}
             >
               <MaterialCommunityIcons name="bullseye-arrow" size={20} color={colors.green} />
-              <Text style={styles.targetText} numberOfLines={2}>
+              <Text style={styles.targetText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
                 {banner.prefix}
                 {banner.emphasis ? <Text style={[styles.targetEmphasis, { color: banner.tone === "surplus" ? colors.orange : colors.green }]}>{banner.emphasis}</Text> : null}
                 {banner.rest}

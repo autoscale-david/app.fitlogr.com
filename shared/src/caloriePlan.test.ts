@@ -685,7 +685,7 @@ describe("Log calories card", () => {
 
   it("shows the mockup: 500 below a 2000 baseline, 150 eaten, 150 burned", () => {
     const snapshot = snapshotForDate(settings(deficit(500)), TODAY);
-    expect(targetBanner(snapshot)).toEqual({ prefix: "Target: ", emphasis: "500 kcal below", tone: "deficit", rest: " 2000 kcal baseline" });
+    expect(targetBanner(snapshot)).toEqual({ prefix: "Target: ", emphasis: "500 below", tone: "deficit", rest: " 2000 kcal baseline" });
     expect(caloriesCard(snapshot, 150, 150)).toEqual({
       title: "Calories Available",
       amount: 1500,
@@ -696,11 +696,12 @@ describe("Log calories card", () => {
   });
 
   it("words the banner for every day type and adds the planned burn", () => {
-    expect(card(surplus(500), 0, 0)).toMatchObject({ banner: "Target: 500 kcal above 2000 kcal baseline" });
+    expect(card(deficit(500), 0, 0).banner).toBe("Target: 500 below 2000 kcal baseline");
+    expect(card(surplus(500), 0, 0)).toMatchObject({ banner: "Target: 500 above 2000 kcal baseline" });
     expect(targetBanner(snapshotForDate(settings(surplus(500)), TODAY)).tone).toBe("surplus");
     expect(card(MAINTAIN, 0, 0).banner).toBe("Target: at baseline · 2000 kcal");
     expect(card(FAST, 0, 0).banner).toBe("Target: fasting day · 0 kcal");
-    expect(card(withTargetBurn(deficit(500), 500), 0, 0).banner).toBe("Target: 500 kcal below 2000 kcal baseline · burn 500+");
+    expect(card(withTargetBurn(deficit(500), 500), 0, 0).banner).toBe("Target: 500 below 2000 kcal baseline · burn 500+");
     expect(card(withTargetBurn(MAINTAIN, 300), 0, 0).banner).toBe("Target: at baseline · 2000 kcal · burn 300+");
     const upcoming = snapshotForDate({ ...settings(deficit(500)), dailyPlan: { startDate: "2026-12-01", endDate: null, day: deficit(500) } }, TODAY);
     expect(targetBannerText(targetBanner(upcoming))).toBe("Target: at baseline · 2000 kcal");

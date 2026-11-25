@@ -488,7 +488,7 @@ export function remainingStateText(state: RemainingState): string {
 }
 
 /**
- * Log card banner, split so the amount can be colored: "Target: " + "500 kcal below" + " 2000 kcal baseline"
+ * Log card banner, split so the amount can be colored: "Target: " + "500 below" + " 2000 kcal baseline"
  * (+ " · burn 500+"). `tone` colors `emphasis`.
  */
 export interface TargetBanner {
@@ -504,9 +504,9 @@ export function targetBanner(snapshot: DayPlanSnapshot): TargetBanner {
   const burn = burnSuffix(day);
   switch (day.type) {
     case "deficit":
-      return { prefix: "Target: ", emphasis: `${formatKcal(day.amount)} kcal below`, tone: "deficit", rest: ` ${baseline} kcal baseline${burn}` };
+      return { prefix: "Target: ", emphasis: `${formatKcal(day.amount)} below`, tone: "deficit", rest: ` ${baseline} kcal baseline${burn}` };
     case "surplus":
-      return { prefix: "Target: ", emphasis: `${formatKcal(day.amount)} kcal above`, tone: "surplus", rest: ` ${baseline} kcal baseline${burn}` };
+      return { prefix: "Target: ", emphasis: `${formatKcal(day.amount)} above`, tone: "surplus", rest: ` ${baseline} kcal baseline${burn}` };
     case "maintain":
       return { prefix: "Target: ", emphasis: "", tone: null, rest: `at baseline · ${baseline} kcal${burn}` };
     case "fast":
