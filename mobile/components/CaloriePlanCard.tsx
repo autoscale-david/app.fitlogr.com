@@ -140,7 +140,7 @@ export function CaloriePlanCard({
           }}
         />
       </View>
-      {maintenanceError ? <Text style={styles.error}>Enter a whole number from 1,000 to 6,000.</Text> : null}
+      {maintenanceError ? <Text style={styles.error}>Enter a whole number from 1000 to 6000.</Text> : null}
       <Text style={controlStyles.helper}>Your baseline: calories you burn on a day with no logged exercise. Workouts are added on top.</Text>
       <MaintenanceEstimateCard />
     </View>

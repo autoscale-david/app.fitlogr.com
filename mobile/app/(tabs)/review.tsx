@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import type { DailyInsight, TrendPoint } from "@fitlogr/shared";
+import { formatKcal, type DailyInsight, type TrendPoint } from "@fitlogr/shared";
 import { GoogleReconnectBanner, SyncStatusBanner } from "../../components/AccountBanners";
 import { MealCard, WorkoutCard } from "../../components/LogCard";
 import { MacroBars } from "../../components/MacroBars";
@@ -144,10 +144,10 @@ export default function ReviewScreen() {
             </View>
             <Text style={styles.maintenanceLine}>
               {versusMaintenance === 0
-                ? `At your ${maintenance.toLocaleString()} kcal baseline`
+                ? `At your ${formatKcal(maintenance)} kcal baseline`
                 : versusMaintenance < 0
-                  ? `${Math.abs(versusMaintenance).toLocaleString()} kcal below your ${maintenance.toLocaleString()} kcal baseline`
-                  : `${versusMaintenance.toLocaleString()} kcal above your ${maintenance.toLocaleString()} kcal baseline`}
+                  ? `${formatKcal(Math.abs(versusMaintenance))} kcal below your ${formatKcal(maintenance)} kcal baseline`
+                  : `${formatKcal(versusMaintenance)} kcal above your ${formatKcal(maintenance)} kcal baseline`}
             </Text>
           </View>
 
@@ -216,7 +216,7 @@ export default function ReviewScreen() {
 function BalanceStat({ label, value, accent }: { label: string; value: number; accent?: string }) {
   return (
     <View style={styles.stat}>
-      <Text style={[styles.statValue, accent ? { color: accent } : null]}>{value.toLocaleString()}</Text>
+      <Text style={[styles.statValue, accent ? { color: accent } : null]}>{formatKcal(value)}</Text>
       <Text style={styles.statLabel}>{label}</Text>
     </View>
   );
@@ -276,9 +276,9 @@ function sampleInsight(day: DayLog, maintenance: number, proteinTarget: number):
   const versus = day.eatenKcal - maintenance;
   const balance =
     versus <= 0
-      ? `${Math.abs(versus).toLocaleString()} kcal below the ${maintenance.toLocaleString()} kcal baseline.`
-      : `${versus.toLocaleString()} kcal above the ${maintenance.toLocaleString()} kcal baseline.`;
-  return `This sample day shows ${day.eatenKcal.toLocaleString()} kcal eaten and ${burned.toLocaleString()} kcal burned. Protein is ${day.proteinG}g of ${proteinTarget}g. ${balance}`;
+      ? `${formatKcal(Math.abs(versus))} kcal below the ${formatKcal(maintenance)} kcal baseline.`
+      : `${formatKcal(versus)} kcal above the ${formatKcal(maintenance)} kcal baseline.`;
+  return `This sample day shows ${formatKcal(day.eatenKcal)} kcal eaten and ${formatKcal(burned)} kcal burned. Protein is ${day.proteinG}g of ${proteinTarget}g. ${balance}`;
 }
 
 function emptyDay(): DayLog {

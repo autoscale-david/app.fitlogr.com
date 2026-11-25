@@ -25,7 +25,7 @@ export function MealCard({ meal }: { meal: MealRecord }) {
           <Text style={styles.time}>{formatCompactTime(meal.eatenAt)}</Text>
         </View>
         <View style={styles.metaRow}>
-          <Text style={styles.kcal}>{meal.caloriesKcal.toLocaleString()} kcal</Text>
+          <Text style={styles.kcal}>{meal.caloriesKcal} kcal</Text>
           <Ionicons name="pencil" size={13} color={colors.faint} />
           <View style={styles.badge}>
             <Text style={styles.badgeText}>{meal.badge === "ai" ? "AI" : "Edited"}</Text>
@@ -52,7 +52,7 @@ export function WorkoutCard({ workout }: { workout: WorkoutRecord }) {
           <Text style={styles.title}>{workout.name}</Text>
           <Text style={styles.time}>{formatCompactTime(workout.startTime)}</Text>
         </View>
-        <Text style={styles.burned}>{workout.caloriesKcal.toLocaleString()} kcal burned</Text>
+        <Text style={styles.burned}>{workout.caloriesKcal} kcal burned</Text>
         <Text style={styles.source}>
           {workout.durationMin} mins · {workout.source}
         </Text>

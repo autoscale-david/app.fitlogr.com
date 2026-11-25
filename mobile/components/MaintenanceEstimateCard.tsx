@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import { PLAN_LIMITS, type MaintenanceEstimate } from "@fitlogr/shared";
+import { formatKcal, PLAN_LIMITS, type MaintenanceEstimate } from "@fitlogr/shared";
 import { api } from "../services/api";
 import { useStore } from "../services/store";
 import { ui } from "./settingsUi";
@@ -48,8 +48,8 @@ export function MaintenanceEstimateCard() {
             <Text style={styles.body}>{estimate.missing_reason}</Text>
           ) : (
             <>
-              <Text style={styles.value}>Maintenance calories {estimate.estimated_base_calories?.toLocaleString()}</Text>
-              <Text style={styles.body}>Average total burn with workouts (TDEE) {estimate.estimated_tdee_calories?.toLocaleString()} kcal</Text>
+              <Text style={styles.value}>Maintenance calories {estimate.estimated_base_calories != null ? formatKcal(estimate.estimated_base_calories) : ""}</Text>
+              <Text style={styles.body}>Average total burn with workouts (TDEE) {estimate.estimated_tdee_calories != null ? formatKcal(estimate.estimated_tdee_calories) : ""} kcal</Text>
               <Text style={styles.body}>
                 Confidence {estimate.confidence}. {estimate.total_complete_days} complete days across {estimate.qualifying_period_count} period
                 {estimate.qualifying_period_count === 1 ? "" : "s"}.

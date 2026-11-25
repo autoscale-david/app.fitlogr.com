@@ -117,7 +117,7 @@ export function estimateMaintenance(input: {
     warnings.push("This window is shorter than 14 days, so water-weight swings can move the estimate.");
   }
   if (base < 1000 || base > 4500 || tdee < 1000 || tdee > 4500) {
-    warnings.push("The estimate is outside 1,000–4,500 kcal/day. Check the logged intake, burn, and weights before applying it.");
+    warnings.push("The estimate is outside 1000–4500 kcal/day. Check the logged intake, burn, and weights before applying it.");
   }
   return MaintenanceEstimateSchema.parse({
     status: "ready",

@@ -180,11 +180,9 @@ export function formatDateRange(start: string, end: string): string {
   return `${formatMonthDay(start)} - ${formatMonthDay(end)}`;
 }
 
-/** Thousands separators without relying on the runtime's Intl data. */
+/** Plain whole kcal with no thousands separators, e.g. "2000". */
 export function formatKcal(value: number): string {
-  const rounded = Math.round(value);
-  const digits = String(Math.abs(rounded)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  return rounded < 0 ? `-${digits}` : digits;
+  return String(Math.round(value) || 0);
 }
 
 export function formatSignedKcal(value: number): string {
@@ -490,7 +488,7 @@ export function remainingStateText(state: RemainingState): string {
 }
 
 /**
- * Log card banner, split so the amount can be colored: "Target: " + "500 kcal below" + " 2,000 kcal baseline"
+ * Log card banner, split so the amount can be colored: "Target: " + "500 kcal below" + " 2000 kcal baseline"
  * (+ " · burn 500+"). `tone` colors `emphasis`.
  */
 export interface TargetBanner {
@@ -639,7 +637,7 @@ export function dayPlanHelper(day: DayPlan, toleranceKcal: number): string {
   }
 }
 
-/** "2,500 to eat if you burn 500." with a planned burn; otherwise the target plus any workout burn. */
+/** "2500 to eat if you burn 500." with a planned burn; otherwise the target plus any workout burn. */
 export function dayTargetLine(day: DayPlan, maintenanceCalories: number, fastAllowanceKcal: number): string {
   const target = formatKcal(dayTarget(day, maintenanceCalories, fastAllowanceKcal));
   if (day.type === "fast") return `Target: ${target} kcal`;
@@ -654,7 +652,7 @@ export function isLowIntakeDay(day: DayPlan, maintenanceCalories: number): boole
   return day.type === "deficit" && netTarget(day, maintenanceCalories, 0) < PLAN_LIMITS.lowIntakeKcal;
 }
 
-/** Settings summary: "Baseline 2,000 kcal · Weekly Plan" and "Today: At baseline · burn 500+ · 2,500 kcal". */
+/** Settings summary: "Baseline 2000 kcal · Weekly Plan" and "Today: At baseline · burn 500+ · 2500 kcal". */
 export function caloriePlanSummary(settings: CaloriePlanSettings, today: string): { title: string; today: string } {
   const snapshot = snapshotForDate(settings, today);
   const status = planStatus(selectedPlanDates(settings), today);

@@ -15,7 +15,7 @@ export async function queueSettings(db: SQLiteDatabase, goals: Goals): Promise<v
   await replaceOutbox(db, "settings", "settings", "PUT", "/settings", {
     timezone: deviceTimeZone(),
     unit_system: goals.unitSystem,
-    // A migrated base number outside 1,000-6,000 still syncs through the legacy field.
+    // A migrated base number outside 1000-6000 still syncs through the legacy field.
     ...(clampMaintenance(maintenance) != null ? { maintenance_calories_kcal: maintenance } : { daily_calorie_target_kcal: maintenance }),
     calorie_plan: caloriePlanToApi(goals.plan),
     daily_protein_target_g: goals.proteinTarget,

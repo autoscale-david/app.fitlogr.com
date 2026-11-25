@@ -103,7 +103,10 @@ describe("local calendar dates", () => {
     expect(addCalendarDays("2028-02-28", 1)).toBe("2028-02-29");
     expect(calendarDaysBetween("2026-10-31", "2026-11-02")).toBe(2);
     expect(calendarDaysBetween("2027-03-13", "2027-03-15")).toBe(2);
-    expect(formatKcal(-10300)).toBe("-10,300");
+    expect(formatKcal(-10300)).toBe("-10300");
+    expect(formatKcal(2000)).toBe("2000");
+    expect(formatKcal(1499.6)).toBe("1500");
+    expect(formatKcal(-0.4)).toBe("0");
     expect(formatDateRange("2026-11-24", "2026-12-31")).toBe("Nov 24 - Dec 31");
   });
 });
@@ -145,21 +148,21 @@ describe("criterion 2: Weekly Plan example", () => {
       "At baseline",
       "500 kcal above baseline",
     ]);
-    expect(weeklyFooter(settings)).toBe("Week: -1,900 kcal vs baseline · avg 1,629/day");
+    expect(weeklyFooter(settings)).toBe("Week: -1900 kcal vs baseline · avg 1629/day");
   });
 
   it("shows the Custom Plan example rows and footer", () => {
     const settings = customExample();
     expect(settings.customPlan.days.map((day) => dayTarget(day, 1900, 0))).toEqual([1400, 0, 2400]);
     expect(cycleDateLabels(settings.customPlan, TODAY)).toEqual(["Today", "Wed Nov 25", "Thu Nov 26"]);
-    expect(cycleFooter(settings)).toBe("Cycle: -1,900 kcal vs baseline · avg 1,267/day");
+    expect(cycleFooter(settings)).toBe("Cycle: -1900 kcal vs baseline · avg 1267/day");
   });
 
   it("totals every date in an ended range", () => {
     const settings = { ...weeklyExample(), weeklyPlan: { ...weeklyExample().weeklyPlan, endDate: "2026-12-31" } };
     const total = planTotal(settings);
     expect(total).toEqual({ startDate: TODAY, endDate: "2026-12-31", days: 38, offsetTotal: -11400 });
-    expect(planTotalText(total!)).toBe("Nov 24 - Dec 31 · 38 days · -11,400 kcal vs baseline");
+    expect(planTotalText(total!)).toBe("Nov 24 - Dec 31 · 38 days · -11400 kcal vs baseline");
     expect(planTotal(weeklyExample())).toBeNull();
   });
 
@@ -175,13 +178,13 @@ describe("criterion 2: Weekly Plan example", () => {
 });
 
 describe("criterion 3: maintenance changes recalculate rows and footers", () => {
-  it("updates every row target and footer from 1,900 to 2,000", () => {
+  it("updates every row target and footer from 1900 to 2000", () => {
     const before = weeklyExample(1900);
     const after = { ...before, maintenanceCalories: 2000 };
     expect(weeklyRowTargets(after)).toEqual([1500, 1500, 0, 2500, 2000, 2000, 2500]);
-    expect(weeklyFooter(after)).toBe("Week: -2,000 kcal vs baseline · avg 1,714/day");
+    expect(weeklyFooter(after)).toBe("Week: -2000 kcal vs baseline · avg 1714/day");
     const custom = { ...customExample(), maintenanceCalories: 2000 };
-    expect(cycleFooter(custom)).toBe("Cycle: -2,000 kcal vs baseline · avg 1,333/day");
+    expect(cycleFooter(custom)).toBe("Cycle: -2000 kcal vs baseline · avg 1333/day");
   });
 });
 
@@ -473,7 +476,7 @@ describe("editor copy and limits", () => {
     expect(dayPlanHelper(MAINTAIN, 100)).toBe("Counts as met within ±100 kcal of baseline.");
     expect(dayPlanHelper(surplus(500), 100)).toBe("Counts as met within ±100 kcal of 500 kcal above baseline.");
     expect(dayPlanHelper(FAST, 100)).toBe("No calories planned. Workout burn isn't added back on fast days.");
-    expect(dayTargetLine(deficit(500), 1900, 0)).toBe("Target: 1,400 kcal + workout burn");
+    expect(dayTargetLine(deficit(500), 1900, 0)).toBe("Target: 1400 kcal + workout burn");
     expect(planPillLabel(snapshotForDate(customExample(), "2026-11-25"))).toBe("Day 2 of 3 · Fast");
   });
 
@@ -504,18 +507,18 @@ describe("Target Net and Target Burn", () => {
     dailyPlan: { startDate: "2026-11-16", endDate: null, day },
   });
 
-  it("adds the planned burn to the consumption target: 2,000 / +0 / 500+ is 2,500", () => {
+  it("adds the planned burn to the consumption target: 2000 / +0 / 500+ is 2500", () => {
     const day = maintainBurn(500);
     expect(day).toEqual({ type: "maintain", targetBurn: 500 });
     expect(dayTarget(day, 2000, 0)).toBe(2500);
     expect(dayTarget(withTargetBurn(deficit(500), 300), 2000, 0)).toBe(1800);
     expect(dayTarget(withTargetBurn(surplus(500), 200), 2000, 0)).toBe(2700);
-    expect(dayTargetLine(day, 2000, 0)).toBe("2,500 to eat if you burn 500.");
-    expect(dayTargetLine(MAINTAIN, 2000, 0)).toBe("Target: 2,000 kcal + workout burn");
+    expect(dayTargetLine(day, 2000, 0)).toBe("2500 to eat if you burn 500.");
+    expect(dayTargetLine(MAINTAIN, 2000, 0)).toBe("Target: 2000 kcal + workout burn");
     const snapshot = snapshotForDate(daily(day), TODAY);
     expect(snapshot.day).toEqual({ type: "maintain", targetBurn: 500 });
     expect(planPillLabel(snapshot)).toBe("At baseline · burn 500+");
-    expect(caloriePlanSummary(daily(day), TODAY)).toEqual({ title: "Baseline 2,000 kcal · Daily Plan", today: "Today: At baseline · burn 500+ · 2,500 kcal" });
+    expect(caloriePlanSummary(daily(day), TODAY)).toEqual({ title: "Baseline 2000 kcal · Daily Plan", today: "Today: At baseline · burn 500+ · 2500 kcal" });
   });
 
   it("labels days relative to baseline with the burn beside it, omitting a zero burn", () => {
@@ -524,7 +527,7 @@ describe("Target Net and Target Burn", () => {
     expect(dayPlanLabel(deficit(500))).toBe("500 kcal below baseline");
     expect(dayPlanLabel(withTargetBurn(deficit(500), 0))).toBe("500 kcal below baseline");
     expect(dayPlanLabel(withTargetBurn(surplus(500), 200))).toBe("500 kcal above baseline · burn 200+");
-    expect(dayPlanLabel(withTargetBurn(surplus(1000), 1000))).toBe("1,000 kcal above baseline · burn 1,000+");
+    expect(dayPlanLabel(withTargetBurn(surplus(1000), 1000))).toBe("1000 kcal above baseline · burn 1000+");
     expect(dayPlanLabel(FAST)).toBe("Fast");
     expect(Object.values(DAY_PLAN_TYPE_LABELS)).toEqual(["Below", "At baseline", "Above", "Fast"]);
     const copy = [
@@ -597,7 +600,7 @@ describe("Target Net and Target Burn", () => {
     const days = { ...maintainWeek(), mon: maintainBurn(500), wed: withTargetBurn(deficit(500), 500), sat: FAST };
     const settings: CaloriePlanSettings = { ...base, planType: "weekly", weeklyPlan: { startDate: TODAY, endDate: "2026-12-07", days } };
     expect(weeklyRowTargets(settings)).toEqual([2500, 2000, 2000, 2000, 2000, 0, 2000]);
-    expect(weeklyFooter(settings)).toBe("Week: -2,500 kcal vs baseline · avg 1,786/day");
+    expect(weeklyFooter(settings)).toBe("Week: -2500 kcal vs baseline · avg 1786/day");
     expect(planTotal(settings)).toMatchObject({ days: 14, offsetTotal: -5000 });
   });
 
@@ -612,7 +615,7 @@ describe("Target Net and Target Burn", () => {
     expect(isLowIntakeDay(withTargetBurn(deficit(700), 500), 1900)).toBe(false);
   });
 
-  it("steps and clamps the burn: 0, then 50-2,000 in 50s", () => {
+  it("steps and clamps the burn: 0, then 50-2000 in 50s", () => {
     expect(stepTargetBurn(0, 1)).toBe(50);
     expect(stepTargetBurn(50, -1)).toBe(0);
     expect(stepTargetBurn(0, -1)).toBe(0);
@@ -665,7 +668,7 @@ describe("Target Net and Target Burn", () => {
 
   it("summarizes a plan that has not started yet", () => {
     const settings = { ...daily(maintainBurn(500)), dailyPlan: { startDate: "2026-11-30", endDate: null, day: maintainBurn(500) } };
-    expect(caloriePlanSummary(settings, TODAY).today).toBe("Today: At baseline · 2,000 kcal · Starts in 6 days");
+    expect(caloriePlanSummary(settings, TODAY).today).toBe("Today: At baseline · 2000 kcal · Starts in 6 days");
   });
 });
 
@@ -680,9 +683,9 @@ describe("Log calories card", () => {
     return { banner: targetBannerText(targetBanner(snapshot)), ...caloriesCard(snapshot, eaten, burned) };
   };
 
-  it("shows the mockup: 500 below a 2,000 baseline, 150 eaten, 150 burned", () => {
+  it("shows the mockup: 500 below a 2000 baseline, 150 eaten, 150 burned", () => {
     const snapshot = snapshotForDate(settings(deficit(500)), TODAY);
-    expect(targetBanner(snapshot)).toEqual({ prefix: "Target: ", emphasis: "500 kcal below", tone: "deficit", rest: " 2,000 kcal baseline" });
+    expect(targetBanner(snapshot)).toEqual({ prefix: "Target: ", emphasis: "500 kcal below", tone: "deficit", rest: " 2000 kcal baseline" });
     expect(caloriesCard(snapshot, 150, 150)).toEqual({
       title: "Calories Available",
       amount: 1500,
@@ -693,14 +696,14 @@ describe("Log calories card", () => {
   });
 
   it("words the banner for every day type and adds the planned burn", () => {
-    expect(card(surplus(500), 0, 0)).toMatchObject({ banner: "Target: 500 kcal above 2,000 kcal baseline" });
+    expect(card(surplus(500), 0, 0)).toMatchObject({ banner: "Target: 500 kcal above 2000 kcal baseline" });
     expect(targetBanner(snapshotForDate(settings(surplus(500)), TODAY)).tone).toBe("surplus");
-    expect(card(MAINTAIN, 0, 0).banner).toBe("Target: at baseline · 2,000 kcal");
+    expect(card(MAINTAIN, 0, 0).banner).toBe("Target: at baseline · 2000 kcal");
     expect(card(FAST, 0, 0).banner).toBe("Target: fasting day · 0 kcal");
-    expect(card(withTargetBurn(deficit(500), 500), 0, 0).banner).toBe("Target: 500 kcal below 2,000 kcal baseline · burn 500+");
-    expect(card(withTargetBurn(MAINTAIN, 300), 0, 0).banner).toBe("Target: at baseline · 2,000 kcal · burn 300+");
+    expect(card(withTargetBurn(deficit(500), 500), 0, 0).banner).toBe("Target: 500 kcal below 2000 kcal baseline · burn 500+");
+    expect(card(withTargetBurn(MAINTAIN, 300), 0, 0).banner).toBe("Target: at baseline · 2000 kcal · burn 300+");
     const upcoming = snapshotForDate({ ...settings(deficit(500)), dailyPlan: { startDate: "2026-12-01", endDate: null, day: deficit(500) } }, TODAY);
-    expect(targetBannerText(targetBanner(upcoming))).toBe("Target: at baseline · 2,000 kcal");
+    expect(targetBannerText(targetBanner(upcoming))).toBe("Target: at baseline · 2000 kcal");
   });
 
   it("switches to Calories Over and On target", () => {
@@ -713,7 +716,7 @@ describe("Log calories card", () => {
 
   it("signs burned + and eaten \u2212, and keeps a fast day's ring empty", () => {
     expect(card(MAINTAIN, 0, 0)).toMatchObject({ burnedText: "0 burned", eatenText: "0 eaten", percent: 0 });
-    expect(card(MAINTAIN, 1234.6, 1500.4)).toMatchObject({ burnedText: "+1,500 burned", eatenText: "\u22121,235 eaten" });
+    expect(card(MAINTAIN, 1234.6, 1500.4)).toMatchObject({ burnedText: "+1500 burned", eatenText: "\u22121235 eaten" });
     expect(card(FAST, 120, 600, { fastAllowanceKcal: 100 })).toMatchObject({ title: "Calories Over", amount: 20, percent: null, burnedText: "+600 burned" });
     expect(card(withTargetBurn(MAINTAIN, 500), 1250, 500).percent).toBe(50);
   });
