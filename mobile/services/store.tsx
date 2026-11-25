@@ -79,7 +79,8 @@ interface Store {
   logWeight: (localDate: string, weightKg: number) => Promise<void>;
   acceptPhotoConsent: () => Promise<void>;
   addMealPhoto: (uri: string) => Promise<string>;
-  scanMealPhotos: () => Promise<string>;
+  /** Returns "" when nothing new turned up, unless `announceEmpty` asks for that message too. */
+  scanMealPhotos: (announceEmpty?: boolean) => Promise<string>;
   grantPickerAccess: () => Promise<void>;
   scanHistory: (days: number, onProgress: (progress: HistoryProgress) => void, signal: AbortSignal) => Promise<HistoryScanResult>;
   importHealthHistory: (days: number) => Promise<string>;
@@ -492,14 +493,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setRefreshToken((token) => token + 1);
         return result.message;
       },
-      scanMealPhotos: async () => {
+      scanMealPhotos: async (announceEmpty = false) => {
         if (!db || mode !== "account" || !photoConsent) return "";
         const result = await scanRecentPhotos(db);
         if (result.imported > 0) {
           setRefreshToken((token) => token + 1);
           void sync(db, true);
         }
-        return result.status === "empty" ? "" : result.message;
+        return result.status === "empty" && !announceEmpty ? "" : result.message;
       },
       logWeight: async (localDate, weightKg) => {
         if (!db) return;

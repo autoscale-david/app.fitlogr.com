@@ -56,8 +56,9 @@ export function dayNumber(dateISO: string): string {
 
 export function formatHeading(dateISO: string, today = localDateISO()): string {
   if (dateISO === today) return "Today";
+  if (dateISO === addDays(today, -1)) return "Yesterday";
   return parseLocalDate(dateISO).toLocaleDateString(undefined, {
-    weekday: "long",
+    weekday: "short",
     month: "short",
     day: "numeric",
   });

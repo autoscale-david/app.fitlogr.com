@@ -6,7 +6,7 @@ import * as Crypto from "expo-crypto";
 import { round1 } from "@fitlogr/shared";
 import { MealPhoto } from "../../components/MealPhoto";
 import type { MealItemRecord, MealRecord } from "../../services/db";
-import { atLocalTime, localDateISO } from "../../services/dates";
+import { atLocalTime, formatHeading, localDateISO } from "../../services/dates";
 import { randomUuid } from "../../services/encoding";
 import { useStore } from "../../services/store";
 import { colors } from "../../theme";
@@ -30,10 +30,11 @@ export default function MealScreen() {
   const params = useLocalSearchParams<{ id: string; date?: string }>();
   const creating = params.id === "new";
   const [name, setName] = useState("");
-  const [calories, setCalories] = useState("0");
-  const [protein, setProtein] = useState("0");
-  const [carbs, setCarbs] = useState("0");
-  const [fat, setFat] = useState("0");
+  const [calories, setCalories] = useState("");
+  const [protein, setProtein] = useState("");
+  const [carbs, setCarbs] = useState("");
+  const [fat, setFat] = useState("");
+  const [saving, setSaving] = useState(false);
   const [items, setItems] = useState<ItemDraft[]>([]);
   const [photoId, setPhotoId] = useState<string | null>(null);
   const [aiMeal, setAiMeal] = useState(false);
@@ -81,7 +82,11 @@ export default function MealScreen() {
     setItems((current) => current.map((item) => (item.id === id ? { ...item, ...patch, isUserEdited: true } : item)));
   }
 
+  const canSave = !saving && (items.length > 0 || name.trim() !== "" || numberValue(calories) > 0);
+
   async function save() {
+    if (!canSave) return;
+    setSaving(true);
     const mealItems: MealItemRecord[] | undefined =
       items.length > 0
         ? items.map((item) => ({
@@ -110,8 +115,13 @@ export default function MealScreen() {
       photoId,
       items: mealItems,
     };
-    await store.saveMeal(meal, pendingCreate || creating);
-    router.back();
+    try {
+      await store.saveMeal(meal, pendingCreate || creating);
+      router.back();
+    } catch (error) {
+      setSaving(false);
+      Alert.alert("Meal not saved", error instanceof Error ? error.message : "Try again.");
+    }
   }
 
   function remove() {
@@ -137,13 +147,22 @@ export default function MealScreen() {
       style={styles.screen}
       contentContainerStyle={{ paddingTop: insets.top + 12, paddingHorizontal: 16, paddingBottom: 32 }}
       keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="on-drag"
     >
       <Stack.Screen options={{ presentation: "modal", headerShown: false }} />
-      <Text style={styles.title}>{creating ? "Add meal" : "Edit meal"}</Text>
+      <View style={styles.header}>
+        <View style={styles.headerText}>
+          <Text style={styles.title}>{creating ? "Add meal" : "Edit meal"}</Text>
+          <Text style={styles.date}>{formatHeading(localDate)}</Text>
+        </View>
+        <Pressable onPress={() => router.back()} hitSlop={10} accessibilityRole="button">
+          <Text style={styles.cancelText}>Close</Text>
+        </Pressable>
+      </View>
       {!ready ? null : (
         <>
           {photoId ? <View style={styles.photo}><MealPhoto photoId={photoId} size={220} radius={18} detailed /></View> : null}
-          <Field label="Name" value={name} onChange={setName} keyboard="default" />
+          <Field label="Name" value={name} onChange={setName} keyboard="default" placeholder="e.g. Chicken salad" />
           {items.length > 0 ? (
             <>
               <Text style={styles.section}>Foods</Text>
@@ -151,37 +170,52 @@ export default function MealScreen() {
                 <View key={item.id} style={styles.item}>
                   <Text style={styles.estimate}>{item.isUserEdited ? "Edited" : aiMeal ? "AI estimate" : "Estimate"}</Text>
                   <Field label="Item" value={item.name} onChange={(value) => editItem(item.id, { name: value })} keyboard="default" />
-                  <Field label="Calories" value={item.calories} onChange={(value) => editItem(item.id, { calories: value })} />
-                  <Field label="Protein (g)" value={item.protein} onChange={(value) => editItem(item.id, { protein: value })} />
-                  <Field label="Carbs (g)" value={item.carbs} onChange={(value) => editItem(item.id, { carbs: value })} />
-                  <Field label="Fat (g)" value={item.fat} onChange={(value) => editItem(item.id, { fat: value })} />
+                  <Field label="Calories (kcal)" value={item.calories} onChange={(value) => editItem(item.id, { calories: value })} />
+                  <MacroFields
+                    protein={item.protein}
+                    carbs={item.carbs}
+                    fat={item.fat}
+                    onChange={(patch) => editItem(item.id, patch)}
+                  />
                 </View>
               ))}
               <Text style={styles.totals}>
-                {round1(itemTotals.calories)} kcal · {round1(itemTotals.protein)}p · {round1(itemTotals.carbs)}c · {round1(itemTotals.fat)}f
+                {round1(itemTotals.calories)} kcal · {round1(itemTotals.protein)}g protein · {round1(itemTotals.carbs)}g carbs · {round1(itemTotals.fat)}g fat
               </Text>
             </>
           ) : (
             <>
-              <Field label="Calories" value={calories} onChange={setCalories} />
-              <Field label="Protein (g)" value={protein} onChange={setProtein} />
-              <Field label="Carbs (g)" value={carbs} onChange={setCarbs} />
-              <Field label="Fat (g)" value={fat} onChange={setFat} />
+              <Field label="Calories (kcal)" value={calories} onChange={setCalories} placeholder="0" />
+              <MacroFields
+                protein={protein}
+                carbs={carbs}
+                fat={fat}
+                onChange={(patch) => {
+                  if (patch.protein !== undefined) setProtein(patch.protein);
+                  if (patch.carbs !== undefined) setCarbs(patch.carbs);
+                  if (patch.fat !== undefined) setFat(patch.fat);
+                }}
+              />
             </>
           )}
-          <Pressable style={styles.button} onPress={() => void save()}>
-            <Text style={styles.buttonText}>Save</Text>
+          <Pressable
+            style={[styles.button, !canSave && styles.buttonDisabled]}
+            onPress={() => void save()}
+            disabled={!canSave}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !canSave }}
+          >
+            <Text style={styles.buttonText}>{saving ? "Saving…" : "Save"}</Text>
           </Pressable>
-          {creating ? null : (
-            <Pressable style={styles.delete} onPress={remove}>
-              <Text style={styles.deleteText}>{photoId ? "Exclude / Not a meal" : "Delete meal"}</Text>
+          {creating ? (
+            !canSave && !saving ? <Text style={styles.hint}>Enter a name or calories to save.</Text> : null
+          ) : (
+            <Pressable style={styles.delete} onPress={remove} accessibilityRole="button">
+              <Text style={styles.deleteText}>{photoId ? "Not a meal" : "Delete meal"}</Text>
             </Pressable>
           )}
         </>
       )}
-      <Pressable onPress={() => router.back()} style={styles.cancel}>
-        <Text style={styles.cancelText}>Close</Text>
-      </Pressable>
     </ScrollView>
   );
 }
@@ -206,16 +240,50 @@ function Field({
   value,
   onChange,
   keyboard = "decimal-pad",
+  placeholder,
+  style,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   keyboard?: "default" | "decimal-pad";
+  placeholder?: string;
+  style?: object;
 }) {
   return (
-    <View style={styles.field}>
-      <Text style={styles.label}>{label}</Text>
-      <TextInput value={value} onChangeText={onChange} keyboardType={keyboard} style={styles.input} placeholderTextColor={colors.faint} />
+    <View style={[styles.field, style]}>
+      <Text style={styles.label} numberOfLines={1}>
+        {label}
+      </Text>
+      <TextInput
+        value={value}
+        onChangeText={onChange}
+        keyboardType={keyboard}
+        placeholder={placeholder}
+        style={styles.input}
+        placeholderTextColor={colors.faint}
+        accessibilityLabel={label}
+      />
+    </View>
+  );
+}
+
+function MacroFields({
+  protein,
+  carbs,
+  fat,
+  onChange,
+}: {
+  protein: string;
+  carbs: string;
+  fat: string;
+  onChange: (patch: { protein?: string; carbs?: string; fat?: string }) => void;
+}) {
+  return (
+    <View style={styles.macroRow}>
+      <Field label="Protein (g)" value={protein} onChange={(value) => onChange({ protein: value })} placeholder="0" style={styles.macroField} />
+      <Field label="Carbs (g)" value={carbs} onChange={(value) => onChange({ carbs: value })} placeholder="0" style={styles.macroField} />
+      <Field label="Fat (g)" value={fat} onChange={(value) => onChange({ fat: value })} placeholder="0" style={styles.macroField} />
     </View>
   );
 }
@@ -229,7 +297,14 @@ function numberValue(value: string, decimals = 0): number {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
+  header: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
+  headerText: { flex: 1 },
   title: { color: colors.text, fontSize: 28, fontWeight: "800" },
+  date: { color: colors.muted, marginTop: 2, fontSize: 14 },
+  macroRow: { flexDirection: "row", gap: 8 },
+  macroField: { flex: 1 },
+  buttonDisabled: { opacity: 0.45 },
+  hint: { color: colors.muted, textAlign: "center", marginTop: 10, fontSize: 13 },
   photo: { marginTop: 16, alignItems: "flex-start" },
   section: { color: colors.muted, marginTop: 18, fontWeight: "700", letterSpacing: 0.4 },
   item: { marginTop: 8, backgroundColor: colors.card, borderRadius: 16, padding: 12 },
@@ -249,6 +324,5 @@ const styles = StyleSheet.create({
   buttonText: { color: "#062214", fontWeight: "800" },
   delete: { marginTop: 12, alignItems: "center", paddingVertical: 12 },
   deleteText: { color: colors.fat, fontWeight: "700" },
-  cancel: { marginTop: 8, alignItems: "center", paddingVertical: 12 },
-  cancelText: { color: colors.muted, fontWeight: "700" },
+  cancelText: { color: colors.green, fontWeight: "700", fontSize: 16, paddingTop: 8 },
 });

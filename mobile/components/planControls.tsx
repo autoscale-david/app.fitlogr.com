@@ -45,7 +45,7 @@ export function StepperButton({ label, onPress, disabled }: { label: string; onP
       accessibilityRole="button"
       accessibilityLabel={label === "-" ? "Decrease" : "Increase"}
     >
-      <Text style={styles.stepperText}>{label}</Text>
+      <Text style={styles.stepperText}>{label === "-" ? "\u2212" : label}</Text>
     </Pressable>
   );
 }

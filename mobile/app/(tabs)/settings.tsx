@@ -3,9 +3,9 @@ import { Alert, Image, ScrollView, StyleSheet, Text, TextInput, View } from "rea
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { caloriePlanSummary } from "@fitlogr/shared";
-import { GoogleReconnectBanner } from "../../components/AccountBanners";
+import { formatSyncedAt, GoogleReconnectBanner } from "../../components/AccountBanners";
 import { Segmented } from "../../components/planControls";
-import { SummaryRow, ui } from "../../components/settingsUi";
+import { initials, SummaryRow, ui } from "../../components/settingsUi";
 import { localDateISO } from "../../services/dates";
 import { AuthCancelled, useStore } from "../../services/store";
 import { useGoalsDraft } from "../../services/useGoalsDraft";
@@ -99,24 +99,10 @@ function dataSummary(store: ReturnType<typeof useStore>): string[] {
   return [store.lastSyncedAt ? `Synced ${formatSyncedAt(store.lastSyncedAt)} · nothing waiting` : "Not synced yet", imports];
 }
 
-function formatSyncedAt(iso: string): string {
-  const date = new Date(iso);
-  const time = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  return date.toDateString() === new Date().toDateString() ? time : `${date.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`;
-}
-
 function Avatar({ name }: { name: string | null }) {
-  const initials = name
-    ? name
-        .split(/[\s@.]+/)
-        .filter(Boolean)
-        .slice(0, 2)
-        .map((part) => part[0]!.toUpperCase())
-        .join("")
-    : "?";
   return (
     <View style={styles.avatar}>
-      <Text style={styles.avatarText}>{initials}</Text>
+      <Text style={styles.avatarText}>{initials(name)}</Text>
     </View>
   );
 }

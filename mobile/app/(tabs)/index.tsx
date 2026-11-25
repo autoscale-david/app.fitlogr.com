@@ -25,6 +25,7 @@ import { DayEditorSheet } from "../../components/DayEditorSheet";
 import { MealCard, WorkoutCard } from "../../components/LogCard";
 import { MealPhotoPicker } from "../../components/MealPhotoPicker";
 import { MacroBars } from "../../components/MacroBars";
+import { initials } from "../../components/settingsUi";
 import { WeekStrip } from "../../components/WeekStrip";
 import { addDays, formatHeading, localDateISO, startOfWeek } from "../../services/dates";
 import type { DayLog, WeekDayStatus } from "../../services/db";
@@ -132,23 +133,44 @@ export default function LogScreen() {
       refreshControl={<RefreshControl refreshing={store.syncing} onRefresh={() => void store.sync(true)} tintColor={colors.green} />}
     >
       <View style={styles.header}>
-        <Pressable style={styles.todayButton} onPress={() => setSelected(today)}>
-          <Text style={styles.today}>{formatHeading(selected, today)}</Text>
-          <Ionicons name="chevron-down" size={18} color={colors.muted} />
-        </Pressable>
+        <Text style={styles.today} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7} accessibilityRole="header">
+          {formatHeading(selected, today)}
+        </Text>
         <View style={styles.headerRight}>
-          <Pressable style={styles.weightPill} onPress={() => router.push({ pathname: "/weight", params: { date: selected } })}>
-            <View style={styles.weightDot} />
+          <Pressable
+            style={styles.weightPill}
+            onPress={() => router.push({ pathname: "/weight", params: { date: selected } })}
+            accessibilityRole="button"
+            accessibilityLabel={weight ? `Weight ${weight}. Update weight` : "Log weight"}
+          >
+            <View style={[styles.weightDot, !weight && styles.weightDotEmpty]} />
             <Text style={styles.weightText}>{weight ?? "Log weight"}</Text>
           </Pressable>
-          <View style={styles.avatar}>
-            <Ionicons name="person" size={18} color="#F2D2C4" />
-          </View>
+          <Pressable
+            style={styles.avatar}
+            onPress={() => router.push("/settings/account")}
+            hitSlop={6}
+            accessibilityRole="button"
+            accessibilityLabel={store.account ? "Account" : "Sign in"}
+          >
+            {store.account ? (
+              <Text style={styles.avatarText}>{initials(store.account.displayName || store.account.email)}</Text>
+            ) : (
+              <Ionicons name="person" size={18} color="#F2D2C4" />
+            )}
+          </Pressable>
         </View>
       </View>
-      <Pressable onPress={() => router.push("/settings/data")} hitSlop={8}>
-        <Text style={styles.importLink}>Import history</Text>
-      </Pressable>
+      <View style={styles.subHeader}>
+        <Pressable onPress={() => router.push("/settings/data")} hitSlop={8} accessibilityRole="button">
+          <Text style={styles.importLink}>Import history</Text>
+        </Pressable>
+        {selected !== today ? (
+          <Pressable onPress={() => setSelected(today)} hitSlop={8} accessibilityRole="button">
+            <Text style={styles.importLink}>Back to today</Text>
+          </Pressable>
+        ) : null}
+      </View>
 
       {endedBanner && goals ? (
         <View style={styles.banner}>
@@ -254,9 +276,14 @@ export default function LogScreen() {
             />
           ) : null}
 
+          <MealPhotoPicker onManual={() => router.push({ pathname: "/meal/[id]", params: { id: "new", date: selected } })} />
+
           <Text style={styles.section}>{selected === today ? "TODAY'S LOG" : "LOG"}</Text>
           {entries.length === 0 ? (
-            <Text style={styles.empty}>Nothing logged for this day.</Text>
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>Nothing logged yet</Text>
+              <Text style={styles.empty}>Add a meal photo, take one, or enter a meal manually.</Text>
+            </View>
           ) : (
             entries.map((entry) =>
               entry.kind === "meal" ? (
@@ -268,10 +295,6 @@ export default function LogScreen() {
               ),
             )
           )}
-          <MealPhotoPicker />
-          <Pressable style={styles.addMeal} onPress={() => router.push({ pathname: "/meal/[id]", params: { id: "new", date: selected } })}>
-            <Text style={styles.addMealText}>Add a meal</Text>
-          </Pressable>
         </>
       )}
       {goals ? (
@@ -291,10 +314,10 @@ export default function LogScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  todayButton: { flexDirection: "row", alignItems: "center", gap: 4 },
-  today: { color: colors.text, fontSize: 34, fontWeight: "800", letterSpacing: -0.6 },
-  importLink: { color: colors.green, fontWeight: "700", marginTop: 6 },
+  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  today: { color: colors.text, fontSize: 34, fontWeight: "800", letterSpacing: -0.6, flexShrink: 1 },
+  subHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 4 },
+  importLink: { color: colors.green, fontWeight: "700", fontSize: 14 },
   headerRight: { flexDirection: "row", alignItems: "center", gap: 10 },
   weightPill: {
     flexDirection: "row",
@@ -306,6 +329,8 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
   },
   weightDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.green },
+  weightDotEmpty: { backgroundColor: colors.faint },
+  avatarText: { color: "#2B1710", fontWeight: "800", fontSize: 13 },
   weightText: { color: colors.text, fontWeight: "700", fontSize: 14 },
   avatar: {
     width: 36,
@@ -358,14 +383,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginTop: 22,
   },
-  empty: { color: colors.muted, textAlign: "center", marginTop: 18 },
-  addMeal: {
-    marginTop: 16,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#2E3338",
-    paddingVertical: 14,
-    alignItems: "center",
-  },
-  addMealText: { color: colors.text, fontWeight: "700" },
+  emptyCard: { backgroundColor: colors.card, borderRadius: 16, paddingVertical: 16, paddingHorizontal: 14, marginTop: 10, alignItems: "center" },
+  emptyTitle: { color: colors.text, fontWeight: "700", fontSize: 15 },
+  empty: { color: colors.muted, textAlign: "center", marginTop: 4, fontSize: 14, lineHeight: 19 },
 });

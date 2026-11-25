@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { formatKcal, type DailyInsight, type TrendPoint } from "@fitlogr/shared";
 import { GoogleReconnectBanner, SyncStatusBanner } from "../../components/AccountBanners";
@@ -123,6 +124,7 @@ export default function ReviewScreen() {
         }}
       />
       <SyncStatusBanner
+        compact
         visible={store.mode === "account"}
         pending={store.pending}
         lastSyncedAt={store.lastSyncedAt}
@@ -140,7 +142,7 @@ export default function ReviewScreen() {
             <View style={styles.balanceRow}>
               <BalanceStat label="Intake" value={intake} />
               <BalanceStat label="Burned" value={burn} />
-              <BalanceStat label={net <= 0 ? "Below" : "Above"} value={Math.abs(net)} accent={net <= 0 ? colors.green : colors.orange} />
+              <BalanceStat label="Net" value={net} />
             </View>
             <Text style={styles.maintenanceLine}>
               {versusMaintenance === 0
@@ -165,7 +167,14 @@ export default function ReviewScreen() {
           ) : (
             <>
               {day.meals.map((meal) => (
-                <MealCard key={meal.id} meal={meal} />
+                <Pressable
+                  key={meal.id}
+                  onPress={() => router.push({ pathname: "/meal/[id]", params: { id: meal.id } })}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Edit ${meal.name}`}
+                >
+                  <MealCard meal={meal} />
+                </Pressable>
               ))}
               {day.workouts.map((workout) => (
                 <WorkoutCard key={workout.id} workout={workout} />

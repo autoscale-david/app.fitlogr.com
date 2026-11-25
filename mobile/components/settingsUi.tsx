@@ -23,6 +23,18 @@ export const ui = StyleSheet.create({
   label: { color: colors.muted, fontSize: 14 },
 });
 
+/** Up to two initials from a display name or email, e.g. "David Chen" → "DC". */
+export function initials(name: string | null | undefined): string {
+  if (!name) return "?";
+  const letters = name
+    .split(/[\s@.]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]!.toUpperCase())
+    .join("");
+  return letters || "?";
+}
+
 /** Pushed Settings details screen: back chevron, title, and a compact scroll body. */
 export function DetailScreen({ title, children }: { title: string; children: ReactNode }) {
   const insets = useSafeAreaInsets();
@@ -30,9 +42,15 @@ export function DetailScreen({ title, children }: { title: string; children: Rea
     <View style={styles.screen}>
       <Stack.Screen options={{ headerShown: false }} />
       <View style={[styles.header, { paddingTop: insets.top + 4 }]}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.back} accessibilityRole="button" accessibilityLabel="Back">
+        <Pressable
+          onPress={() => (router.canGoBack() ? router.back() : router.replace("/settings"))}
+          hitSlop={10}
+          style={styles.back}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
           <Ionicons name="chevron-back" size={22} color={colors.text} />
-          <Text style={styles.backText}>Settings</Text>
+          <Text style={styles.backText}>Back</Text>
         </Pressable>
         <Text style={styles.title}>{title}</Text>
       </View>
