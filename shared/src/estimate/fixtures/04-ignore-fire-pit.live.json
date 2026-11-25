@@ -1,0 +1,11 @@
+{
+  "classification": "ignore",
+  "is_meal": false,
+  "confidence": 1,
+  "meal_name": null,
+  "suggested_meal_type": null,
+  "notes": null,
+  "reason": "The photo shows an outdoor seating area with a fire pit at night, not food or a workout.",
+  "burn_kcal": null,
+  "items": []
+}

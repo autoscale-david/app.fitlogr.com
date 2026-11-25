@@ -1,0 +1,34 @@
+{
+  "classification": "meal",
+  "is_meal": true,
+  "confidence": 0.95,
+  "meal_name": "Danish pastry with coffee",
+  "suggested_meal_type": "snack",
+  "notes": null,
+  "reason": "The photo shows a pastry and a cup of coffee, which are food and drink items.",
+  "burn_kcal": null,
+  "items": [
+    {
+      "name": "Danish pastry with cream cheese and berry filling",
+      "quantity": 1,
+      "unit": "piece",
+      "estimated_grams": 100,
+      "calories_kcal": 350,
+      "protein_g": 5,
+      "carbs_g": 45,
+      "fat_g": 18,
+      "confidence": 0.9
+    },
+    {
+      "name": "Latte",
+      "quantity": 1,
+      "unit": "cup",
+      "estimated_grams": 240,
+      "calories_kcal": 150,
+      "protein_g": 6,
+      "carbs_g": 12,
+      "fat_g": 8,
+      "confidence": 0.9
+    }
+  ]
+}

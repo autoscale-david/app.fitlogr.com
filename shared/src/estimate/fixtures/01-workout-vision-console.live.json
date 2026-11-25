@@ -1,0 +1,12 @@
+{
+  "classification": "workout",
+  "is_meal": false,
+  "confidence": 1,
+  "meal_name": null,
+  "suggested_meal_type": null,
+  "notes": null,
+  "reason": "The photo shows a fitness machine console displaying workout metrics.",
+  "burn_kcal": 116,
+  "items": [],
+  "workout_type": "elliptical"
+}

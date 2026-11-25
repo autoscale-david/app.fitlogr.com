@@ -66,6 +66,34 @@ describe("photo contracts", () => {
     expect("total_calories" in parsed).toBe(false);
   });
 
+  it("reads a workout burn and treats a non-meal as ignore", () => {
+    const workout = MealVisionSchema.parse({
+      classification: "workout",
+      confidence: 0.95,
+      meal_name: "Vision Fitness cardio",
+      reason: "Console reads 153.",
+      burn_kcal: 153,
+      items: [],
+    });
+    expect(workout.is_meal).toBe(false);
+    expect(workout.burn_kcal).toBe(153);
+    expect(isConfirmedMeal(workout)).toBe(false);
+
+    const ignored = MealVisionSchema.parse({
+      classification: "not_meal",
+      is_meal: false,
+      confidence: 0.9,
+      meal_name: null,
+      suggested_meal_type: null,
+      notes: "A dog",
+      items: [],
+    });
+    expect(ignored.classification).toBe("ignore");
+    expect(ignored.burn_kcal).toBeNull();
+    expect(ignored.reason).toBeNull();
+    expect(isConfirmedMeal(ignored)).toBe(false);
+  });
+
   it("rejects a meal below the confidence floor unless the person forced it", () => {
     const low = MealVisionSchema.parse({
       is_meal: true,
