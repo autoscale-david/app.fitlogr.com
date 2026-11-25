@@ -1,45 +1,120 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { calorieBudget, caloriesRemaining } from "@fitlogr/shared";
+import {
+  dayDotStatus,
+  dayKeyFor,
+  effectiveSnapshot,
+  endedBannerDue,
+  endedBannerText,
+  fastOverAllowance,
+  formatKcal,
+  macroTargetsForDay,
+  planPillLabel,
+  remainingState,
+  ringProgress,
+  snapshotTarget,
+  snapshotTone,
+  type DayDotStatus,
+  type DayKey,
+} from "@fitlogr/shared";
 import { CalorieRing } from "../../components/CalorieRing";
+import { DayEditorSheet } from "../../components/DayEditorSheet";
 import { MealCard, WorkoutCard } from "../../components/LogCard";
 import { MealPhotoPicker } from "../../components/MealPhotoPicker";
 import { MacroBars } from "../../components/MacroBars";
+import { toneColor } from "../../components/planTone";
 import { WeekStrip } from "../../components/WeekStrip";
 import { addDays, formatHeading, localDateISO, startOfWeek } from "../../services/dates";
-import type { DayLog } from "../../services/db";
+import type { DayLog, WeekDayStatus } from "../../services/db";
 import { useStore } from "../../services/store";
 import { colors, LB_PER_KG } from "../../theme";
+
+const ENDED_BANNER_KEY = "plan_ended_banner_shown";
+
+function openPlanSettings(focus: "plan" | "plan-end") {
+  router.navigate({ pathname: "/(tabs)/settings", params: { focus, at: String(Date.now()) } });
+}
 
 export default function LogScreen() {
   const insets = useSafeAreaInsets();
   const store = useStore();
   const today = localDateISO();
   const [selected, setSelected] = useState(today);
-  const [logged, setLogged] = useState<string[]>([]);
+  const [week, setWeek] = useState<Record<string, WeekDayStatus>>({});
   const [day, setDay] = useState<DayLog | null>(null);
+  const [editing, setEditing] = useState<DayKey | null>(null);
+  const [endedBanner, setEndedBanner] = useState(false);
+  const weekStart = startOfWeek(selected);
 
   useEffect(() => {
     if (!store.ready) return;
     let cancelled = false;
-    Promise.all([store.loadDay(selected), store.loggedDates()]).then(([nextDay, dates]) => {
+    Promise.all([store.loadDay(selected), store.loadWeek(weekStart, addDays(weekStart, 6))]).then(([nextDay, nextWeek]) => {
       if (!cancelled) {
         setDay(nextDay);
-        setLogged(dates);
+        setWeek(nextWeek);
       }
     });
     return () => {
       cancelled = true;
     };
-  }, [store, selected, store.refreshToken, store.ready]);
+  }, [store, selected, weekStart, store.refreshToken, store.ready]);
+
+  const plan = store.goals?.plan ?? null;
+  useFocusEffect(
+    useCallback(() => {
+      if (!plan) return;
+      let cancelled = false;
+      void store.readLocal(ENDED_BANNER_KEY).then(async (shown) => {
+        const due = endedBannerDue(plan, localDateISO(), shown || null);
+        if (cancelled || !due) return;
+        setEndedBanner(true);
+        await store.writeLocal(ENDED_BANNER_KEY, due);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }, [plan, store]),
+  );
 
   const goals = store.goals;
-  const budget = goals ? calorieBudget(goals.baseKcal, day?.activeBurnedKcal ?? 0) : 0;
-  const remaining = goals ? caloriesRemaining(goals.baseKcal, day?.activeBurnedKcal ?? 0, day?.eatenKcal ?? 0) : 0;
-  const progress = budget > 0 ? (day?.eatenKcal ?? 0) / budget : 0;
+  const eaten = day?.eatenKcal ?? 0;
+  const burned = day?.activeBurnedKcal ?? 0;
+  const snapshot = goals ? effectiveSnapshot(goals.plan, selected, today, day?.planSnapshot) : null;
+  const isFast = snapshot?.day.type === "fast";
+  const target = snapshot ? snapshotTarget(snapshot) : 0;
+  const state = snapshot ? remainingState(snapshot, eaten, burned) : null;
+  const progress = snapshot ? ringProgress(snapshot, eaten, burned) : 0;
+  const macroTargets =
+    goals && snapshot
+      ? macroTargetsForDay({ proteinG: goals.proteinTarget, carbsG: goals.carbsTarget, fatG: goals.fatTarget }, snapshot, goals.plan.scaleMacrosWithPlan)
+      : null;
+  const dots: Record<string, DayDotStatus> = {};
+  if (goals) {
+    for (const [date, status] of Object.entries(week)) {
+      dots[date] = dayDotStatus({
+        date,
+        today,
+        snapshot: effectiveSnapshot(goals.plan, date, today, status.snapshot),
+        eatenKcal: status.eatenKcal,
+        burnedKcal: status.burnedKcal,
+        hasLog: status.hasLog,
+      });
+    }
+  }
+
+  function openPill() {
+    if (!goals || !snapshot?.inPlan) {
+      openPlanSettings("plan");
+      return;
+    }
+    const key = dayKeyFor(goals.plan, selected);
+    if (key) setEditing(key);
+    else openPlanSettings("plan");
+  }
   const weight =
     day?.weightKg == null || !goals
       ? null
@@ -77,40 +152,87 @@ export default function LogScreen() {
         <Text style={styles.importLink}>Import history</Text>
       </Pressable>
 
+      {endedBanner && goals ? (
+        <View style={styles.banner}>
+          <View style={styles.bannerTop}>
+            <Text style={styles.bannerText}>{endedBannerText(goals.plan)}</Text>
+            <Pressable onPress={() => setEndedBanner(false)} hitSlop={10} accessibilityRole="button" accessibilityLabel="Dismiss">
+              <Ionicons name="close" size={18} color={colors.muted} />
+            </Pressable>
+          </View>
+          <View style={styles.bannerActions}>
+            <Pressable
+              onPress={() => {
+                setEndedBanner(false);
+                openPlanSettings("plan-end");
+              }}
+              hitSlop={8}
+              accessibilityRole="button"
+            >
+              <Text style={styles.bannerAction}>Extend</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                setEndedBanner(false);
+                openPlanSettings("plan");
+              }}
+              hitSlop={8}
+              accessibilityRole="button"
+            >
+              <Text style={styles.bannerAction}>Edit plan</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+
       <View style={styles.weekRow}>
         <Pressable onPress={() => setSelected(addDays(selected, -7))} hitSlop={8}>
           <Ionicons name="chevron-back" size={18} color={colors.muted} />
         </Pressable>
         <View style={{ flex: 1 }}>
-          <WeekStrip
-            weekStart={startOfWeek(selected)}
-            selected={selected}
-            logged={new Set(logged)}
-            onSelect={setSelected}
-          />
+          <WeekStrip weekStart={weekStart} selected={selected} status={dots} onSelect={setSelected} />
         </View>
         <Pressable onPress={() => setSelected(addDays(selected, 7))} hitSlop={8}>
           <Ionicons name="chevron-forward" size={18} color={colors.muted} />
         </Pressable>
       </View>
 
-      {!store.ready || !day || !goals ? (
+      {!store.ready || !day || !goals || !snapshot || !state ? (
         <ActivityIndicator color={colors.green} style={{ marginTop: 48 }} />
       ) : (
         <>
           <View style={styles.calorieCard}>
             <View style={styles.calorieTop}>
-              <Text style={styles.remainingValue}>{remaining.toLocaleString()}</Text>
-              <View>
-                <Text style={styles.remainingLabel}>Calories</Text>
-                <Text style={styles.remainingLabel}>Remaining</Text>
-              </View>
+              {isFast ? (
+                <>
+                  <Text style={styles.remainingValue}>{formatKcal(eaten)}</Text>
+                  <View style={styles.labelColumn}>
+                    <Text style={styles.remainingLabel}>Fasting day</Text>
+                    <PlanPill label={planPillLabel(snapshot)} color={toneColor(snapshotTone(snapshot))} onPress={openPill} />
+                  </View>
+                </>
+              ) : state.kind === "onTarget" ? (
+                <View style={styles.labelColumn}>
+                  <Text style={styles.onTarget}>On target</Text>
+                  <PlanPill label={planPillLabel(snapshot)} color={toneColor(snapshotTone(snapshot))} onPress={openPill} />
+                </View>
+              ) : (
+                <>
+                  <Text style={styles.remainingValue}>{formatKcal(state.amount)}</Text>
+                  <View style={styles.labelColumn}>
+                    <Text style={styles.remainingLabel}>Calories</Text>
+                    <Text style={styles.remainingLabel}>{state.kind === "over" ? "Over" : "Remaining"}</Text>
+                    <PlanPill label={planPillLabel(snapshot)} color={toneColor(snapshotTone(snapshot))} onPress={openPill} />
+                  </View>
+                </>
+              )}
               <View style={{ flex: 1 }} />
-              <CalorieRing progress={progress} />
+              <CalorieRing progress={progress} warning={fastOverAllowance(snapshot, eaten)} />
             </View>
             <Text style={styles.calorieSub}>
-              {day.eatenKcal.toLocaleString()} eaten · {goals.baseKcal.toLocaleString()} base +{" "}
-              {day.activeBurnedKcal.toLocaleString()} burned
+              {isFast
+                ? `${formatKcal(target)} planned · ${formatKcal(burned)} burned`
+                : `${formatKcal(eaten)} eaten · ${formatKcal(target)} target + ${formatKcal(burned)} burned`}
             </Text>
             {day.steps != null || day.heartRateBpm != null ? (
               <Text style={styles.calorieSub}>
@@ -121,13 +243,15 @@ export default function LogScreen() {
             ) : null}
           </View>
 
-          <MacroBars
-            macros={[
-              { label: "Protein", value: day.proteinG, target: goals.proteinTarget, color: colors.protein },
-              { label: "Carbs", value: day.carbsG, target: goals.carbsTarget, color: colors.carbs },
-              { label: "Fat", value: day.fatG, target: goals.fatTarget, color: colors.fat },
-            ]}
-          />
+          {macroTargets ? (
+            <MacroBars
+              macros={[
+                { label: "Protein", value: day.proteinG, target: macroTargets.proteinG, color: colors.protein },
+                { label: "Carbs", value: day.carbsG, target: macroTargets.carbsG, color: colors.carbs },
+                { label: "Fat", value: day.fatG, target: macroTargets.fatG, color: colors.fat },
+              ]}
+            />
+          ) : null}
 
           <Text style={styles.section}>{selected === today ? "TODAY'S LOG" : "LOG"}</Text>
           {entries.length === 0 ? (
@@ -149,7 +273,28 @@ export default function LogScreen() {
           </Pressable>
         </>
       )}
+      {goals ? (
+        <DayEditorSheet
+          plan={goals.plan}
+          dayKey={editing}
+          onClose={() => setEditing(null)}
+          onSave={(next) => {
+            setEditing(null);
+            void store.saveGoals({ ...goals, plan: next });
+          }}
+        />
+      ) : null}
     </ScrollView>
+  );
+}
+
+function PlanPill({ label, color, onPress }: { label: string; color: string; onPress: () => void }) {
+  return (
+    <Pressable style={styles.planPill} onPress={onPress} hitSlop={6} accessibilityRole="button" accessibilityLabel={`Plan: ${label}`}>
+      <Text style={[styles.planPillText, { color }]} numberOfLines={1}>
+        {label}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -191,6 +336,15 @@ const styles = StyleSheet.create({
   calorieTop: { flexDirection: "row", alignItems: "center", gap: 10 },
   remainingValue: { color: colors.text, fontSize: 48, fontWeight: "800", letterSpacing: -1.5 },
   remainingLabel: { color: colors.text, fontSize: 16, fontWeight: "700", lineHeight: 20 },
+  labelColumn: { flexShrink: 1, alignItems: "flex-start" },
+  onTarget: { color: colors.green, fontSize: 34, fontWeight: "800", letterSpacing: -0.8 },
+  planPill: { marginTop: 6, backgroundColor: colors.pill, borderRadius: 12, paddingHorizontal: 9, paddingVertical: 4, maxWidth: 190 },
+  planPillText: { fontSize: 13, fontWeight: "700" },
+  banner: { backgroundColor: colors.card, borderRadius: 16, padding: 12, marginTop: 12 },
+  bannerTop: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  bannerText: { color: colors.text, flex: 1, lineHeight: 20 },
+  bannerActions: { flexDirection: "row", gap: 18, marginTop: 10 },
+  bannerAction: { color: colors.green, fontWeight: "700" },
   calorieSub: { color: colors.muted, marginTop: 6, fontSize: 14 },
   section: {
     color: colors.faint,

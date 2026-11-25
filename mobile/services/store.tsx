@@ -10,6 +10,7 @@ import {
   enterDemoMode,
   listWeights,
   loadDay,
+  loadWeekStatus,
   loggedDates,
   migrate,
   pendingChanges,
@@ -20,6 +21,7 @@ import {
   readSetting,
   removeMeal,
   restoreSample,
+  sealPlanSnapshots,
   writeAccount,
   writeGoals,
   writeMeal,
@@ -29,6 +31,7 @@ import {
   type DayLog,
   type Goals,
   type MealRecord,
+  type WeekDayStatus,
 } from "./db";
 import { clearSession, readSession, saveSession } from "./session";
 import { shareAccountExport } from "./exportAccount";
@@ -54,6 +57,9 @@ interface Store {
   googleReconnectRequired: boolean;
   lastSyncedAt: string | null;
   loadDay: (date: string) => Promise<DayLog>;
+  loadWeek: (from: string, to: string) => Promise<Record<string, WeekDayStatus>>;
+  readLocal: (key: string) => Promise<string | null>;
+  writeLocal: (key: string, value: string) => Promise<void>;
   listWeights: (from: string, to: string) => Promise<{ localDate: string; weightKg: number }[]>;
   loadInsight: (date: string) => Promise<DailyInsight | null>;
   loadTrends: (days: 7 | 14 | 30) => Promise<TrendsResponse | null>;
@@ -234,6 +240,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       loadDay: (date) => {
         if (!db) throw new Error("Database is not open");
         return loadDay(db, date);
+      },
+      loadWeek: async (from, to) => {
+        if (!db) throw new Error("Database is not open");
+        if (goals) await sealPlanSnapshots(db, goals);
+        return loadWeekStatus(db, from, to);
+      },
+      readLocal: (key) => {
+        if (!db) return Promise.resolve(null);
+        return readSetting(db, key);
+      },
+      writeLocal: async (key, value) => {
+        if (!db) return;
+        await writeSetting(db, key, value);
       },
       loggedDates: () => {
         if (!db) throw new Error("Database is not open");

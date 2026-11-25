@@ -43,7 +43,7 @@ export default function ReviewScreen() {
               date,
               calories_in_kcal: intake,
               calories_burned_kcal: burned,
-              surplus_deficit_kcal: intake - store.goals!.baseKcal,
+              surplus_deficit_kcal: intake - store.goals!.plan.maintenanceCalories,
               protein_g: log.proteinG,
               carbs_g: log.carbsG,
               fat_g: log.fatG,
@@ -89,7 +89,8 @@ export default function ReviewScreen() {
   const intake = day?.eatenKcal ?? 0;
   const burn = (day?.activeBurnedKcal ?? 0) + (day?.restingBurnedKcal ?? 0);
   const net = intake - burn;
-  const versusGoal = goals ? intake - goals.baseKcal : 0;
+  const maintenance = goals?.plan.maintenanceCalories ?? 0;
+  const versusMaintenance = goals ? intake - maintenance : 0;
   const weight =
     day?.weightKg == null || !goals
       ? "No weigh-in"
@@ -141,12 +142,12 @@ export default function ReviewScreen() {
               <BalanceStat label="Burned" value={burn} />
               <BalanceStat label={net <= 0 ? "Deficit" : "Surplus"} value={Math.abs(net)} accent={net <= 0 ? colors.green : colors.orange} />
             </View>
-            <Text style={styles.goalLine}>
-              {versusGoal === 0
-                ? "Right on your calorie goal"
-                : versusGoal < 0
-                  ? `${Math.abs(versusGoal).toLocaleString()} kcal under your ${goals.baseKcal.toLocaleString()} goal`
-                  : `${versusGoal.toLocaleString()} kcal over your ${goals.baseKcal.toLocaleString()} goal`}
+            <Text style={styles.maintenanceLine}>
+              {versusMaintenance === 0
+                ? "Right at maintenance"
+                : versusMaintenance < 0
+                  ? `${Math.abs(versusMaintenance).toLocaleString()} kcal under your ${maintenance.toLocaleString()} maintenance`
+                  : `${versusMaintenance.toLocaleString()} kcal over your ${maintenance.toLocaleString()} maintenance`}
             </Text>
           </View>
 
@@ -202,7 +203,7 @@ export default function ReviewScreen() {
             ) : (
               <>
                 <Text style={styles.meta}>Sample preview. Sign in for an insight written from your day.</Text>
-                <Text style={styles.insightText}>{sampleInsight(day, goals.baseKcal, goals.proteinTarget)}</Text>
+                <Text style={styles.insightText}>{sampleInsight(day, maintenance, goals.proteinTarget)}</Text>
               </>
             )}
           </View>
@@ -270,12 +271,14 @@ function formatWeight(kg: number, unitSystem: "metric" | "imperial"): string {
   return unitSystem === "metric" ? `${kg.toFixed(1)} kg` : `${(kg * LB_PER_KG).toFixed(1)} lb`;
 }
 
-function sampleInsight(day: DayLog, calorieGoal: number, proteinGoal: number): string {
+function sampleInsight(day: DayLog, maintenance: number, proteinTarget: number): string {
   const burned = day.activeBurnedKcal + day.restingBurnedKcal;
-  const versus = day.eatenKcal - calorieGoal;
-  const goalLine =
-    versus <= 0 ? `${Math.abs(versus).toLocaleString()} kcal under the ${calorieGoal.toLocaleString()} calorie goal.` : `${versus.toLocaleString()} kcal over the calorie goal.`;
-  return `This sample day shows ${day.eatenKcal.toLocaleString()} kcal eaten and ${burned.toLocaleString()} kcal burned. Protein is ${day.proteinG}g of ${proteinGoal}g. ${goalLine}`;
+  const versus = day.eatenKcal - maintenance;
+  const balance =
+    versus <= 0
+      ? `${Math.abs(versus).toLocaleString()} kcal under ${maintenance.toLocaleString()} maintenance calories.`
+      : `${versus.toLocaleString()} kcal over maintenance calories.`;
+  return `This sample day shows ${day.eatenKcal.toLocaleString()} kcal eaten and ${burned.toLocaleString()} kcal burned. Protein is ${day.proteinG}g of ${proteinTarget}g. ${balance}`;
 }
 
 function emptyDay(): DayLog {
@@ -291,6 +294,7 @@ function emptyDay(): DayLog {
     restingBurnedKcal: 0,
     steps: null,
     heartRateBpm: null,
+    planSnapshot: null,
   };
 }
 
@@ -304,7 +308,7 @@ const styles = StyleSheet.create({
   stat: { flex: 1 },
   statValue: { color: colors.text, fontSize: 22, fontWeight: "800" },
   statLabel: { color: colors.muted, marginTop: 4 },
-  goalLine: { color: colors.text, marginTop: 14, lineHeight: 20 },
+  maintenanceLine: { color: colors.text, marginTop: 14, lineHeight: 20 },
   section: { color: colors.text, fontSize: 20, fontWeight: "800", marginTop: 22 },
   sectionInline: { color: colors.text, fontSize: 20, fontWeight: "800" },
   trendHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 22 },

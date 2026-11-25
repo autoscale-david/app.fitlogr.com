@@ -1,6 +1,7 @@
-import { round1 } from "@fitlogr/shared";
+import { dayPlanLabel, planOffset, round1, snapshotTarget } from "@fitlogr/shared";
 import { sha256Hex } from "../encoding";
 import { activityName, durationMinutes, workoutKcal } from "../health/aggregate";
+import { daySnapshot } from "../settings/plan";
 
 export interface InsightSnapshot {
   date: string;
@@ -11,6 +12,11 @@ export interface InsightSnapshot {
     daily_carbs_target_g: number | null;
     daily_fat_target_g: number | null;
     target_weight_kg: number | null;
+  };
+  plan?: {
+    label: string;
+    in_plan: boolean;
+    maintenance_kcal: number;
   };
   meals: Array<{
     id: string;
@@ -96,17 +102,14 @@ export async function hashInsightSnapshot(snapshot: InsightSnapshot): Promise<st
   return sha256Hex(canonicalJson(snapshot));
 }
 
-export async function loadInsightSnapshot(db: D1Database, userId: string, date: string): Promise<InsightSnapshot> {
+export async function loadInsightSnapshot(db: D1Database, userId: string, date: string, now = new Date()): Promise<InsightSnapshot> {
   const goals = await db
     .prepare(
-      `SELECT daily_calorie_target_kcal, daily_calorie_delta_target_kcal, daily_protein_target_g,
-              daily_carbs_target_g, daily_fat_target_g, target_weight_kg
+      `SELECT daily_protein_target_g, daily_carbs_target_g, daily_fat_target_g, target_weight_kg
        FROM user_settings WHERE user_id = ?`,
     )
     .bind(userId)
     .first<{
-      daily_calorie_target_kcal: number | null;
-      daily_calorie_delta_target_kcal: number | null;
       daily_protein_target_g: number | null;
       daily_carbs_target_g: number | null;
       daily_fat_target_g: number | null;
@@ -174,16 +177,20 @@ export async function loadInsightSnapshot(db: D1Database, userId: string, date: 
   }));
   const rows = health.results;
   const weight = latest(rows.filter((row) => row.record_type === "weight"));
+  const plan = goals ? await daySnapshot(db, userId, date, now) : null;
   return {
     date,
     goals: {
-      daily_calorie_target_kcal: goals?.daily_calorie_target_kcal ?? null,
-      daily_calorie_delta_target_kcal: goals?.daily_calorie_delta_target_kcal ?? null,
+      daily_calorie_target_kcal: plan ? snapshotTarget(plan) : null,
+      daily_calorie_delta_target_kcal: plan ? planOffset(plan.day, plan.maintenanceCalories, plan.fastAllowanceKcal) : null,
       daily_protein_target_g: goals?.daily_protein_target_g ?? null,
       daily_carbs_target_g: goals?.daily_carbs_target_g ?? null,
       daily_fat_target_g: goals?.daily_fat_target_g ?? null,
       target_weight_kg: goals?.target_weight_kg ?? null,
     },
+    ...(plan
+      ? { plan: { label: plan.inPlan ? dayPlanLabel(plan.day) : "Maintenance", in_plan: plan.inPlan, maintenance_kcal: plan.maintenanceCalories } }
+      : {}),
     meals: mealSnapshots,
     macros: {
       calories_kcal: round1(mealSnapshots.reduce((sum, meal) => sum + meal.calories_kcal, 0)),

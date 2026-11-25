@@ -1,3 +1,4 @@
+export * from "./caloriePlan";
 export {
   KCAL_PER_KG,
   MIN_COMPLETE_INTAKE_KCAL,

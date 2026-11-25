@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CaloriePlanApiSchema, MaintenanceCaloriesSchema } from "../caloriePlan";
 import { UnitSystemSchema } from "./auth-units";
 
 export const SettingsSchema = z.object({
@@ -10,6 +11,9 @@ export const SettingsSchema = z.object({
   daily_protein_target_g: z.number().int().nullable(),
   daily_carbs_target_g: z.number().int().nullable(),
   daily_fat_target_g: z.number().int().nullable(),
+  maintenance_calories_kcal: z.number().int(),
+  /** Null until the user first saves a plan; clients then use Maintenance every day. */
+  calorie_plan: CaloriePlanApiSchema.nullable(),
   auto_scan_photos: z.boolean(),
   wifi_only_uploads: z.boolean(),
   confirm_before_ai: z.boolean(),
@@ -27,11 +31,14 @@ export const SettingsUpdateSchema = z
     timezone: z.string().min(1).max(80).optional(),
     unit_system: UnitSystemSchema.optional(),
     target_weight_kg: z.number().positive().max(500).nullable().optional(),
+    /** Legacy base calories; mirrored into maintenance_calories_kcal for older app builds. */
     daily_calorie_target_kcal: optionalInt.optional(),
     daily_calorie_delta_target_kcal: z.number().int().min(-10000).max(10000).nullable().optional(),
     daily_protein_target_g: z.number().int().min(0).max(2000).nullable().optional(),
     daily_carbs_target_g: z.number().int().min(0).max(2000).nullable().optional(),
     daily_fat_target_g: z.number().int().min(0).max(2000).nullable().optional(),
+    maintenance_calories_kcal: MaintenanceCaloriesSchema.optional(),
+    calorie_plan: CaloriePlanApiSchema.optional(),
     auto_scan_photos: z.boolean().optional(),
     wifi_only_uploads: z.boolean().optional(),
     confirm_before_ai: z.boolean().optional(),

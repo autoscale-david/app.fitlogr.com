@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import type { MaintenanceEstimate } from "@fitlogr/shared";
+import { PLAN_LIMITS, type MaintenanceEstimate } from "@fitlogr/shared";
 import { api } from "../services/api";
 import { useStore } from "../services/store";
 import { colors, LB_PER_KG } from "../theme";
@@ -14,7 +14,7 @@ export function MaintenanceEstimateCard() {
 
   async function load() {
     if (store.mode !== "account") {
-      setError("Sign in to estimate base calories from your history.");
+      setError("Sign in to estimate maintenance calories from your history.");
       return;
     }
     setBusy(true);
@@ -30,12 +30,13 @@ export function MaintenanceEstimateCard() {
 
   function apply() {
     if (!store.goals || estimate?.estimated_base_calories == null) return;
-    void store.saveGoals({ ...store.goals, baseKcal: estimate.estimated_base_calories });
+    const maintenanceCalories = Math.min(PLAN_LIMITS.maintenanceMax, Math.max(PLAN_LIMITS.maintenanceMin, Math.round(estimate.estimated_base_calories)));
+    void store.saveGoals({ ...store.goals, plan: { ...store.goals.plan, maintenanceCalories } });
   }
 
   return (
     <View style={styles.wrap}>
-      <Text style={styles.label}>Estimate base calories from history</Text>
+      <Text style={styles.label}>Estimate maintenance calories from history</Text>
       <Pressable style={styles.button} onPress={() => void load()} disabled={busy}>
         {busy ? <ActivityIndicator color="#062214" /> : <Text style={styles.buttonText}>Estimate from the last 90 days</Text>}
       </Pressable>
@@ -46,8 +47,8 @@ export function MaintenanceEstimateCard() {
             <Text style={styles.body}>{estimate.missing_reason}</Text>
           ) : (
             <>
-              <Text style={styles.value}>Base calories {estimate.estimated_base_calories?.toLocaleString()}</Text>
-              <Text style={styles.body}>Total maintenance (TDEE) {estimate.estimated_tdee_calories?.toLocaleString()} kcal</Text>
+              <Text style={styles.value}>Maintenance calories {estimate.estimated_base_calories?.toLocaleString()}</Text>
+              <Text style={styles.body}>Average total burn with workouts (TDEE) {estimate.estimated_tdee_calories?.toLocaleString()} kcal</Text>
               <Text style={styles.body}>
                 Confidence {estimate.confidence}. {estimate.total_complete_days} complete days across {estimate.qualifying_period_count} period
                 {estimate.qualifying_period_count === 1 ? "" : "s"}.
@@ -66,7 +67,7 @@ export function MaintenanceEstimateCard() {
           ))}
           {estimate.estimated_base_calories != null ? (
             <Pressable style={styles.secondary} onPress={apply}>
-              <Text style={styles.secondaryText}>Apply to base calories</Text>
+              <Text style={styles.secondaryText}>Apply to maintenance calories</Text>
             </Pressable>
           ) : null}
         </View>

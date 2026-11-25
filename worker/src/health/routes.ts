@@ -19,7 +19,7 @@ export function registerHealthRoutes(app: Hono<AppEnv>): void {
   app.get("/api/days/:date", requireAuth(), async (c) => {
     const parsed = DayParamSchema.safeParse(c.req.param("date"));
     if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", "Date must be YYYY-MM-DD");
-    const day = await buildDay(requireDb(c.env.DB), currentAuth(c.get("auth")).userId, parsed.data);
+    const day = await buildDay(requireDb(c.env.DB), currentAuth(c.get("auth")).userId, parsed.data, c.get("deps").now());
     return c.json(day);
   });
 }

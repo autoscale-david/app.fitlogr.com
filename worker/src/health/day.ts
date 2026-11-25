@@ -1,5 +1,6 @@
-import { caloriesRemaining, dailyCalorieExpenditure, type DayResponse } from "@fitlogr/shared";
+import { dailyCalorieExpenditure, remainingCalories, type DayResponse } from "@fitlogr/shared";
 import { listMeals } from "../db/meals";
+import { daySnapshot } from "../settings/plan";
 import { activityName, durationMinutes, metadataOf, workoutKcal } from "./aggregate";
 
 interface SampleRow {
@@ -16,11 +17,12 @@ interface SampleRow {
   metadata_json: string | null;
 }
 
-export async function buildDay(db: D1Database, userId: string, date: string): Promise<DayResponse> {
+export async function buildDay(db: D1Database, userId: string, date: string, now = new Date()): Promise<DayResponse> {
   const settings = await db
-    .prepare("SELECT timezone, daily_calorie_target_kcal FROM user_settings WHERE user_id = ?")
+    .prepare("SELECT timezone FROM user_settings WHERE user_id = ?")
     .bind(userId)
-    .first<{ timezone: string; daily_calorie_target_kcal: number | null }>();
+    .first<{ timezone: string }>();
+  const snapshot = settings ? await daySnapshot(db, userId, date, now) : null;
   const meals = await listMeals(db, userId, date, date);
   const samples = await db
     .prepare(
@@ -53,7 +55,6 @@ export async function buildDay(db: D1Database, userId: string, date: string): Pr
     workoutCaloriesKcal: workoutRows.reduce((total, row) => total + workoutKcal(row), 0),
   });
   const eaten = meals.reduce((total, meal) => total + meal.calories_kcal, 0);
-  const target = settings?.daily_calorie_target_kcal ?? null;
   const heart = latest(rows.filter((row) => row.record_type === "heart_rate_summary"));
   const restingHeart = latest(rows.filter((row) => row.record_type === "resting_heart_rate"));
   const heartMeta = metadataOf(heart?.metadata_json ?? null);
@@ -87,7 +88,7 @@ export async function buildDay(db: D1Database, userId: string, date: string): Pr
       workout_calories_kcal: energy.workoutCaloriesKcal,
       total_calories_out_kcal: energy.totalBurnedKcal,
       calorie_balance_kcal: round1(eaten) - energy.totalBurnedKcal,
-      calories_remaining_kcal: target == null ? null : caloriesRemaining(target, energy.activeCaloriesKcal, eaten),
+      calories_remaining_kcal: snapshot == null ? null : remainingCalories(snapshot, eaten, energy.activeCaloriesKcal),
       steps: Math.round(sum(rows.filter((row) => row.record_type === "steps"))),
       workout_count: workouts.length,
       workout_minutes: workouts.reduce((total, workout) => total + workout.duration_min, 0),

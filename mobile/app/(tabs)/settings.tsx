@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { ActivityIndicator, Alert, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type ScrollViewInstance } from "react-native";
+import { router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { GoogleReconnectBanner, SyncStatusBanner } from "../../components/AccountBanners";
+import { CaloriePlanCard } from "../../components/CaloriePlanCard";
 import { ImportHistoryCard } from "../../components/ImportHistoryCard";
-import { MaintenanceEstimateCard } from "../../components/MaintenanceEstimateCard";
 import { HealthSyncCard } from "../../components/HealthSyncCard";
 import type { Goals } from "../../services/db";
 import { AuthCancelled, useStore } from "../../services/store";
@@ -18,10 +19,25 @@ export default function SettingsScreen() {
   const [exporting, setExporting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [openEndsSignal, setOpenEndsSignal] = useState(0);
+  const scrollRef = useRef<ScrollViewInstance>(null);
+  const planY = useRef<number | null>(null);
+  const params = useLocalSearchParams<{ focus?: string; at?: string }>();
 
   useEffect(() => {
     setDraft(store.goals);
   }, [store.goals, store.refreshToken]);
+
+  useEffect(() => {
+    if (params.focus !== "plan" && params.focus !== "plan-end") return;
+    const focus = params.focus;
+    const timer = setTimeout(() => {
+      if (planY.current != null) scrollRef.current?.scrollTo({ y: Math.max(0, planY.current - 12), animated: true });
+      if (focus === "plan-end") setOpenEndsSignal((signal) => signal + 1);
+      router.setParams({ focus: "", at: "" });
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [params.focus, params.at]);
 
   if (!draft) {
     return <View style={styles.screen} />;
@@ -34,6 +50,7 @@ export default function SettingsScreen() {
 
   return (
     <ScrollView
+      ref={scrollRef}
       style={styles.screen}
       contentContainerStyle={{ paddingTop: insets.top + 12, paddingHorizontal: 16, paddingBottom: 40 }}
       keyboardShouldPersistTaps="handled"
@@ -85,7 +102,7 @@ export default function SettingsScreen() {
         ) : (
           <>
             <Text style={styles.body}>
-              Connect Google to save goals, meals, and weight on fitlogr.com. Until then, this phone shows the sample day.
+              Connect Google to save your plan, meals, and weight on fitlogr.com. Until then, this phone shows the sample day.
             </Text>
             <Pressable
               style={styles.button}
@@ -119,10 +136,16 @@ export default function SettingsScreen() {
         </View>
       </View>
 
+      <View
+        onLayout={(event) => {
+          planY.current = event.nativeEvent.layout.y;
+        }}
+      >
+        <CaloriePlanCard plan={draft.plan} onChange={(plan) => save({ ...draft, plan })} openEndsSignal={openEndsSignal} />
+      </View>
+
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Daily targets</Text>
-        <NumberField label="Base calories" value={draft.baseKcal} onChange={(baseKcal) => save({ ...draft, baseKcal })} />
-        <MaintenanceEstimateCard />
         <NumberField label="Protein (g)" value={draft.proteinTarget} onChange={(proteinTarget) => save({ ...draft, proteinTarget })} />
         <NumberField label="Carbs (g)" value={draft.carbsTarget} onChange={(carbsTarget) => save({ ...draft, carbsTarget })} />
         <NumberField label="Fat (g)" value={draft.fatTarget} onChange={(fatTarget) => save({ ...draft, fatTarget })} />

@@ -1,7 +1,8 @@
 import Svg, { Circle } from "react-native-svg";
 import { colors } from "../theme";
 
-export function CalorieRing({ progress }: { progress: number }) {
+/** `warning` turns the empty ring amber (a fast day with intake above the allowance). */
+export function CalorieRing({ progress, warning = false }: { progress: number; warning?: boolean }) {
   const size = 74;
   const stroke = 7;
   const radius = (size - stroke) / 2;
@@ -15,22 +16,24 @@ export function CalorieRing({ progress }: { progress: number }) {
         cx={size / 2}
         cy={size / 2}
         r={radius}
-        stroke="#243028"
+        stroke={warning ? colors.orange : "#243028"}
         strokeWidth={stroke}
         fill="none"
       />
-      <Circle
-        cx={size / 2}
-        cy={size / 2}
-        r={radius}
-        stroke={colors.green}
-        strokeWidth={stroke}
-        fill="none"
-        strokeLinecap="round"
-        strokeDasharray={`${dash} ${circumference - dash}`}
-        rotation={-90}
-        origin={`${size / 2}, ${size / 2}`}
-      />
+      {clamped > 0 ? (
+        <Circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          stroke={colors.green}
+          strokeWidth={stroke}
+          fill="none"
+          strokeLinecap="round"
+          strokeDasharray={`${dash} ${circumference - dash}`}
+          rotation={-90}
+          origin={`${size / 2}, ${size / 2}`}
+        />
+      ) : null}
     </Svg>
   );
 }

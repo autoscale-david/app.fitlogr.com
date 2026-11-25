@@ -71,9 +71,9 @@ export async function upsertGoogleUser(
   await db
     .prepare(
       `INSERT INTO user_settings (
-         user_id, timezone, unit_system, daily_calorie_target_kcal, daily_protein_target_g,
+         user_id, timezone, unit_system, daily_calorie_target_kcal, maintenance_calories_kcal, daily_protein_target_g,
          daily_carbs_target_g, daily_fat_target_g, updated_at
-       ) VALUES (?, ?, 'imperial', 1900, 140, 210, 65, ?)
+       ) VALUES (?, ?, 'imperial', 1900, 1900, 140, 210, 65, ?)
        ON CONFLICT(user_id) DO NOTHING`,
     )
     .bind(user.id, timezone || "UTC", stamp)

@@ -1,7 +1,8 @@
 import type { SQLiteDatabase } from "expo-sqlite";
+import { caloriePlanFromApi, caloriePlanToApi, clampMaintenance } from "@fitlogr/shared";
 import type { Goals, MealItemRecord, MealRecord } from "./db";
-import { readSetting, writeGoals, writeServerMeal, writeSetting, writeWeightKg } from "./db";
-import { deviceTimeZone } from "./dates";
+import { readGoals, readSetting, writeGoals, writeServerMeal, writeSetting, writeWeightKg } from "./db";
+import { deviceTimeZone, localDateISO } from "./dates";
 import { ApiError, OfflineError, SessionExpired, api } from "./api";
 import { randomUuid } from "./encoding";
 import * as Crypto from "expo-crypto";
@@ -10,10 +11,13 @@ const BACKOFF_SECONDS = [5, 30, 120, 900, 3600];
 
 export async function queueSettings(db: SQLiteDatabase, goals: Goals): Promise<void> {
   const expected = await readSetting(db, "settings_updated_at");
+  const maintenance = goals.plan.maintenanceCalories;
   await replaceOutbox(db, "settings", "settings", "PUT", "/settings", {
     timezone: deviceTimeZone(),
     unit_system: goals.unitSystem,
-    daily_calorie_target_kcal: goals.baseKcal,
+    // A migrated base number outside 1,000-6,000 still syncs through the legacy field.
+    ...(clampMaintenance(maintenance) != null ? { maintenance_calories_kcal: maintenance } : { daily_calorie_target_kcal: maintenance }),
+    calorie_plan: caloriePlanToApi(goals.plan),
     daily_protein_target_g: goals.proteinTarget,
     daily_carbs_target_g: goals.carbsTarget,
     daily_fat_target_g: goals.fatTarget,
@@ -129,12 +133,17 @@ async function pullChanges(db: SQLiteDatabase): Promise<void> {
     const changes = await api.sync(since);
     await db.withTransactionAsync(async () => {
       if (changes.settings && !blocked.has("settings:settings")) {
+        const current = await readGoals(db);
+        const maintenance =
+          changes.settings.maintenance_calories_kcal ?? changes.settings.daily_calorie_target_kcal ?? current.plan.maintenanceCalories;
         await writeGoals(db, {
           unitSystem: changes.settings.unit_system,
-          baseKcal: changes.settings.daily_calorie_target_kcal ?? 1900,
           proteinTarget: changes.settings.daily_protein_target_g ?? 140,
           carbsTarget: changes.settings.daily_carbs_target_g ?? 210,
           fatTarget: changes.settings.daily_fat_target_g ?? 65,
+          plan: changes.settings.calorie_plan
+            ? caloriePlanFromApi(maintenance, changes.settings.calorie_plan, localDateISO())
+            : { ...current.plan, maintenanceCalories: maintenance },
         });
         await writeSetting(db, "settings_updated_at", changes.settings.updated_at);
       }

@@ -1,14 +1,34 @@
 import type { SQLiteDatabase } from "expo-sqlite";
-import { dailyCalorieExpenditure, type UnitSystem } from "@fitlogr/shared";
+import {
+  addCalendarDays,
+  caloriePlanFromApi,
+  caloriePlanToApi,
+  dailyCalorieExpenditure,
+  defaultCaloriePlan,
+  parseCaloriePlanJson,
+  parseSnapshotJson,
+  snapshotForDate,
+  type CaloriePlanSettings,
+  type DayPlanSnapshot,
+  type UnitSystem,
+} from "@fitlogr/shared";
 import { LB_PER_KG } from "../theme";
 import { addDays, atLocalTime, localDateISO } from "./dates";
 
 export interface Goals {
   unitSystem: UnitSystem;
-  baseKcal: number;
   proteinTarget: number;
   carbsTarget: number;
   fatTarget: number;
+  /** Maintenance calories live on the plan. */
+  plan: CaloriePlanSettings;
+}
+
+export interface WeekDayStatus {
+  eatenKcal: number;
+  burnedKcal: number;
+  hasLog: boolean;
+  snapshot: DayPlanSnapshot | null;
 }
 
 export interface MealItemRecord {
@@ -60,15 +80,24 @@ export interface DayLog {
   restingBurnedKcal: number;
   steps: number | null;
   heartRateBpm: number | null;
+  /** Plan the day was judged against, frozen once the day is in the past. */
+  planSnapshot: DayPlanSnapshot | null;
 }
 
-export const DEFAULT_GOALS: Goals = {
-  unitSystem: "imperial",
-  baseKcal: 1900,
-  proteinTarget: 140,
-  carbsTarget: 210,
-  fatTarget: 65,
-};
+export const DEFAULT_MAINTENANCE_KCAL = 1900;
+
+export function defaultGoals(today = localDateISO()): Goals {
+  return {
+    unitSystem: "imperial",
+    proteinTarget: 140,
+    carbsTarget: 210,
+    fatTarget: 65,
+    plan: defaultCaloriePlan(DEFAULT_MAINTENANCE_KCAL, today),
+  };
+}
+
+/** Past days older than this resolve from the current plan instead of a stored snapshot. */
+const SNAPSHOT_WINDOW_DAYS = 400;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS settings (
@@ -167,6 +196,11 @@ export async function migrate(db: SQLiteDatabase): Promise<void> {
       remote_photo_id TEXT,
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS day_plans (
+      local_date TEXT PRIMARY KEY NOT NULL,
+      snapshot_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
   `);
   const seeded = await db.getFirstAsync<{ value: string }>(
     "SELECT value FROM settings WHERE key = ?",
@@ -175,6 +209,12 @@ export async function migrate(db: SQLiteDatabase): Promise<void> {
   if (!seeded) {
     await seedSample(db);
   }
+  if (!(await readSetting(db, "calorie_plan"))) {
+    // Migration from base calories: Maintenance every day from today, and past days sealed as Maintenance.
+    const migrated = await readGoals(db);
+    await sealPlanSnapshots(db, migrated);
+    await writeGoals(db, migrated, { seal: false });
+  }
   const mode = await readSetting(db, "data_mode");
   if (!mode) await writeSetting(db, "data_mode", "demo");
 }
@@ -182,19 +222,28 @@ export async function migrate(db: SQLiteDatabase): Promise<void> {
 export async function readGoals(db: SQLiteDatabase): Promise<Goals> {
   const rows = await db.getAllAsync<{ key: string; value: string }>("SELECT key, value FROM settings");
   const values = Object.fromEntries(rows.map((row) => [row.key, row.value]));
+  const defaults = defaultGoals();
+  const maintenance = numberOr(values.maintenance_kcal, numberOr(values.base_kcal, DEFAULT_MAINTENANCE_KCAL));
   return {
     unitSystem: values.unit_system === "metric" ? "metric" : "imperial",
-    baseKcal: numberOr(values.base_kcal, DEFAULT_GOALS.baseKcal),
-    proteinTarget: numberOr(values.protein_target, DEFAULT_GOALS.proteinTarget),
-    carbsTarget: numberOr(values.carbs_target, DEFAULT_GOALS.carbsTarget),
-    fatTarget: numberOr(values.fat_target, DEFAULT_GOALS.fatTarget),
+    proteinTarget: numberOr(values.protein_target, defaults.proteinTarget),
+    carbsTarget: numberOr(values.carbs_target, defaults.carbsTarget),
+    fatTarget: numberOr(values.fat_target, defaults.fatTarget),
+    plan: caloriePlanFromApi(maintenance, parseCaloriePlanJson(values.calorie_plan), localDateISO()),
   };
 }
 
-export async function writeGoals(db: SQLiteDatabase, goals: Goals): Promise<void> {
+/**
+ * Plan changes affect today and later only, so every past day is sealed with the settings that were
+ * in effect before a change is written.
+ */
+export async function writeGoals(db: SQLiteDatabase, goals: Goals, options: { seal: boolean } = { seal: true }): Promise<void> {
+  if (options.seal) await sealPlanSnapshots(db, await readGoals(db));
   const entries: [string, string][] = [
     ["unit_system", goals.unitSystem],
-    ["base_kcal", String(goals.baseKcal)],
+    ["maintenance_kcal", String(goals.plan.maintenanceCalories)],
+    ["base_kcal", String(goals.plan.maintenanceCalories)],
+    ["calorie_plan", JSON.stringify(caloriePlanToApi(goals.plan))],
     ["protein_target", String(goals.proteinTarget)],
     ["carbs_target", String(goals.carbsTarget)],
     ["fat_target", String(goals.fatTarget)],
@@ -250,7 +299,90 @@ export async function loadDay(db: SQLiteDatabase, localDate: string): Promise<Da
     restingBurnedKcal: energy.restingCaloriesKcal,
     steps: activity?.steps ?? null,
     heartRateBpm: activity?.avg_hr ?? null,
+    planSnapshot: await readPlanSnapshot(db, localDate),
   };
+}
+
+async function readPlanSnapshot(db: SQLiteDatabase, localDate: string): Promise<DayPlanSnapshot | null> {
+  const row = await db.getFirstAsync<{ snapshot_json: string }>("SELECT snapshot_json FROM day_plans WHERE local_date = ?", localDate);
+  return parseSnapshotJson(row?.snapshot_json);
+}
+
+/** Stores the plan snapshot for every unsealed past day (through yesterday), never overwriting one. */
+export async function sealPlanSnapshots(db: SQLiteDatabase, goals: Goals, today = localDateISO()): Promise<void> {
+  const yesterday = addCalendarDays(today, -1);
+  const sealed = await readSetting(db, "plan_sealed_through");
+  let start: string;
+  if (sealed) {
+    start = addCalendarDays(sealed, 1);
+  } else {
+    const earliest = await db.getFirstAsync<{ local_date: string | null }>(
+      `SELECT MIN(local_date) AS local_date FROM (
+         SELECT local_date FROM meals UNION ALL SELECT local_date FROM workouts UNION ALL SELECT local_date FROM daily_activity
+       )`,
+    );
+    start = earliest?.local_date && earliest.local_date < yesterday ? earliest.local_date : yesterday;
+  }
+  const floor = addCalendarDays(today, -SNAPSHOT_WINDOW_DAYS);
+  if (start < floor) start = floor;
+  if (start > yesterday) return;
+  const createdAt = new Date().toISOString();
+  for (let date = start; date <= yesterday; date = addCalendarDays(date, 1)) {
+    await db.runAsync(
+      "INSERT OR IGNORE INTO day_plans (local_date, snapshot_json, created_at) VALUES (?, ?, ?)",
+      date,
+      JSON.stringify(snapshotForDate(goals.plan, date)),
+      createdAt,
+    );
+  }
+  await writeSetting(db, "plan_sealed_through", yesterday);
+}
+
+/** Intake, burn, and stored plan per date for the week strip. "Logged" means at least one meal. */
+export async function loadWeekStatus(db: SQLiteDatabase, from: string, to: string): Promise<Record<string, WeekDayStatus>> {
+  const meals = await db.getAllAsync<{ local_date: string; eaten: number; n: number }>(
+    `SELECT local_date, SUM(calories_kcal) AS eaten, COUNT(*) AS n FROM meals
+     WHERE local_date >= ? AND local_date <= ? GROUP BY local_date`,
+    from,
+    to,
+  );
+  const workouts = await db.getAllAsync<{ local_date: string; kcal: number }>(
+    `SELECT local_date, SUM(calories_kcal) AS kcal FROM workouts
+     WHERE local_date >= ? AND local_date <= ? GROUP BY local_date`,
+    from,
+    to,
+  );
+  const activity = await db.getAllAsync<{ local_date: string; active_kcal: number | null; resting_kcal: number | null }>(
+    "SELECT local_date, active_kcal, resting_kcal FROM daily_activity WHERE local_date >= ? AND local_date <= ?",
+    from,
+    to,
+  );
+  const snapshots = await db.getAllAsync<{ local_date: string; snapshot_json: string }>(
+    "SELECT local_date, snapshot_json FROM day_plans WHERE local_date >= ? AND local_date <= ?",
+    from,
+    to,
+  );
+  const mealBy = new Map(meals.map((row) => [row.local_date, row]));
+  const workoutBy = new Map(workouts.map((row) => [row.local_date, row.kcal]));
+  const activityBy = new Map(activity.map((row) => [row.local_date, row]));
+  const snapshotBy = new Map(snapshots.map((row) => [row.local_date, parseSnapshotJson(row.snapshot_json)]));
+  const result: Record<string, WeekDayStatus> = {};
+  for (let date = from; date <= to; date = addCalendarDays(date, 1)) {
+    const meal = mealBy.get(date);
+    const day = activityBy.get(date);
+    const energy = dailyCalorieExpenditure({
+      activeCaloriesKcal: day ? day.active_kcal : null,
+      restingCaloriesKcal: day?.resting_kcal ?? null,
+      workoutCaloriesKcal: workoutBy.get(date) ?? 0,
+    });
+    result[date] = {
+      eatenKcal: Math.round(meal?.eaten ?? 0),
+      burnedKcal: energy.activeCaloriesKcal,
+      hasLog: (meal?.n ?? 0) > 0,
+      snapshot: snapshotBy.get(date) ?? null,
+    };
+  }
+  return result;
 }
 
 export async function listWeights(
@@ -277,14 +409,15 @@ export async function loggedDates(db: SQLiteDatabase): Promise<string[]> {
 }
 
 export async function restoreSample(db: SQLiteDatabase): Promise<void> {
-  await db.execAsync("DELETE FROM meals; DELETE FROM workouts; DELETE FROM weights; DELETE FROM daily_activity;");
+  await db.execAsync("DELETE FROM meals; DELETE FROM workouts; DELETE FROM weights; DELETE FROM daily_activity; DELETE FROM day_plans;");
+  await writeSetting(db, "plan_sealed_through", "");
   await seedSample(db);
 }
 
 async function seedSample(db: SQLiteDatabase): Promise<void> {
   const today = localDateISO();
   const yesterday = addDays(today, -1);
-  await writeGoals(db, DEFAULT_GOALS);
+  await writeGoals(db, defaultGoals(today), { seal: false });
 
   const meals: MealRecord[] = [
     meal("avocado", today, "Avocado Toast & Eggs", 8, 14, 410, 18, 36, 22, "ai"),
@@ -399,8 +532,9 @@ export async function writeAccount(db: SQLiteDatabase, email: string, displayNam
 
 export async function enterAccountMode(db: SQLiteDatabase): Promise<void> {
   await db.execAsync(
-    "DELETE FROM meals; DELETE FROM meal_items; DELETE FROM workouts; DELETE FROM weights; DELETE FROM daily_activity; DELETE FROM health_checkpoints; DELETE FROM sync_outbox; DELETE FROM local_media_assets;",
+    "DELETE FROM meals; DELETE FROM meal_items; DELETE FROM workouts; DELETE FROM weights; DELETE FROM daily_activity; DELETE FROM health_checkpoints; DELETE FROM sync_outbox; DELETE FROM local_media_assets; DELETE FROM day_plans;",
   );
+  await writeSetting(db, "plan_sealed_through", "");
   await writeSetting(db, "data_mode", "account");
   await writeSetting(db, "sync_cursor", "");
   await writeSetting(db, "health_synced_at", "");
@@ -409,8 +543,9 @@ export async function enterAccountMode(db: SQLiteDatabase): Promise<void> {
 
 export async function enterDemoMode(db: SQLiteDatabase): Promise<void> {
   await db.execAsync(
-    "DELETE FROM meals; DELETE FROM meal_items; DELETE FROM workouts; DELETE FROM weights; DELETE FROM daily_activity; DELETE FROM health_checkpoints; DELETE FROM sync_outbox; DELETE FROM local_media_assets;",
+    "DELETE FROM meals; DELETE FROM meal_items; DELETE FROM workouts; DELETE FROM weights; DELETE FROM daily_activity; DELETE FROM health_checkpoints; DELETE FROM sync_outbox; DELETE FROM local_media_assets; DELETE FROM day_plans;",
   );
+  await writeSetting(db, "plan_sealed_through", "");
   await writeSetting(db, "health_synced_at", "");
   await writeSetting(db, "account_email", "");
   await writeSetting(db, "account_display_name", "");
