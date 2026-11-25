@@ -13,7 +13,9 @@ import {
   cycleDateLabels,
   cycleFooter,
   dayKeyFor,
-  dayPlanLabel,
+  burnSuffix,
+  dayNetPhrase,
+  targetBurnOf,
   dayTarget,
   formatFullDate,
   formatKcal,
@@ -139,7 +141,7 @@ export function CaloriePlanCard({
         />
       </View>
       {maintenanceError ? <Text style={styles.error}>Enter a whole number from 1,000 to 6,000.</Text> : null}
-      <Text style={controlStyles.helper}>Calories you burn on a day with no logged exercise. Workouts are added on top.</Text>
+      <Text style={controlStyles.helper}>Your baseline: calories you burn on a day with no logged exercise. Workouts are added on top.</Text>
       <MaintenanceEstimateCard />
     </View>
 
@@ -210,9 +212,12 @@ export function CaloriePlanCard({
               accessibilityRole="button"
             >
               <Text style={styles.rowName}>{row.label}</Text>
-              <Text style={[styles.rowPlan, { color: dayColor(row.day) }]} numberOfLines={1}>
-                {dayPlanLabel(row.day)}
-              </Text>
+              <View style={styles.rowPlanColumn}>
+                <Text style={[styles.rowPlan, { color: dayColor(row.day) }]} numberOfLines={1}>
+                  {dayNetPhrase(row.day)}
+                </Text>
+                {targetBurnOf(row.day) > 0 ? <Text style={styles.rowBurn}>{burnSuffix(row.day).replace(" · ", "")}</Text> : null}
+              </View>
               <Text style={styles.rowTarget}>{formatKcal(dayTarget(row.day, maintenance, plan.fastAllowanceKcal))} kcal</Text>
               {row.dateLabel !== undefined ? <Text style={styles.rowDate}>{row.dateLabel}</Text> : null}
               <Ionicons name="chevron-forward" size={16} color={colors.faint} />
@@ -364,7 +369,9 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 7, paddingHorizontal: 6, borderRadius: 10 },
   rowToday: { backgroundColor: colors.selectedDay },
   rowName: { color: colors.text, fontWeight: "700", width: 70, fontSize: 14 },
-  rowPlan: { flex: 1, fontWeight: "700", fontSize: 13 },
+  rowPlanColumn: { flex: 1, minWidth: 0 },
+  rowPlan: { fontWeight: "700", fontSize: 13 },
+  rowBurn: { color: colors.muted, fontSize: 12, marginTop: 1 },
   rowTarget: { color: colors.text, fontVariant: ["tabular-nums"], fontSize: 14 },
   rowDate: { color: colors.muted, width: 76, textAlign: "right", fontSize: 12 },
   footer: { color: colors.muted, marginTop: 6, lineHeight: 17, fontSize: 13 },

@@ -20,7 +20,7 @@ export function Segmented<T extends string>({
         return (
           <Pressable
             key={option.value}
-            style={[styles.segmentItem, active && styles.segmentActive]}
+            style={[styles.segmentItem, { flexGrow: Math.max(option.label.length, 8) }, active && styles.segmentActive]}
             onPress={() => onChange(option.value)}
             accessibilityRole="button"
             accessibilityState={{ selected: active }}
@@ -82,7 +82,7 @@ export const controlStyles = StyleSheet.create({
 const styles = StyleSheet.create({
   segment: { flexDirection: "row", gap: 6, marginTop: 8 },
   segmentItem: {
-    flex: 1,
+    flexBasis: 0,
     borderRadius: 10,
     paddingVertical: 7,
     paddingHorizontal: 4,

@@ -68,15 +68,16 @@ export const PLAN_TYPE_LABELS: Record<PlanType, string> = {
 
 export type DayPlanType = "deficit" | "maintain" | "surplus" | "fast";
 export const DAY_PLAN_TYPES: readonly DayPlanType[] = ["deficit", "maintain", "surplus", "fast"];
+/** Editor picker labels; days are described relative to the maintenance baseline. */
 export const DAY_PLAN_TYPE_LABELS: Record<DayPlanType, string> = {
-  deficit: "Deficit",
-  maintain: "Maintain",
-  surplus: "Surplus",
+  deficit: "Below",
+  maintain: "At baseline",
+  surplus: "Above",
   fast: "Fast",
 };
 
 /**
- * Target Net is the day type plus amount (deficit -N, maintain +0, surplus +N). `targetBurn` is the
+ * The day type plus amount sets the net vs baseline (deficit -N, maintain 0, surplus +N). `targetBurn` is the
  * planned workout burn for that day; absent means 0. Fast days have no intake and no planned burn.
  */
 export type DayPlan =
@@ -305,7 +306,7 @@ export function planStatusText(status: PlanStatus): string {
         ? `Active since ${formatMonthDay(status.startDate)}`
         : `Day ${status.dayNumber} of ${status.totalDays} · ends ${formatMonthDay(status.endDate)}`;
     case "ended":
-      return `Ended ${formatMonthDay(status.endDate)} · you're on Maintenance`;
+      return `Ended ${formatMonthDay(status.endDate)} · you're back at baseline`;
   }
 }
 
@@ -488,6 +489,66 @@ export function remainingStateText(state: RemainingState): string {
   }
 }
 
+/**
+ * Log card banner, split so the amount can be colored: "Target: " + "500 kcal below" + " 2,000 kcal baseline"
+ * (+ " · burn 500+"). `tone` colors `emphasis`.
+ */
+export interface TargetBanner {
+  prefix: string;
+  emphasis: string;
+  tone: "deficit" | "surplus" | null;
+  rest: string;
+}
+
+export function targetBanner(snapshot: DayPlanSnapshot): TargetBanner {
+  const day = snapshot.inPlan ? snapshot.day : MAINTAIN;
+  const baseline = formatKcal(snapshot.maintenanceCalories);
+  const burn = burnSuffix(day);
+  switch (day.type) {
+    case "deficit":
+      return { prefix: "Target: ", emphasis: `${formatKcal(day.amount)} kcal below`, tone: "deficit", rest: ` ${baseline} kcal baseline${burn}` };
+    case "surplus":
+      return { prefix: "Target: ", emphasis: `${formatKcal(day.amount)} kcal above`, tone: "surplus", rest: ` ${baseline} kcal baseline${burn}` };
+    case "maintain":
+      return { prefix: "Target: ", emphasis: "", tone: null, rest: `at baseline · ${baseline} kcal${burn}` };
+    case "fast":
+      return { prefix: "Target: ", emphasis: "", tone: null, rest: `fasting day · ${formatKcal(snapshot.fastAllowanceKcal)} kcal` };
+  }
+}
+
+export function targetBannerText(banner: TargetBanner): string {
+  return `${banner.prefix}${banner.emphasis}${banner.rest}`;
+}
+
+/**
+ * Log calories card: "Calories Available" with the remaining kcal, "Calories Over" with the overage, or
+ * "On target" (Maintain/Surplus within tolerance) keeping the remaining number.
+ */
+export interface CaloriesCard {
+  title: "Calories Available" | "Calories Over" | "On target";
+  amount: number;
+  /** Whole percent for the ring label; null on fast days, whose ring stays empty. */
+  percent: number | null;
+  burnedText: string;
+  eatenText: string;
+}
+
+const MINUS = "\u2212";
+
+export function caloriesCard(snapshot: DayPlanSnapshot, eatenKcal: number, burnedKcal: number): CaloriesCard {
+  const state = remainingState(snapshot, eatenKcal, burnedKcal);
+  const remaining = remainingCalories(snapshot, eatenKcal, burnedKcal);
+  const burned = Math.round(burnedKcal);
+  const eaten = Math.round(eatenKcal);
+  return {
+    title: state.kind === "onTarget" ? "On target" : state.kind === "over" ? "Calories Over" : "Calories Available",
+    amount: state.kind === "over" ? state.amount : remaining,
+    percent: snapshot.day.type === "fast" ? null : Math.round(ringProgress(snapshot, eatenKcal, burnedKcal) * 100),
+    burnedText: `${burned > 0 ? "+" : ""}${formatKcal(burned)} burned`,
+    eatenText: `${eaten > 0 ? MINUS : ""}${formatKcal(eaten)} eaten`,
+  };
+}
+
 /** eaten / (consumption target + burn beyond the planned burn), clamped to 0-1. A fast day's ring stays empty. */
 export function ringProgress(snapshot: DayPlanSnapshot, eatenKcal: number, burnedKcal: number): number {
   if (snapshot.day.type === "fast") return 0;
@@ -524,18 +585,29 @@ export function dayDotStatus(input: {
 // ---------------------------------------------------------------------------
 // Labels and copy
 
-/** "+0", "-500", "+500" */
-export function formatNet(value: number): string {
-  const rounded = Math.round(value);
-  return rounded >= 0 ? `+${formatKcal(rounded)}` : formatKcal(rounded);
+/** "500 kcal below baseline", "500 kcal above baseline", "At baseline", "Fast". */
+export function dayNetPhrase(day: DayPlan): string {
+  switch (day.type) {
+    case "deficit":
+      return `${formatKcal(day.amount)} kcal below baseline`;
+    case "surplus":
+      return `${formatKcal(day.amount)} kcal above baseline`;
+    case "maintain":
+      return "At baseline";
+    case "fast":
+      return "Fast";
+  }
 }
 
-/** "Net +0 · Burn 500+", "Net -500" (burn omitted at 0), "Fast". */
-export function dayPlanLabel(day: DayPlan): string {
-  if (day.type === "fast") return "Fast";
+/** " · burn 500+", or "" without a planned burn. */
+export function burnSuffix(day: DayPlan): string {
   const burn = targetBurnOf(day);
-  const net = `Net ${formatNet(dayOffset(day))}`;
-  return burn > 0 ? `${net} · Burn ${formatKcal(burn)}+` : net;
+  return burn > 0 ? ` · burn ${formatKcal(burn)}+` : "";
+}
+
+/** "500 kcal below baseline · burn 500+", "At baseline", "Fast". */
+export function dayPlanLabel(day: DayPlan): string {
+  return `${dayNetPhrase(day)}${burnSuffix(day)}`;
 }
 
 export type PlanTone = "deficit" | "surplus" | "fast" | "maintain" | "outside";
@@ -546,7 +618,7 @@ export function snapshotTone(snapshot: DayPlanSnapshot): PlanTone {
 
 /** Log screen pill. Custom Plans prefix the cycle position. */
 export function planPillLabel(snapshot: DayPlanSnapshot): string {
-  if (!snapshot.inPlan) return "Maintenance";
+  if (!snapshot.inPlan) return "At baseline";
   const label = dayPlanLabel(snapshot.day);
   if (snapshot.planType === "custom" && snapshot.cycleDay != null && snapshot.cycleLength != null) {
     return `Day ${snapshot.cycleDay} of ${snapshot.cycleLength} · ${label}`;
@@ -557,11 +629,11 @@ export function planPillLabel(snapshot: DayPlanSnapshot): string {
 export function dayPlanHelper(day: DayPlan, toleranceKcal: number): string {
   switch (day.type) {
     case "deficit":
-      return `Counts as met when you finish at least ${formatKcal(day.amount)} under maintenance.`;
+      return `Counts as met when you finish at least ${formatKcal(day.amount)} kcal below baseline.`;
     case "maintain":
-      return `Counts as met within ±${formatKcal(toleranceKcal)} kcal of maintenance.`;
+      return `Counts as met within ±${formatKcal(toleranceKcal)} kcal of baseline.`;
     case "surplus":
-      return `Counts as met within ±${formatKcal(toleranceKcal)} kcal of ${formatKcal(day.amount)} over maintenance.`;
+      return `Counts as met within ±${formatKcal(toleranceKcal)} kcal of ${formatKcal(day.amount)} kcal above baseline.`;
     case "fast":
       return "No calories planned. Workout burn isn't added back on fast days.";
   }
@@ -582,11 +654,11 @@ export function isLowIntakeDay(day: DayPlan, maintenanceCalories: number): boole
   return day.type === "deficit" && netTarget(day, maintenanceCalories, 0) < PLAN_LIMITS.lowIntakeKcal;
 }
 
-/** Settings summary: "Maintenance 2,000 · Weekly Plan" and "Today: Net +0 · Burn 500+ · 2,500 kcal". */
+/** Settings summary: "Baseline 2,000 kcal · Weekly Plan" and "Today: At baseline · burn 500+ · 2,500 kcal". */
 export function caloriePlanSummary(settings: CaloriePlanSettings, today: string): { title: string; today: string } {
   const snapshot = snapshotForDate(settings, today);
   const status = planStatus(selectedPlanDates(settings), today);
-  const title = `Maintenance ${formatKcal(settings.maintenanceCalories)} · ${PLAN_TYPE_LABELS[settings.planType]}`;
+  const title = `Baseline ${formatKcal(settings.maintenanceCalories)} kcal · ${PLAN_TYPE_LABELS[settings.planType]}`;
   const line = `Today: ${planPillLabel(snapshot)} · ${formatKcal(snapshotTarget(snapshot))} kcal`;
   return { title, today: status.kind === "active" ? line : `${line} · ${planStatusText(status)}` };
 }
@@ -742,12 +814,12 @@ export function weeklyFooter(settings: CaloriePlanSettings): string {
     settings.maintenanceCalories,
     settings.fastAllowanceKcal,
   );
-  return `Week: ${formatSignedKcal(summary.offsetTotal)} kcal vs maintenance · avg ${formatKcal(summary.averageTarget)}/day`;
+  return `Week: ${formatSignedKcal(summary.offsetTotal)} kcal vs baseline · avg ${formatKcal(summary.averageTarget)}/day`;
 }
 
 export function cycleFooter(settings: CaloriePlanSettings): string {
   const summary = summarizeDays(settings.customPlan.days, settings.maintenanceCalories, settings.fastAllowanceKcal);
-  return `Cycle: ${formatSignedKcal(summary.offsetTotal)} kcal vs maintenance · avg ${formatKcal(summary.averageTarget)}/day`;
+  return `Cycle: ${formatSignedKcal(summary.offsetTotal)} kcal vs baseline · avg ${formatKcal(summary.averageTarget)}/day`;
 }
 
 export interface PlanTotal {
@@ -771,7 +843,7 @@ export function planTotal(settings: CaloriePlanSettings): PlanTotal | null {
 }
 
 export function planTotalText(total: PlanTotal): string {
-  return `${formatDateRange(total.startDate, total.endDate)} · ${total.days} ${total.days === 1 ? "day" : "days"} · ${formatSignedKcal(total.offsetTotal)} kcal vs maintenance`;
+  return `${formatDateRange(total.startDate, total.endDate)} · ${total.days} ${total.days === 1 ? "day" : "days"} · ${formatSignedKcal(total.offsetTotal)} kcal vs baseline`;
 }
 
 // ---------------------------------------------------------------------------
@@ -836,7 +908,7 @@ export function endedBannerDue(settings: CaloriePlanSettings, today: string, las
 
 export function endedBannerText(settings: CaloriePlanSettings): string {
   const dates = selectedPlanDates(settings);
-  return `Your ${PLAN_TYPE_LABELS[settings.planType]} ended ${dates.endDate ? formatMonthDay(dates.endDate) : ""}. You're on Maintenance.`;
+  return `Your ${PLAN_TYPE_LABELS[settings.planType]} ended ${dates.endDate ? formatMonthDay(dates.endDate) : ""}. You're back at baseline.`;
 }
 
 // ---------------------------------------------------------------------------

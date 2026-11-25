@@ -58,3 +58,20 @@ describe("criterion 14: no 'goal' in the UI", () => {
     expect(check("const goals = store.goals; setGoals(goals);")).toBe(false);
   });
 });
+
+describe("plan days are described against the baseline", () => {
+  const RETIRED = /\b(Deficit|Surplus)\b|\bNet [+-−]?\d/;
+
+  it("never shows Deficit, Surplus, or Net +N in app, shared, or Worker copy", () => {
+    const sources = SOURCE_PATHS.flatMap((dir) => files(dir, (file) => /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file)));
+    const offenders = sources.flatMap((file) =>
+      userFacingText(file)
+        .filter((text) => RETIRED.test(text))
+        .map((text) => `${relative(root, file)}: ${JSON.stringify(text.trim().slice(0, 80))}`),
+    );
+    expect(offenders).toEqual([]);
+    expect(RETIRED.test("Net +0 · Burn 500+")).toBe(true);
+    expect(RETIRED.test("Deficit 500+")).toBe(true);
+    expect(RETIRED.test("deficit")).toBe(false);
+  });
+});

@@ -140,14 +140,14 @@ export default function ReviewScreen() {
             <View style={styles.balanceRow}>
               <BalanceStat label="Intake" value={intake} />
               <BalanceStat label="Burned" value={burn} />
-              <BalanceStat label={net <= 0 ? "Deficit" : "Surplus"} value={Math.abs(net)} accent={net <= 0 ? colors.green : colors.orange} />
+              <BalanceStat label={net <= 0 ? "Below" : "Above"} value={Math.abs(net)} accent={net <= 0 ? colors.green : colors.orange} />
             </View>
             <Text style={styles.maintenanceLine}>
               {versusMaintenance === 0
-                ? "Right at maintenance"
+                ? `At your ${maintenance.toLocaleString()} kcal baseline`
                 : versusMaintenance < 0
-                  ? `${Math.abs(versusMaintenance).toLocaleString()} kcal under your ${maintenance.toLocaleString()} maintenance`
-                  : `${versusMaintenance.toLocaleString()} kcal over your ${maintenance.toLocaleString()} maintenance`}
+                  ? `${Math.abs(versusMaintenance).toLocaleString()} kcal below your ${maintenance.toLocaleString()} kcal baseline`
+                  : `${versusMaintenance.toLocaleString()} kcal above your ${maintenance.toLocaleString()} kcal baseline`}
             </Text>
           </View>
 
@@ -276,8 +276,8 @@ function sampleInsight(day: DayLog, maintenance: number, proteinTarget: number):
   const versus = day.eatenKcal - maintenance;
   const balance =
     versus <= 0
-      ? `${Math.abs(versus).toLocaleString()} kcal under ${maintenance.toLocaleString()} maintenance calories.`
-      : `${versus.toLocaleString()} kcal over maintenance calories.`;
+      ? `${Math.abs(versus).toLocaleString()} kcal below the ${maintenance.toLocaleString()} kcal baseline.`
+      : `${versus.toLocaleString()} kcal above the ${maintenance.toLocaleString()} kcal baseline.`;
   return `This sample day shows ${day.eatenKcal.toLocaleString()} kcal eaten and ${burned.toLocaleString()} kcal burned. Protein is ${day.proteinG}g of ${proteinTarget}g. ${balance}`;
 }
 

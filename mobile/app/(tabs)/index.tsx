@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -13,11 +13,10 @@ import {
   formatKcal,
   macroTargetsForDay,
   planPillLabel,
-  remainingState,
+  caloriesCard,
   ringProgress,
-  snapshotTarget,
-  snapshotTone,
-  targetBurnOf,
+  targetBanner,
+  targetBannerText,
   type DayDotStatus,
   type DayKey,
 } from "@fitlogr/shared";
@@ -26,7 +25,6 @@ import { DayEditorSheet } from "../../components/DayEditorSheet";
 import { MealCard, WorkoutCard } from "../../components/LogCard";
 import { MealPhotoPicker } from "../../components/MealPhotoPicker";
 import { MacroBars } from "../../components/MacroBars";
-import { toneColor } from "../../components/planTone";
 import { WeekStrip } from "../../components/WeekStrip";
 import { addDays, formatHeading, localDateISO, startOfWeek } from "../../services/dates";
 import type { DayLog, WeekDayStatus } from "../../services/db";
@@ -85,10 +83,8 @@ export default function LogScreen() {
   const eaten = day?.eatenKcal ?? 0;
   const burned = day?.activeBurnedKcal ?? 0;
   const snapshot = goals ? effectiveSnapshot(goals.plan, selected, today, day?.planSnapshot) : null;
-  const isFast = snapshot?.day.type === "fast";
-  const target = snapshot ? snapshotTarget(snapshot) : 0;
-  const plannedBurn = snapshot ? targetBurnOf(snapshot.day) : 0;
-  const state = snapshot ? remainingState(snapshot, eaten, burned) : null;
+  const banner = snapshot ? targetBanner(snapshot) : null;
+  const card = snapshot ? caloriesCard(snapshot, eaten, burned) : null;
   const progress = snapshot ? ringProgress(snapshot, eaten, burned) : 0;
   const macroTargets =
     goals && snapshot
@@ -199,45 +195,46 @@ export default function LogScreen() {
         </Pressable>
       </View>
 
-      {!store.ready || !day || !goals || !snapshot || !state ? (
+      {!store.ready || !day || !goals || !snapshot || !card || !banner ? (
         <ActivityIndicator color={colors.green} style={{ marginTop: 48 }} />
       ) : (
         <>
           <View style={styles.calorieCard}>
+            <Pressable
+              style={styles.targetBanner}
+              onPress={openPill}
+              accessibilityRole="button"
+              accessibilityLabel={`${targetBannerText(banner)}. Plan: ${planPillLabel(snapshot)}`}
+            >
+              <MaterialCommunityIcons name="bullseye-arrow" size={20} color={colors.green} />
+              <Text style={styles.targetText} numberOfLines={2}>
+                {banner.prefix}
+                {banner.emphasis ? <Text style={[styles.targetEmphasis, { color: banner.tone === "surplus" ? colors.orange : colors.green }]}>{banner.emphasis}</Text> : null}
+                {banner.rest}
+              </Text>
+            </Pressable>
             <View style={styles.calorieTop}>
-              {isFast ? (
-                <>
-                  <Text style={styles.remainingValue}>{formatKcal(eaten)}</Text>
-                  <View style={styles.labelColumn}>
-                    <Text style={styles.remainingLabel}>Fasting day</Text>
-                    <PlanPill label={planPillLabel(snapshot)} color={toneColor(snapshotTone(snapshot))} onPress={openPill} />
-                  </View>
-                </>
-              ) : state.kind === "onTarget" ? (
-                <View style={styles.labelColumn}>
-                  <Text style={styles.onTarget}>On target</Text>
-                  <PlanPill label={planPillLabel(snapshot)} color={toneColor(snapshotTone(snapshot))} onPress={openPill} />
+              <View style={styles.calorieMain}>
+                <Text style={styles.calorieTitle}>{card.title}</Text>
+                <View style={styles.amountRow}>
+                  <Text style={[styles.amountValue, card.title === "Calories Over" && { color: colors.orange }]} numberOfLines={1} adjustsFontSizeToFit>
+                    {formatKcal(card.amount)}
+                  </Text>
+                  <Text style={styles.amountUnit}>kcal</Text>
                 </View>
-              ) : (
-                <>
-                  <Text style={styles.remainingValue}>{formatKcal(state.amount)}</Text>
-                  <View style={styles.labelColumn}>
-                    <Text style={styles.remainingLabel}>Calories</Text>
-                    <Text style={styles.remainingLabel}>{state.kind === "over" ? "Over" : "Remaining"}</Text>
-                    <PlanPill label={planPillLabel(snapshot)} color={toneColor(snapshotTone(snapshot))} onPress={openPill} />
+                <View style={styles.flowRow}>
+                  <View style={styles.flowItem}>
+                    <Ionicons name="flame-outline" size={18} color={colors.muted} />
+                    <Text style={styles.flowText}>{card.burnedText}</Text>
                   </View>
-                </>
-              )}
-              <View style={{ flex: 1 }} />
-              <CalorieRing progress={progress} warning={fastOverAllowance(snapshot, eaten)} />
+                  <View style={styles.flowItem}>
+                    <MaterialCommunityIcons name="silverware-fork-knife" size={18} color={colors.muted} />
+                    <Text style={styles.flowText}>{card.eatenText}</Text>
+                  </View>
+                </View>
+              </View>
+              <CalorieRing progress={progress} warning={fastOverAllowance(snapshot, eaten)} label={card.percent == null ? "Fast" : `${card.percent}%`} />
             </View>
-            <Text style={styles.calorieSub}>
-              {isFast
-                ? `${formatKcal(target)} planned · ${formatKcal(burned)} burned`
-                : plannedBurn > 0
-                  ? `${formatKcal(eaten)} eaten · ${formatKcal(target)} target · ${formatKcal(burned)} of ${formatKcal(plannedBurn)} burned`
-                  : `${formatKcal(eaten)} eaten · ${formatKcal(target)} target + ${formatKcal(burned)} burned`}
-            </Text>
             {day.steps != null || day.heartRateBpm != null ? (
               <Text style={styles.calorieSub}>
                 {day.steps != null ? `${day.steps.toLocaleString()} steps` : ""}
@@ -292,16 +289,6 @@ export default function LogScreen() {
   );
 }
 
-function PlanPill({ label, color, onPress }: { label: string; color: string; onPress: () => void }) {
-  return (
-    <Pressable style={styles.planPill} onPress={onPress} hitSlop={6} accessibilityRole="button" accessibilityLabel={`Plan: ${label}`}>
-      <Text style={[styles.planPillText, { color }]} numberOfLines={1}>
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
@@ -333,17 +320,30 @@ const styles = StyleSheet.create({
     marginTop: 18,
     backgroundColor: colors.card,
     borderRadius: 24,
-    paddingHorizontal: 18,
-    paddingTop: 16,
+    paddingHorizontal: 14,
+    paddingTop: 12,
     paddingBottom: 14,
   },
-  calorieTop: { flexDirection: "row", alignItems: "center", gap: 10 },
-  remainingValue: { color: colors.text, fontSize: 48, fontWeight: "800", letterSpacing: -1.5 },
-  remainingLabel: { color: colors.text, fontSize: 16, fontWeight: "700", lineHeight: 20 },
-  labelColumn: { flexShrink: 1, alignItems: "flex-start" },
-  onTarget: { color: colors.green, fontSize: 34, fontWeight: "800", letterSpacing: -0.8 },
-  planPill: { marginTop: 6, backgroundColor: colors.pill, borderRadius: 12, paddingHorizontal: 9, paddingVertical: 4, maxWidth: 190 },
-  planPillText: { fontSize: 13, fontWeight: "700" },
+  calorieTop: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 12 },
+  calorieMain: { flex: 1, minWidth: 0 },
+  targetBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#16301F",
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  targetText: { color: colors.text, fontSize: 15, flex: 1 },
+  targetEmphasis: { fontWeight: "700" },
+  calorieTitle: { color: colors.text, fontSize: 20, fontWeight: "700" },
+  amountRow: { flexDirection: "row", alignItems: "baseline", gap: 6, marginTop: 2 },
+  amountValue: { color: colors.text, fontSize: 52, fontWeight: "800", letterSpacing: -1.5, flexShrink: 1 },
+  amountUnit: { color: colors.muted, fontSize: 22, fontWeight: "600" },
+  flowRow: { flexDirection: "row", alignItems: "center", gap: 18, marginTop: 4 },
+  flowItem: { flexDirection: "row", alignItems: "center", gap: 6 },
+  flowText: { color: colors.muted, fontSize: 15 },
   banner: { backgroundColor: colors.card, borderRadius: 16, padding: 12, marginTop: 12 },
   bannerTop: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   bannerText: { color: colors.text, flex: 1, lineHeight: 20 },

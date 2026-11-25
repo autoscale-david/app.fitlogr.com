@@ -106,13 +106,13 @@ export function DayEditorSheet({
 
   return (
     <Sheet visible title={dayEditorTitle(dayKey)} onClose={onClose}>
-      <Text style={styles.sectionLabel}>Target Net</Text>
+      <Text style={styles.sectionLabel}>Target</Text>
       <Segmented options={TYPE_OPTIONS} value={type} onChange={setType} />
 
       {hasAmount ? (
         <>
           <View style={styles.amountRow}>
-            <Text style={styles.rowLabel}>Amount</Text>
+            <Text style={styles.rowLabel}>{type === "deficit" ? "Below baseline" : "Above baseline"}</Text>
             <View style={styles.stepperRow}>
               <StepperButton
                 label="-"

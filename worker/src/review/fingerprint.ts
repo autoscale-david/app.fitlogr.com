@@ -1,4 +1,4 @@
-import { dayPlanLabel, planOffset, round1, snapshotTarget } from "@fitlogr/shared";
+import { planOffset, planPillLabel, round1, snapshotTarget } from "@fitlogr/shared";
 import { sha256Hex } from "../encoding";
 import { activityName, durationMinutes, workoutKcal } from "../health/aggregate";
 import { daySnapshot } from "../settings/plan";
@@ -189,7 +189,7 @@ export async function loadInsightSnapshot(db: D1Database, userId: string, date: 
       target_weight_kg: goals?.target_weight_kg ?? null,
     },
     ...(plan
-      ? { plan: { label: plan.inPlan ? dayPlanLabel(plan.day) : "Maintenance", in_plan: plan.inPlan, maintenance_kcal: plan.maintenanceCalories } }
+      ? { plan: { label: planPillLabel(plan), in_plan: plan.inPlan, maintenance_kcal: plan.maintenanceCalories } }
       : {}),
     meals: mealSnapshots,
     macros: {
