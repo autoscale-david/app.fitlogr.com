@@ -139,6 +139,23 @@ describe("calorie plan settings", () => {
     expect(tuesday.summary.calories_remaining_kcal).toBe(2000 + tuesday.summary.active_calories_kcal - 900);
   });
 
+  it("syncs Target Burn and keeps it out of remaining twice", async () => {
+    const token = await signIn("user-burn", 2000);
+    const plan: CaloriePlanSettings = { ...defaultCaloriePlan(2000, "2026-11-16"), dailyPlan: { startDate: "2026-11-16", endDate: null, day: { type: "maintain", targetBurn: 500 } } };
+    const api = caloriePlanToApi(plan);
+    expect(api.daily_plan.day).toEqual({ type: "maintain", target_burn_kcal: 500 });
+    const saved = await request("PUT", "/api/settings", token, { maintenance_calories_kcal: 2000, calorie_plan: api });
+    expect(saved.status).toBe(200);
+    expect((await saved.json()).calorie_plan.daily_plan.day).toEqual({ type: "maintain", target_burn_kcal: 500 });
+    const tooSmall = { ...api, daily_plan: { ...api.daily_plan, day: { type: "maintain", target_burn_kcal: 30 } } };
+    expect((await request("PUT", "/api/settings", token, { calorie_plan: tooSmall })).status).toBe(400);
+
+    expect((await logMeal(token, "2026-11-24", 2000)).status).toBe(201);
+    expect(await snapshotFor("user-burn", "2026-11-24")).toMatchObject({ day: { type: "maintain", targetBurn: 500 }, maintenanceCalories: 2000 });
+    const day = await (await request("GET", "/api/days/2026-11-24", token)).json();
+    expect(day.summary.calories_remaining_kcal).toBe(2500 - 2000 + day.summary.active_calories_kcal - 500);
+  });
+
   it("resolves the plan in the trends and day views for a fast day", async () => {
     clock = new Date("2026-11-25T20:00:00.000Z");
     const token = await signIn("user-fast");

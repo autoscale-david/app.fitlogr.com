@@ -89,7 +89,7 @@ Resting calories burned: ${snapshot.resting_calories_kcal} kcal
 Weight kg: ${snapshot.weight_kg ?? "none"}
 Maintenance calories: ${snapshot.plan?.maintenance_kcal ?? "unset"} kcal
 Today's plan: ${snapshot.plan?.label ?? "unset"}
-Calorie target: ${snapshot.goals.daily_calorie_target_kcal ?? "unset"} kcal plus workout burn
+Calorie target: ${snapshot.goals.daily_calorie_target_kcal ?? "unset"} kcal to eat; a "Burn N+" plan already counts N kcal of workout burn, so only burn beyond N adds more
 Calorie offset vs maintenance: ${snapshot.goals.daily_calorie_delta_target_kcal ?? "unset"} kcal
 Meals: ${meals}
 Workouts: ${workouts}`;

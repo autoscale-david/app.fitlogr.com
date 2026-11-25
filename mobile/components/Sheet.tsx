@@ -41,7 +41,7 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     maxHeight: "88%",
   },
-  handle: { alignSelf: "center", width: 36, height: 4, borderRadius: 2, backgroundColor: "#3A3E44", marginBottom: 12 },
-  title: { color: colors.text, fontSize: 20, fontWeight: "800", marginBottom: 4 },
+  handle: { alignSelf: "center", width: 36, height: 4, borderRadius: 2, backgroundColor: "#3A3E44", marginBottom: 10 },
+  title: { color: colors.text, fontSize: 18, fontWeight: "800", marginBottom: 6 },
   scroll: { flexGrow: 0 },
 });

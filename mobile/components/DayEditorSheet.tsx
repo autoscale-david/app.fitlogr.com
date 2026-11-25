@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import {
   AMOUNT_PRESETS,
+  BURN_PRESETS,
   DAY_PLAN_TYPES,
   DAY_PLAN_TYPE_LABELS,
   LOW_INTAKE_NOTE,
@@ -10,13 +11,18 @@ import {
   WEEKDAY_LETTERS,
   applyDayPlan,
   clampAmount,
+  clampTargetBurn,
   dayEditorTitle,
   dayForKey,
   dayPlanHelper,
   dayTargetLine,
+  formatKcal,
   isLowIntakeDay,
   maxAmount,
   stepAmount,
+  stepTargetBurn,
+  targetBurnOf,
+  withTargetBurn,
   type CaloriePlanSettings,
   type DayKey,
   type DayPlan,
@@ -29,8 +35,9 @@ import { colors } from "../theme";
 
 const TYPE_OPTIONS = DAY_PLAN_TYPES.map((value) => ({ value, label: DAY_PLAN_TYPE_LABELS[value] }));
 
-function draftDay(type: DayPlanType, amount: number): DayPlan {
-  return type === "deficit" || type === "surplus" ? { type, amount } : { type };
+function draftDay(type: DayPlanType, amount: number, burn: number): DayPlan {
+  const day: DayPlan = type === "deficit" || type === "surplus" ? { type, amount } : { type };
+  return withTargetBurn(day, burn);
 }
 
 export function DayEditorSheet({
@@ -47,6 +54,8 @@ export function DayEditorSheet({
   const [type, setType] = useState<DayPlanType>("maintain");
   const [amount, setAmount] = useState<number>(PLAN_LIMITS.amountDefault);
   const [amountText, setAmountText] = useState(String(PLAN_LIMITS.amountDefault));
+  const [burn, setBurn] = useState<number>(PLAN_LIMITS.burnDefault);
+  const [burnText, setBurnText] = useState(String(PLAN_LIMITS.burnDefault));
   const [weekdays, setWeekdays] = useState<Weekday[]>([]);
   const [indices, setIndices] = useState<number[]>([]);
 
@@ -57,6 +66,8 @@ export function DayEditorSheet({
     setType(day.type);
     setAmount(nextAmount);
     setAmountText(String(nextAmount));
+    setBurn(targetBurnOf(day));
+    setBurnText(String(targetBurnOf(day)));
     setWeekdays(dayKey.planType === "weekly" ? [dayKey.weekday] : []);
     setIndices(dayKey.planType === "custom" ? [dayKey.index] : []);
     // Re-seed only when a different row opens; live plan edits elsewhere must not reset the draft.
@@ -66,13 +77,20 @@ export function DayEditorSheet({
   const maintenance = plan.maintenanceCalories;
   const hasAmount = type === "deficit" || type === "surplus";
   const effectiveAmount = hasAmount ? clampAmount(type, amount, maintenance) : amount;
-  const day = draftDay(type, effectiveAmount);
+  const hasBurn = type !== "fast";
+  const day = draftDay(type, effectiveAmount, hasBurn ? burn : 0);
 
   function commitAmount(value: number) {
     if (!hasAmount) return;
     const next = clampAmount(type as "deficit" | "surplus", value, maintenance);
     setAmount(next);
     setAmountText(String(next));
+  }
+
+  function commitBurn(value: number) {
+    const next = clampTargetBurn(value);
+    setBurn(next);
+    setBurnText(String(next));
   }
 
   function save() {
@@ -88,6 +106,7 @@ export function DayEditorSheet({
 
   return (
     <Sheet visible title={dayEditorTitle(dayKey)} onClose={onClose}>
+      <Text style={styles.sectionLabel}>Target Net</Text>
       <Segmented options={TYPE_OPTIONS} value={type} onChange={setType} />
 
       {hasAmount ? (
@@ -127,6 +146,37 @@ export function DayEditorSheet({
             ))}
           </View>
           {isLowIntakeDay(day, maintenance) ? <Text style={styles.note}>{LOW_INTAKE_NOTE}</Text> : null}
+        </>
+      ) : null}
+
+      {hasBurn ? (
+        <>
+          <View style={styles.amountRow}>
+            <Text style={styles.sectionLabelInline}>Target Burn</Text>
+            <View style={styles.stepperRow}>
+              <StepperButton label="-" disabled={burn <= 0} onPress={() => commitBurn(stepTargetBurn(burn, -1))} />
+              <TextInput
+                value={burnText}
+                onChangeText={setBurnText}
+                onEndEditing={() => {
+                  const parsed = Number(burnText);
+                  if (Number.isFinite(parsed) && burnText.trim() !== "") commitBurn(parsed);
+                  else setBurnText(String(burn));
+                }}
+                keyboardType="number-pad"
+                style={[controlStyles.input, styles.amountInput]}
+                accessibilityLabel="Target burn in kcal"
+              />
+              <Text style={styles.unit}>kcal+</Text>
+              <StepperButton label="+" disabled={burn >= PLAN_LIMITS.burnMax} onPress={() => commitBurn(stepTargetBurn(burn, 1))} />
+            </View>
+          </View>
+          <View style={styles.presets}>
+            <Text style={styles.rowLabel}>Presets:</Text>
+            {BURN_PRESETS.map((preset) => (
+              <Chip key={preset} label={preset === 0 ? "0" : `${formatKcal(preset)}+`} active={burn === preset} onPress={() => commitBurn(preset)} />
+            ))}
+          </View>
         </>
       ) : null}
 
@@ -174,15 +224,17 @@ export function DayEditorSheet({
 }
 
 const styles = StyleSheet.create({
-  amountRow: { marginTop: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  sectionLabel: { color: colors.text, fontWeight: "700", fontSize: 13, marginBottom: -4 },
+  sectionLabelInline: { color: colors.text, fontWeight: "700", fontSize: 13 },
+  amountRow: { marginTop: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   rowLabel: { color: colors.muted },
   stepperRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   amountInput: { width: 76, textAlign: "center" },
   unit: { color: colors.muted },
-  presets: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 12 },
+  presets: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8, flexWrap: "wrap" },
   note: { color: colors.faint, marginTop: 10 },
-  target: { color: colors.text, fontSize: 16, fontWeight: "700", marginTop: 16 },
-  applyLabel: { color: colors.muted, marginTop: 16, marginBottom: 8 },
+  target: { color: colors.text, fontSize: 15, fontWeight: "700", marginTop: 12 },
+  applyLabel: { color: colors.muted, marginTop: 12, marginBottom: 6 },
   chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chipsScroll: { flexDirection: "row", gap: 8 },
 });

@@ -7,6 +7,8 @@ import {
   caloriePlanFromApi,
   caloriePlanToApi,
   CaloriePlanApiSchema,
+  caloriePlanSummary,
+  clampTargetBurn,
   clampAmount,
   clampMaintenance,
   cycleDateLabels,
@@ -28,6 +30,7 @@ import {
   isDayMet,
   isLowIntakeDay,
   macroTargetsForDay,
+  maintainWeek,
   nextCycleDate,
   parseSnapshotJson,
   planPillLabel,
@@ -45,11 +48,15 @@ import {
   setPlanEndDate,
   setPlanStartDate,
   snapshotForDate,
+  snapshotTarget,
   stepAmount,
+  stepTargetBurn,
+  targetBurnOf,
   weekdayOf,
   weeklyFooter,
   withCycleLength,
   withSelectedPlanDates,
+  withTargetBurn,
   type CaloriePlanSettings,
   type DayPlan,
   type DayPlanSnapshot,
@@ -126,13 +133,13 @@ describe("criterion 2: Weekly Plan example", () => {
     const settings = weeklyExample();
     expect(weeklyRowTargets(settings)).toEqual([1400, 1400, 0, 2400, 1900, 1900, 2400]);
     expect(WEEKDAYS.map((weekday) => dayPlanLabel(settings.weeklyPlan.days[weekday]))).toEqual([
-      "Deficit 500+",
-      "Deficit 500+",
+      "Net -500",
+      "Net -500",
       "Fast",
-      "Surplus ~500",
-      "Maintenance",
-      "Maintenance",
-      "Surplus ~500",
+      "Net +500",
+      "Net +0",
+      "Net +0",
+      "Net +500",
     ]);
     expect(weeklyFooter(settings)).toBe("Week: -1,900 kcal vs maintenance · avg 1,629/day");
   });
@@ -158,7 +165,7 @@ describe("criterion 2: Weekly Plan example", () => {
     expect(dayTarget(snapshot.day, 1900, 0)).toBe(1400);
     expect(remainingCalories(snapshot, 1500, 391)).toBe(291);
     expect(remainingStateText(remainingState(snapshot, 1500, 391))).toBe("291 Calories Remaining");
-    expect(planPillLabel(snapshot)).toBe("Deficit 500+");
+    expect(planPillLabel(snapshot)).toBe("Net -500");
     expect(ringProgress(snapshot, 1500, 391)).toBeCloseTo(1500 / 1791);
   });
 });
@@ -483,5 +490,169 @@ describe("editor copy and limits", () => {
     expect(parseSnapshotJson(JSON.stringify({ day: { type: "fast" } }))).toBeNull();
     const snapshot = snapshotForDate(weeklyExample(), TODAY);
     expect(parseSnapshotJson(JSON.stringify(snapshot))).toEqual(snapshot);
+  });
+});
+
+describe("Target Net and Target Burn", () => {
+  const maintainBurn = (burn: number): DayPlan => withTargetBurn(MAINTAIN, burn);
+  const daily = (day: DayPlan, maintenance = 2000): CaloriePlanSettings => ({
+    ...defaultCaloriePlan(maintenance, TODAY),
+    dailyPlan: { startDate: "2026-11-16", endDate: null, day },
+  });
+
+  it("adds the planned burn to the consumption target: 2,000 / +0 / 500+ is 2,500", () => {
+    const day = maintainBurn(500);
+    expect(day).toEqual({ type: "maintain", targetBurn: 500 });
+    expect(dayTarget(day, 2000, 0)).toBe(2500);
+    expect(dayTarget(withTargetBurn(deficit(500), 300), 2000, 0)).toBe(1800);
+    expect(dayTarget(withTargetBurn(surplus(500), 200), 2000, 0)).toBe(2700);
+    expect(dayTargetLine(day, 2000, 0)).toBe("2,500 to eat if you burn 500.");
+    expect(dayTargetLine(MAINTAIN, 2000, 0)).toBe("Target: 2,000 kcal + workout burn");
+    const snapshot = snapshotForDate(daily(day), TODAY);
+    expect(snapshot.day).toEqual({ type: "maintain", targetBurn: 500 });
+    expect(planPillLabel(snapshot)).toBe("Net +0 · Burn 500+");
+    expect(caloriePlanSummary(daily(day), TODAY)).toEqual({ title: "Maintenance 2,000 · Daily Plan", today: "Today: Net +0 · Burn 500+ · 2,500 kcal" });
+  });
+
+  it("labels rows as Net and Burn, omitting a zero burn", () => {
+    expect(dayPlanLabel(maintainBurn(500))).toBe("Net +0 · Burn 500+");
+    expect(dayPlanLabel(MAINTAIN)).toBe("Net +0");
+    expect(dayPlanLabel(deficit(500))).toBe("Net -500");
+    expect(dayPlanLabel(withTargetBurn(deficit(500), 0))).toBe("Net -500");
+    expect(dayPlanLabel(withTargetBurn(surplus(500), 200))).toBe("Net +500 · Burn 200+");
+    expect(dayPlanLabel(withTargetBurn(surplus(1000), 1000))).toBe("Net +1,000 · Burn 1,000+");
+    expect(dayPlanLabel(FAST)).toBe("Fast");
+  });
+
+  it("does not double-count the planned burn in remaining calories", () => {
+    const snapshot = snapshotForDate(daily(maintainBurn(500)), TODAY);
+    expect(remainingCalories(snapshot, 2000, 500)).toBe(500);
+    expect(remainingCalories(snapshot, 2000, 500)).not.toBe(2500 + 500 - 2000);
+    expect(remainingCalories(snapshot, 2500, 500)).toBe(0);
+    expect(remainingCalories(snapshot, 2500, 800)).toBe(300);
+    expect(remainingCalories(snapshot, 1000, 0)).toBe(1000);
+    expect(remainingCalories(snapshot, 2500, 0)).toBe(-500);
+    expect(remainingCalories(snapshot, 2500, Number.NaN)).toBe(-500);
+    expect(remainingState(snapshot, 2500, 0)).toEqual({ kind: "over", amount: 500 });
+    expect(ringProgress(snapshot, 1250, 500)).toBeCloseTo(0.5);
+    expect(ringProgress(snapshot, 1250, 0)).toBeCloseTo(1250 / 2000);
+    const withoutBurn = snapshotForDate(daily(MAINTAIN), TODAY);
+    for (const [eaten, burned] of [
+      [0, 0],
+      [1800, 650],
+      [2600, 120],
+      [1234.6, 87.4],
+    ] as const) {
+      expect(remainingCalories(snapshot, eaten, burned)).toBe(remainingCalories(withoutBurn, eaten, burned));
+    }
+  });
+
+  it("keeps Fast as its own type that ignores burn", () => {
+    expect(withTargetBurn(FAST, 500)).toEqual(FAST);
+    expect(targetBurnOf(FAST)).toBe(0);
+    const settings = { ...daily(FAST), fastAllowanceKcal: 100 };
+    const snapshot = snapshotForDate(settings, TODAY);
+    expect(dayTarget(FAST, 2000, 100)).toBe(100);
+    expect(remainingCalories(snapshot, 40, 900)).toBe(60);
+    expect(remainingCalories(snapshot, 140, 900)).toBe(-40);
+    expect(applyDayPlan(settings, { planType: "daily" }, FAST).dailyPlan.day).toEqual(FAST);
+  });
+
+  it("judges met on net intake, not on hitting the burn", () => {
+    const snapshot = snapshotForDate(daily(maintainBurn(500)), TODAY);
+    expect(isDayMet(snapshot, 2500, 500)).toBe(true);
+    expect(isDayMet(snapshot, 2000, 0)).toBe(true);
+    expect(isDayMet(snapshot, 2500, 0)).toBe(false);
+    const deficitBurn = snapshotForDate(daily(withTargetBurn(deficit(500), 500)), TODAY);
+    expect(isDayMet(deficitBurn, 1500, 0)).toBe(true);
+    expect(isDayMet(deficitBurn, 2000, 500)).toBe(true);
+    expect(isDayMet(deficitBurn, 2000, 400)).toBe(false);
+    const surplusBurn = snapshotForDate(daily(withTargetBurn(surplus(500), 200)), TODAY);
+    expect(isDayMet(surplusBurn, 2500, 0)).toBe(true);
+    expect(isDayMet(surplusBurn, 2700, 0)).toBe(false);
+    for (const [eaten, burned] of [
+      [2500, 500],
+      [2500, 0],
+      [1900, 300],
+    ] as const) {
+      expect(isDayMet(snapshot, eaten, burned)).toBe(isDayMet(snapshotForDate(daily(MAINTAIN), TODAY), eaten, burned));
+    }
+    expect(dayDotStatus({ date: "2026-11-23", today: TODAY, snapshot, eatenKcal: 2500, burnedKcal: 0, hasLog: true })).toBe("missed");
+  });
+
+  it("averages consumption targets in footers while totals stay net vs maintenance", () => {
+    const base = defaultCaloriePlan(2000, TODAY);
+    const days = { ...maintainWeek(), mon: maintainBurn(500), wed: withTargetBurn(deficit(500), 500), sat: FAST };
+    const settings: CaloriePlanSettings = { ...base, planType: "weekly", weeklyPlan: { startDate: TODAY, endDate: "2026-12-07", days } };
+    expect(weeklyRowTargets(settings)).toEqual([2500, 2000, 2000, 2000, 2000, 0, 2000]);
+    expect(weeklyFooter(settings)).toBe("Week: -2,500 kcal vs maintenance · avg 1,786/day");
+    expect(planTotal(settings)).toMatchObject({ days: 14, offsetTotal: -5000 });
+  });
+
+  it("scales carbs and fat with the consumption target and keeps low intake on net", () => {
+    const snapshot = snapshotForDate(daily(maintainBurn(500)), TODAY);
+    expect(macroTargetsForDay({ proteinG: 140, carbsG: 210, fatG: 65 }, snapshot, true)).toEqual({
+      proteinG: 140,
+      carbsG: Math.round(210 * (1940 / 1440)),
+      fatG: Math.round(65 * (1940 / 1440)),
+    });
+    expect(isLowIntakeDay(withTargetBurn(deficit(750), 500), 1900)).toBe(true);
+    expect(isLowIntakeDay(withTargetBurn(deficit(700), 500), 1900)).toBe(false);
+  });
+
+  it("steps and clamps the burn: 0, then 50-2,000 in 50s", () => {
+    expect(stepTargetBurn(0, 1)).toBe(50);
+    expect(stepTargetBurn(50, -1)).toBe(0);
+    expect(stepTargetBurn(0, -1)).toBe(0);
+    expect(stepTargetBurn(480, 1)).toBe(500);
+    expect(stepTargetBurn(480, -1)).toBe(450);
+    expect(stepTargetBurn(1950, 1)).toBe(2000);
+    expect(stepTargetBurn(2000, 1)).toBe(2000);
+    expect(clampTargetBurn(30)).toBe(50);
+    expect(clampTargetBurn(-5)).toBe(0);
+    expect(clampTargetBurn(2600)).toBe(2000);
+    expect(clampTargetBurn(Number.NaN)).toBe(0);
+    const saved = applyDayPlan(daily(MAINTAIN), { planType: "daily" }, { type: "maintain", targetBurn: 2600 });
+    expect(saved.dailyPlan.day).toEqual({ type: "maintain", targetBurn: 2000 });
+    expect(applyDayPlan(saved, { planType: "daily" }, { type: "maintain", targetBurn: 0 }).dailyPlan.day).toEqual(MAINTAIN);
+  });
+
+  it("syncs the burn through the API and migrates old plans to burn 0", () => {
+    const settings = { ...weeklyExample(2000), weeklyPlan: { ...weeklyExample(2000).weeklyPlan } };
+    settings.weeklyPlan.days = { ...settings.weeklyPlan.days, fri: maintainBurn(500), thu: withTargetBurn(surplus(500), 200) };
+    const api = caloriePlanToApi(settings);
+    expect(api.weekly_plan.days.fri).toEqual({ type: "maintain", target_burn_kcal: 500 });
+    expect(api.weekly_plan.days.thu).toEqual({ type: "surplus", amount_kcal: 500, target_burn_kcal: 200 });
+    expect(api.weekly_plan.days.mon).toEqual({ type: "deficit", amount_kcal: 500 });
+    expect(caloriePlanFromApi(2000, CaloriePlanApiSchema.parse(api), TODAY)).toEqual(settings);
+    const bad = (burn: number) => ({ ...api, weekly_plan: { ...api.weekly_plan, days: { ...api.weekly_plan.days, fri: { type: "maintain", target_burn_kcal: burn } } } });
+    expect(CaloriePlanApiSchema.safeParse(bad(30)).success).toBe(false);
+    expect(CaloriePlanApiSchema.safeParse(bad(2050)).success).toBe(false);
+    expect(CaloriePlanApiSchema.safeParse(bad(0)).success).toBe(true);
+
+    const legacy = caloriePlanToApi(weeklyExample(2000));
+    expect(JSON.stringify(legacy)).not.toContain("target_burn");
+    const migrated = caloriePlanFromApi(2000, CaloriePlanApiSchema.parse(JSON.parse(JSON.stringify(legacy))), TODAY);
+    expect(WEEKDAYS.map((weekday) => targetBurnOf(migrated.weeklyPlan.days[weekday]))).toEqual([0, 0, 0, 0, 0, 0, 0]);
+    expect(weeklyRowTargets(migrated)).toEqual([1500, 1500, 0, 2500, 2000, 2000, 2500]);
+  });
+
+  it("stores the burn in snapshots and keeps past days frozen", () => {
+    const before = daily(maintainBurn(500));
+    const monday = snapshotForDate(before, "2026-11-23");
+    expect(monday).toMatchObject({ day: { type: "maintain", targetBurn: 500 }, maintenanceCalories: 2000 });
+    const stored = parseSnapshotJson(JSON.stringify(monday));
+    expect(stored).toEqual(monday);
+    const after = daily(maintainBurn(200), 2100);
+    expect(effectiveSnapshot(after, "2026-11-23", TODAY, stored).day).toEqual({ type: "maintain", targetBurn: 500 });
+    expect(snapshotTarget(effectiveSnapshot(after, "2026-11-23", TODAY, stored))).toBe(2500);
+    expect(snapshotTarget(effectiveSnapshot(after, TODAY, TODAY, stored))).toBe(2300);
+    const old = parseSnapshotJson(JSON.stringify({ ...monday, day: { type: "maintain" } }));
+    expect(old && targetBurnOf(old.day)).toBe(0);
+  });
+
+  it("summarizes a plan that has not started yet", () => {
+    const settings = { ...daily(maintainBurn(500)), dailyPlan: { startDate: "2026-11-30", endDate: null, day: maintainBurn(500) } };
+    expect(caloriePlanSummary(settings, TODAY).today).toBe("Today: Maintenance · 2,000 kcal · Starts in 6 days");
   });
 });

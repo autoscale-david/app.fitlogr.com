@@ -3,6 +3,7 @@ import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View 
 import { PickerScopeRequired, type HistoryProgress } from "../services/photos";
 import { importFromGooglePhotos } from "../services/photos/picker";
 import { AuthCancelled, useStore } from "../services/store";
+import { ui } from "./settingsUi";
 import { colors } from "../theme";
 
 const PRESETS = [7, 14, 30, 60, 90];
@@ -87,46 +88,47 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
   }
 
   return (
-    <View style={styles.card}>
-      <Text style={styles.title}>Import history</Text>
-      <Text style={styles.body}>Look back a set number of days for meal photos and Apple Health. Meals stay on the day the photo was taken.</Text>
+    <View style={ui.card}>
+      <Text style={ui.cardTitle}>Import history</Text>
+      <Text style={ui.body}>Look back a set number of days for meal photos and Apple Health. Meals stay on the day the photo was taken.</Text>
       <View style={styles.segment}>
         {PRESETS.map((preset) => (
           <Pressable key={preset} style={[styles.preset, days === preset && styles.presetOn]} onPress={() => choose(preset)}>
             <Text style={[styles.presetText, days === preset && styles.presetTextOn]}>{preset}</Text>
           </Pressable>
         ))}
+        <TextInput
+          value={custom}
+          keyboardType="number-pad"
+          onChangeText={setCustom}
+          onEndEditing={() => choose(Number(custom) || days)}
+          style={[ui.input, styles.custom]}
+          placeholder="1–180"
+          placeholderTextColor={colors.faint}
+          accessibilityLabel="Days to look back, 1 to 180"
+        />
       </View>
-      <TextInput
-        value={custom}
-        keyboardType="number-pad"
-        onChangeText={setCustom}
-        onEndEditing={() => choose(Number(custom) || days)}
-        style={styles.input}
-        placeholder="1–180 days"
-        placeholderTextColor={colors.faint}
-      />
       {progress && busy ? (
-        <Text style={styles.body}>
+        <Text style={ui.body}>
           Scanned {progress.scanned}. Skipped {progress.skipped}. Meals {progress.meals}. Non-food {progress.nonMeals}. Errors {progress.errors}.
         </Text>
       ) : null}
-      {note ? <Text style={styles.body}>{note}</Text> : null}
-      <Pressable style={styles.button} disabled={busy !== null} onPress={() => void start("photos")}>
-        {busy === "photos" ? <ActivityIndicator color="#062214" /> : <Text style={styles.buttonText}>Import photos (past {days} days)</Text>}
+      {note ? <Text style={ui.body}>{note}</Text> : null}
+      <Pressable style={ui.primary} disabled={busy !== null} onPress={() => void start("photos")}>
+        {busy === "photos" ? <ActivityIndicator color="#062214" /> : <Text style={ui.primaryText}>Import photos (past {days} days)</Text>}
       </Pressable>
-      <Pressable style={styles.secondary} disabled={busy !== null} onPress={() => void start("health")}>
-        {busy === "health" ? <ActivityIndicator color={colors.text} /> : <Text style={styles.secondaryText}>Import Apple Health (past {days} days)</Text>}
+      <Pressable style={ui.secondary} disabled={busy !== null} onPress={() => void start("health")}>
+        {busy === "health" ? <ActivityIndicator color={colors.text} /> : <Text style={ui.secondaryText}>Import Apple Health (past {days} days)</Text>}
       </Pressable>
-      <Pressable style={styles.secondary} disabled={busy !== null} onPress={() => void start("both")}>
-        {busy === "both" ? <ActivityIndicator color={colors.text} /> : <Text style={styles.secondaryText}>Import photos + Apple Health</Text>}
+      <Pressable style={ui.secondary} disabled={busy !== null} onPress={() => void start("both")}>
+        {busy === "both" ? <ActivityIndicator color={colors.text} /> : <Text style={ui.secondaryText}>Import photos + Apple Health</Text>}
       </Pressable>
-      <Pressable style={styles.secondary} disabled={busy !== null} onPress={() => void pickGoogle()}>
-        {busy === "picker" ? <ActivityIndicator color={colors.text} /> : <Text style={styles.secondaryText}>Pick from Google Photos</Text>}
+      <Pressable style={ui.secondary} disabled={busy !== null} onPress={() => void pickGoogle()}>
+        {busy === "picker" ? <ActivityIndicator color={colors.text} /> : <Text style={ui.secondaryText}>Pick from Google Photos</Text>}
       </Pressable>
       {cancel ? (
-        <Pressable style={styles.secondary} onPress={() => cancel.abort()}>
-          <Text style={styles.secondaryText}>Cancel</Text>
+        <Pressable style={ui.secondary} onPress={() => cancel.abort()}>
+          <Text style={ui.secondaryText}>Cancel</Text>
         </Pressable>
       ) : null}
     </View>
@@ -134,17 +136,10 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
 }
 
 const styles = StyleSheet.create({
-  card: { backgroundColor: colors.card, borderRadius: 18, padding: 16, marginTop: 14 },
-  title: { color: colors.text, fontSize: 17, fontWeight: "700" },
-  body: { color: colors.muted, marginTop: 6, lineHeight: 20 },
-  segment: { flexDirection: "row", gap: 8, marginTop: 12 },
-  preset: { flex: 1, borderRadius: 12, paddingVertical: 10, alignItems: "center", backgroundColor: "#222428" },
+  segment: { flexDirection: "row", gap: 6, marginTop: 8 },
+  preset: { flex: 1, borderRadius: 10, paddingVertical: 7, alignItems: "center", backgroundColor: "#222428" },
   presetOn: { backgroundColor: "#163524" },
-  presetText: { color: colors.muted, fontWeight: "700" },
+  presetText: { color: colors.muted, fontWeight: "700", fontSize: 14 },
   presetTextOn: { color: colors.green },
-  input: { marginTop: 12, backgroundColor: "#222428", color: colors.text, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 },
-  button: { marginTop: 14, backgroundColor: colors.green, borderRadius: 12, paddingVertical: 12, alignItems: "center" },
-  buttonText: { color: "#062214", fontWeight: "800" },
-  secondary: { marginTop: 10, borderRadius: 12, borderWidth: 1, borderColor: "#2E3338", paddingVertical: 12, alignItems: "center" },
-  secondaryText: { color: colors.text, fontWeight: "700" },
+  custom: { width: 58, textAlign: "center" },
 });

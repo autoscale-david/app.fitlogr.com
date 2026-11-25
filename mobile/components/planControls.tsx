@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { colors } from "../theme";
 
 /** Segmented control matching the Units (Imperial / Metric) picker. */
@@ -6,13 +6,15 @@ export function Segmented<T extends string>({
   options,
   value,
   onChange,
+  style,
 }: {
   options: readonly { value: T; label: string }[];
   value: T;
   onChange: (value: T) => void;
+  style?: StyleProp<ViewStyle>;
 }) {
   return (
-    <View style={styles.segment}>
+    <View style={[styles.segment, style]}>
       {options.map((option) => {
         const active = option.value === value;
         return (
@@ -66,50 +68,50 @@ export const controlStyles = StyleSheet.create({
   input: {
     backgroundColor: "#222428",
     color: colors.text,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 16,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    fontSize: 15,
   },
-  primary: { marginTop: 18, backgroundColor: colors.green, borderRadius: 12, paddingVertical: 13, alignItems: "center" },
-  primaryText: { color: "#062214", fontWeight: "800", fontSize: 16 },
+  primary: { marginTop: 14, backgroundColor: colors.green, borderRadius: 10, paddingVertical: 10, alignItems: "center" },
+  primaryText: { color: "#062214", fontWeight: "800", fontSize: 15 },
   label: { color: colors.muted },
-  helper: { color: colors.muted, marginTop: 6, lineHeight: 20 },
+  helper: { color: colors.muted, marginTop: 4, lineHeight: 17, fontSize: 13 },
 });
 
 const styles = StyleSheet.create({
-  segment: { flexDirection: "row", gap: 8, marginTop: 12 },
+  segment: { flexDirection: "row", gap: 6, marginTop: 8 },
   segmentItem: {
     flex: 1,
-    borderRadius: 12,
-    paddingVertical: 10,
+    borderRadius: 10,
+    paddingVertical: 7,
     paddingHorizontal: 4,
     alignItems: "center",
     backgroundColor: "#222428",
   },
   segmentActive: { backgroundColor: "#163524" },
-  segmentText: { color: colors.muted, fontWeight: "700" },
+  segmentText: { color: colors.muted, fontWeight: "700", fontSize: 14 },
   segmentTextActive: { color: colors.green },
   stepper: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
+    width: 34,
+    height: 34,
+    borderRadius: 10,
     backgroundColor: "#222428",
     alignItems: "center",
     justifyContent: "center",
   },
-  stepperText: { color: colors.text, fontSize: 22, fontWeight: "700", lineHeight: 24 },
+  stepperText: { color: colors.text, fontSize: 20, fontWeight: "700", lineHeight: 22 },
   disabled: { opacity: 0.4 },
   chip: {
-    minWidth: 40,
-    height: 40,
-    paddingHorizontal: 12,
-    borderRadius: 20,
+    minWidth: 34,
+    height: 34,
+    paddingHorizontal: 10,
+    borderRadius: 17,
     backgroundColor: "#222428",
     alignItems: "center",
     justifyContent: "center",
   },
   chipActive: { backgroundColor: "#163524", borderWidth: 1, borderColor: colors.green },
-  chipText: { color: colors.muted, fontWeight: "700" },
+  chipText: { color: colors.muted, fontWeight: "700", fontSize: 14 },
   chipTextActive: { color: colors.green },
 });

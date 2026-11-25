@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-nati
 import { PLAN_LIMITS, type MaintenanceEstimate } from "@fitlogr/shared";
 import { api } from "../services/api";
 import { useStore } from "../services/store";
+import { ui } from "./settingsUi";
 import { colors, LB_PER_KG } from "../theme";
 
 export function MaintenanceEstimateCard() {
@@ -84,13 +85,13 @@ function formatDelta(kg: number, imperial: boolean): string {
 }
 
 const styles = StyleSheet.create({
-  wrap: { marginTop: 16 },
-  label: { color: colors.text, fontSize: 15, fontWeight: "700" },
-  body: { color: colors.muted, marginTop: 6, lineHeight: 20 },
-  value: { color: colors.text, marginTop: 10, fontSize: 18, fontWeight: "800" },
-  result: { marginTop: 4 },
-  button: { marginTop: 10, backgroundColor: colors.green, borderRadius: 12, paddingVertical: 12, alignItems: "center" },
-  buttonText: { color: "#062214", fontWeight: "800" },
-  secondary: { marginTop: 10, borderRadius: 12, borderWidth: 1, borderColor: "#2E3338", paddingVertical: 12, alignItems: "center" },
-  secondaryText: { color: colors.text, fontWeight: "700" },
+  wrap: { marginTop: 10 },
+  label: { color: colors.text, fontSize: 14, fontWeight: "700" },
+  body: ui.body,
+  value: { color: colors.text, marginTop: 8, fontSize: 16, fontWeight: "800" },
+  result: { marginTop: 2 },
+  button: ui.primary,
+  buttonText: ui.primaryText,
+  secondary: ui.secondary,
+  secondaryText: ui.secondaryText,
 });

@@ -41,6 +41,7 @@ import { DatePickerSheet, EndDateSheet } from "./PlanDateSheets";
 import { Segmented, StepperButton, controlStyles } from "./planControls";
 import { dayColor } from "./planTone";
 import { localDateISO } from "../services/dates";
+import { ui } from "./settingsUi";
 import { colors } from "../theme";
 
 const PLAN_TYPE_OPTIONS = PLAN_TYPES.map((value) => ({ value, label: PLAN_TYPE_LABELS[value] }));
@@ -122,10 +123,9 @@ export function CaloriePlanCard({
           })();
 
   return (
-    <View style={styles.card}>
-      <Text style={styles.cardTitle}>Calorie Plan</Text>
-
-      <View style={styles.inlineRow}>
+    <>
+    <View style={ui.card}>
+      <View style={styles.firstRow}>
         <Text style={styles.rowLabel}>Maintenance calories</Text>
         <IntegerInput
           value={maintenance}
@@ -141,8 +141,10 @@ export function CaloriePlanCard({
       {maintenanceError ? <Text style={styles.error}>Enter a whole number from 1,000 to 6,000.</Text> : null}
       <Text style={controlStyles.helper}>Calories you burn on a day with no logged exercise. Workouts are added on top.</Text>
       <MaintenanceEstimateCard />
+    </View>
 
-      <Text style={[styles.rowLabel, styles.sectionGap]}>Plan type</Text>
+    <View style={ui.card}>
+      <Text style={ui.cardTitle}>Plan</Text>
       <Segmented options={PLAN_TYPE_OPTIONS} value={plan.planType} onChange={(planType) => onChange({ ...plan, planType })} />
 
       <View style={styles.dateRow}>
@@ -222,7 +224,9 @@ export function CaloriePlanCard({
       {plan.planType === "weekly" ? <Text style={styles.footer}>{weeklyFooter(plan)}</Text> : null}
       {plan.planType === "custom" ? <Text style={styles.footer}>{cycleFooter(plan)}</Text> : null}
       {total ? <Text style={styles.footer}>{planTotalText(total)}</Text> : null}
+    </View>
 
+    <View style={ui.card}>
       <Pressable style={styles.advancedToggle} onPress={() => setAdvanced((open) => !open)} accessibilityRole="button">
         <Text style={styles.advancedText}>Advanced</Text>
         <Ionicons name={advanced ? "chevron-up" : "chevron-down"} size={16} color={colors.muted} />
@@ -273,6 +277,7 @@ export function CaloriePlanCard({
           </View>
         </>
       ) : null}
+    </View>
 
       <DayEditorSheet
         plan={plan}
@@ -305,7 +310,7 @@ export function CaloriePlanCard({
           setSheet(null);
         }}
       />
-    </View>
+    </>
   );
 }
 
@@ -333,38 +338,37 @@ function IntegerInput({
         const accepted = text.trim() !== "" && Number.isFinite(parsed) && onCommit(parsed);
         if (!accepted) setText(String(value));
       }}
-      style={[controlStyles.input, { width, textAlign: "right" }]}
+      style={[ui.input, { width, textAlign: "right" }]}
       accessibilityLabel={accessibilityLabel}
     />
   );
 }
 
 const styles = StyleSheet.create({
-  card: { backgroundColor: colors.card, borderRadius: 18, padding: 16, marginTop: 14 },
-  cardTitle: { color: colors.text, fontSize: 17, fontWeight: "700" },
-  inlineRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 12, gap: 12 },
-  rowLabel: { color: colors.muted },
-  sectionGap: { marginTop: 18 },
-  error: { color: colors.fat, marginTop: 6 },
-  dateRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 14 },
-  dateControls: { flexDirection: "row", alignItems: "center", gap: 12 },
-  dateButton: { backgroundColor: "#222428", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 9 },
-  dateText: { color: colors.text, fontSize: 15, fontWeight: "600" },
-  dateEmpty: { color: colors.muted, fontSize: 15 },
-  link: { color: colors.green, fontWeight: "700" },
-  statusRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 10 },
-  status: { color: colors.muted, flexShrink: 1 },
-  stepperRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  rows: { marginTop: 14 },
+  firstRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  inlineRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 8, gap: 10 },
+  rowLabel: { color: colors.muted, fontSize: 14 },
+  sectionGap: { marginTop: 10 },
+  error: ui.error,
+  dateRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 8 },
+  dateControls: { flexDirection: "row", alignItems: "center", gap: 10 },
+  dateButton: { backgroundColor: "#222428", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6 },
+  dateText: { color: colors.text, fontSize: 14, fontWeight: "600" },
+  dateEmpty: { color: colors.muted, fontSize: 14 },
+  link: { color: colors.green, fontWeight: "700", fontSize: 14 },
+  statusRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 6 },
+  status: { color: colors.muted, flexShrink: 1, fontSize: 13 },
+  stepperRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  rows: { marginTop: 8 },
   dimmed: { opacity: 0.6 },
-  row: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 11, paddingHorizontal: 8, borderRadius: 12 },
+  row: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 7, paddingHorizontal: 6, borderRadius: 10 },
   rowToday: { backgroundColor: colors.selectedDay },
-  rowName: { color: colors.text, fontWeight: "700", width: 66 },
-  rowPlan: { flex: 1, fontWeight: "700" },
-  rowTarget: { color: colors.text, fontVariant: ["tabular-nums"] },
-  rowDate: { color: colors.muted, width: 82, textAlign: "right", fontSize: 13 },
-  footer: { color: colors.muted, marginTop: 10, lineHeight: 20 },
-  advancedToggle: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 18, paddingVertical: 6 },
-  advancedText: { color: colors.text, fontWeight: "700" },
+  rowName: { color: colors.text, fontWeight: "700", width: 70, fontSize: 14 },
+  rowPlan: { flex: 1, fontWeight: "700", fontSize: 13 },
+  rowTarget: { color: colors.text, fontVariant: ["tabular-nums"], fontSize: 14 },
+  rowDate: { color: colors.muted, width: 76, textAlign: "right", fontSize: 12 },
+  footer: { color: colors.muted, marginTop: 6, lineHeight: 17, fontSize: 13 },
+  advancedToggle: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 2 },
+  advancedText: { color: colors.text, fontWeight: "700", fontSize: 15 },
   switchLabel: { flex: 1 },
 });

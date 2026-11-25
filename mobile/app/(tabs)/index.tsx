@@ -17,6 +17,7 @@ import {
   ringProgress,
   snapshotTarget,
   snapshotTone,
+  targetBurnOf,
   type DayDotStatus,
   type DayKey,
 } from "@fitlogr/shared";
@@ -35,7 +36,7 @@ import { colors, LB_PER_KG } from "../../theme";
 const ENDED_BANNER_KEY = "plan_ended_banner_shown";
 
 function openPlanSettings(focus: "plan" | "plan-end") {
-  router.navigate({ pathname: "/(tabs)/settings", params: { focus, at: String(Date.now()) } });
+  router.push(focus === "plan-end" ? { pathname: "/settings/plan", params: { focus } } : "/settings/plan");
 }
 
 export default function LogScreen() {
@@ -86,6 +87,7 @@ export default function LogScreen() {
   const snapshot = goals ? effectiveSnapshot(goals.plan, selected, today, day?.planSnapshot) : null;
   const isFast = snapshot?.day.type === "fast";
   const target = snapshot ? snapshotTarget(snapshot) : 0;
+  const plannedBurn = snapshot ? targetBurnOf(snapshot.day) : 0;
   const state = snapshot ? remainingState(snapshot, eaten, burned) : null;
   const progress = snapshot ? ringProgress(snapshot, eaten, burned) : 0;
   const macroTargets =
@@ -148,7 +150,7 @@ export default function LogScreen() {
           </View>
         </View>
       </View>
-      <Pressable onPress={() => router.push("/(tabs)/settings")} hitSlop={8}>
+      <Pressable onPress={() => router.push("/settings/data")} hitSlop={8}>
         <Text style={styles.importLink}>Import history</Text>
       </Pressable>
 
@@ -232,7 +234,9 @@ export default function LogScreen() {
             <Text style={styles.calorieSub}>
               {isFast
                 ? `${formatKcal(target)} planned · ${formatKcal(burned)} burned`
-                : `${formatKcal(eaten)} eaten · ${formatKcal(target)} target + ${formatKcal(burned)} burned`}
+                : plannedBurn > 0
+                  ? `${formatKcal(eaten)} eaten · ${formatKcal(target)} target · ${formatKcal(burned)} of ${formatKcal(plannedBurn)} burned`
+                  : `${formatKcal(eaten)} eaten · ${formatKcal(target)} target + ${formatKcal(burned)} burned`}
             </Text>
             {day.steps != null || day.heartRateBpm != null ? (
               <Text style={styles.calorieSub}>

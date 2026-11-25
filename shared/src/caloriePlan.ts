@@ -47,10 +47,16 @@ export const PLAN_LIMITS = {
   fastAllowanceMin: 0,
   fastAllowanceMax: 200,
   fastAllowanceDefault: 0,
+  /** Target Burn is 0 (none) or 50-2000 in steps of 50. */
+  burnMin: 50,
+  burnMax: 2000,
+  burnStep: 50,
+  burnDefault: 0,
   lowIntakeKcal: 1200,
 } as const;
 
 export const AMOUNT_PRESETS = [250, 500, 750] as const;
+export const BURN_PRESETS = [0, 250, 500, 1000] as const;
 
 export type PlanType = "daily" | "weekly" | "custom";
 export const PLAN_TYPES: readonly PlanType[] = ["daily", "weekly", "custom"];
@@ -69,10 +75,14 @@ export const DAY_PLAN_TYPE_LABELS: Record<DayPlanType, string> = {
   fast: "Fast",
 };
 
+/**
+ * Target Net is the day type plus amount (deficit -N, maintain +0, surplus +N). `targetBurn` is the
+ * planned workout burn for that day; absent means 0. Fast days have no intake and no planned burn.
+ */
 export type DayPlan =
-  | { type: "deficit"; amount: number }
-  | { type: "maintain" }
-  | { type: "surplus"; amount: number }
+  | { type: "deficit"; amount: number; targetBurn?: number }
+  | { type: "maintain"; targetBurn?: number }
+  | { type: "surplus"; amount: number; targetBurn?: number }
   | { type: "fast" };
 
 export interface PlanDates {
@@ -381,6 +391,18 @@ export function effectiveSnapshot(
 // ---------------------------------------------------------------------------
 // Calculations
 
+export function targetBurnOf(day: DayPlan): number {
+  return day.type === "fast" ? 0 : (day.targetBurn ?? 0);
+}
+
+/** Sets a day's planned burn; 0 drops the field so plans without a burn keep their old shape. */
+export function withTargetBurn(day: DayPlan, targetBurn: number): DayPlan {
+  if (day.type === "fast") return day;
+  const { targetBurn: _previous, ...rest } = day;
+  return targetBurn > 0 ? { ...rest, targetBurn } : rest;
+}
+
+/** Net vs maintenance: deficit -N, maintain 0, surplus +N. */
 export function dayOffset(day: DayPlan): number {
   switch (day.type) {
     case "deficit":
@@ -398,20 +420,32 @@ export function planOffset(day: DayPlan, maintenanceCalories: number, fastAllowa
   return Math.max(dayOffset(day), -maintenanceCalories);
 }
 
-export function dayTarget(day: DayPlan, maintenanceCalories: number, fastAllowanceKcal: number): number {
+/** Calories to eat before workout burn: maintenance + net, without the planned burn. */
+export function netTarget(day: DayPlan, maintenanceCalories: number, fastAllowanceKcal: number): number {
   if (day.type === "fast") return fastAllowanceKcal;
   return Math.max(0, Math.round(maintenanceCalories + dayOffset(day)));
+}
+
+/** Consumption target: maintenance + net + planned burn. A fast day is its allowance and ignores burn. */
+export function dayTarget(day: DayPlan, maintenanceCalories: number, fastAllowanceKcal: number): number {
+  if (day.type === "fast") return fastAllowanceKcal;
+  return netTarget(day, maintenanceCalories, fastAllowanceKcal) + targetBurnOf(day);
 }
 
 export function snapshotTarget(snapshot: DayPlanSnapshot): number {
   return dayTarget(snapshot.day, snapshot.maintenanceCalories, snapshot.fastAllowanceKcal);
 }
 
+/**
+ * consumptionTarget - eaten + (actualBurn - targetBurn). The planned burn is already inside the
+ * consumption target, so only burn beyond (or short of) it moves the number; missing burn counts as 0.
+ */
 export function remainingCalories(snapshot: DayPlanSnapshot, eatenKcal: number, burnedKcal: number): number {
   const target = snapshotTarget(snapshot);
   // Rounded like the pre-plan budget math so migrated days show identical numbers.
   if (snapshot.day.type === "fast") return target - Math.round(eatenKcal);
-  return Math.round(target + burnedKcal) - Math.round(eatenKcal);
+  const actualBurn = Number.isFinite(burnedKcal) ? burnedKcal : 0;
+  return Math.round(target + actualBurn - targetBurnOf(snapshot.day)) - Math.round(eatenKcal);
 }
 
 export function deltaVsMaintenance(snapshot: DayPlanSnapshot, eatenKcal: number, burnedKcal: number): number {
@@ -454,10 +488,10 @@ export function remainingStateText(state: RemainingState): string {
   }
 }
 
-/** eaten / (dayTarget + burned), clamped to 0-1. A fast day's ring stays empty. */
+/** eaten / (consumption target + burn beyond the planned burn), clamped to 0-1. A fast day's ring stays empty. */
 export function ringProgress(snapshot: DayPlanSnapshot, eatenKcal: number, burnedKcal: number): number {
   if (snapshot.day.type === "fast") return 0;
-  const denominator = snapshotTarget(snapshot) + burnedKcal;
+  const denominator = snapshotTarget(snapshot) - targetBurnOf(snapshot.day) + burnedKcal;
   if (denominator <= 0) return eatenKcal > 0 ? 1 : 0;
   return Math.min(1, Math.max(0, eatenKcal / denominator));
 }
@@ -490,17 +524,18 @@ export function dayDotStatus(input: {
 // ---------------------------------------------------------------------------
 // Labels and copy
 
+/** "+0", "-500", "+500" */
+export function formatNet(value: number): string {
+  const rounded = Math.round(value);
+  return rounded >= 0 ? `+${formatKcal(rounded)}` : formatKcal(rounded);
+}
+
+/** "Net +0 · Burn 500+", "Net -500" (burn omitted at 0), "Fast". */
 export function dayPlanLabel(day: DayPlan): string {
-  switch (day.type) {
-    case "deficit":
-      return `Deficit ${formatKcal(day.amount)}+`;
-    case "surplus":
-      return `Surplus ~${formatKcal(day.amount)}`;
-    case "maintain":
-      return "Maintenance";
-    case "fast":
-      return "Fast";
-  }
+  if (day.type === "fast") return "Fast";
+  const burn = targetBurnOf(day);
+  const net = `Net ${formatNet(dayOffset(day))}`;
+  return burn > 0 ? `${net} · Burn ${formatKcal(burn)}+` : net;
 }
 
 export type PlanTone = "deficit" | "surplus" | "fast" | "maintain" | "outside";
@@ -532,15 +567,28 @@ export function dayPlanHelper(day: DayPlan, toleranceKcal: number): string {
   }
 }
 
+/** "2,500 to eat if you burn 500." with a planned burn; otherwise the target plus any workout burn. */
 export function dayTargetLine(day: DayPlan, maintenanceCalories: number, fastAllowanceKcal: number): string {
   const target = formatKcal(dayTarget(day, maintenanceCalories, fastAllowanceKcal));
-  return day.type === "fast" ? `Target: ${target} kcal` : `Target: ${target} kcal + workout burn`;
+  if (day.type === "fast") return `Target: ${target} kcal`;
+  const burn = targetBurnOf(day);
+  return burn > 0 ? `${target} to eat if you burn ${formatKcal(burn)}.` : `Target: ${target} kcal + workout burn`;
 }
 
 export const LOW_INTAKE_NOTE = "This is a very low intake day.";
 
+/** Judged on net intake, so a planned burn cannot hide a very low day. */
 export function isLowIntakeDay(day: DayPlan, maintenanceCalories: number): boolean {
-  return day.type === "deficit" && dayTarget(day, maintenanceCalories, 0) < PLAN_LIMITS.lowIntakeKcal;
+  return day.type === "deficit" && netTarget(day, maintenanceCalories, 0) < PLAN_LIMITS.lowIntakeKcal;
+}
+
+/** Settings summary: "Maintenance 2,000 · Weekly Plan" and "Today: Net +0 · Burn 500+ · 2,500 kcal". */
+export function caloriePlanSummary(settings: CaloriePlanSettings, today: string): { title: string; today: string } {
+  const snapshot = snapshotForDate(settings, today);
+  const status = planStatus(selectedPlanDates(settings), today);
+  const title = `Maintenance ${formatKcal(settings.maintenanceCalories)} · ${PLAN_TYPE_LABELS[settings.planType]}`;
+  const line = `Today: ${planPillLabel(snapshot)} · ${formatKcal(snapshotTarget(snapshot))} kcal`;
+  return { title, today: status.kind === "active" ? line : `${line} · ${planStatusText(status)}` };
 }
 
 export type DayKey = { planType: "daily" } | { planType: "weekly"; weekday: Weekday } | { planType: "custom"; index: number };
@@ -596,22 +644,37 @@ export function stepAmount(type: "deficit" | "surplus", amount: number, directio
   return clampAmount(type, snapped, maintenanceCalories);
 }
 
+/** 0, or 50-2000 kcal; anything between 0 and 50 rounds up to the first step. */
+export function clampTargetBurn(value: number): number {
+  if (!Number.isFinite(value)) return PLAN_LIMITS.burnDefault;
+  const rounded = Math.round(value);
+  if (rounded <= 0) return 0;
+  return Math.min(PLAN_LIMITS.burnMax, Math.max(PLAN_LIMITS.burnMin, rounded));
+}
+
+export function stepTargetBurn(value: number, direction: 1 | -1): number {
+  const step = PLAN_LIMITS.burnStep;
+  const snapped = direction > 0 ? Math.floor(value / step) * step + step : Math.ceil(value / step) * step - step;
+  return clampTargetBurn(snapped);
+}
+
 export function clampMaintenance(value: number): number | null {
   if (!Number.isFinite(value) || !Number.isInteger(value)) return null;
   if (value < PLAN_LIMITS.maintenanceMin || value > PLAN_LIMITS.maintenanceMax) return null;
   return value;
 }
 
-/** Writes one day plan to every selected day; deficits are re-capped for the current maintenance. */
+/** Writes one day plan to every selected day; deficits are re-capped for the current maintenance and burns clamped. */
 export function applyDayPlan(
   settings: CaloriePlanSettings,
   targets: { planType: "daily" } | { planType: "weekly"; weekdays: Weekday[] } | { planType: "custom"; indices: number[] },
   day: DayPlan,
 ): CaloriePlanSettings {
-  const next =
+  const amounted: DayPlan =
     day.type === "deficit" || day.type === "surplus"
       ? { ...day, amount: clampAmount(day.type, day.amount, settings.maintenanceCalories) }
       : day;
+  const next = withTargetBurn(amounted, clampTargetBurn(targetBurnOf(day)));
   switch (targets.planType) {
     case "daily":
       return { ...settings, dailyPlan: { ...settings.dailyPlan, day: next } };
@@ -781,11 +844,16 @@ export function endedBannerText(settings: CaloriePlanSettings): string {
 
 const IsoDateSchema = z.string().refine(isIsoDate, "Expected a YYYY-MM-DD date");
 const AmountSchema = z.number().int().min(PLAN_LIMITS.amountMin).max(PLAN_LIMITS.amountMax);
+const TargetBurnSchema = z
+  .number()
+  .int()
+  .refine((value) => value === 0 || (value >= PLAN_LIMITS.burnMin && value <= PLAN_LIMITS.burnMax), "target_burn_kcal must be 0 or 50-2000")
+  .optional();
 
 export const DayPlanApiSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("deficit"), amount_kcal: AmountSchema }),
-  z.object({ type: z.literal("maintain") }),
-  z.object({ type: z.literal("surplus"), amount_kcal: AmountSchema }),
+  z.object({ type: z.literal("deficit"), amount_kcal: AmountSchema, target_burn_kcal: TargetBurnSchema }),
+  z.object({ type: z.literal("maintain"), target_burn_kcal: TargetBurnSchema }),
+  z.object({ type: z.literal("surplus"), amount_kcal: AmountSchema, target_burn_kcal: TargetBurnSchema }),
   z.object({ type: z.literal("fast") }),
 ]);
 export type DayPlanApi = z.infer<typeof DayPlanApiSchema>;
@@ -831,11 +899,17 @@ export type CaloriePlanApi = z.infer<typeof CaloriePlanApiSchema>;
 export const MaintenanceCaloriesSchema = z.number().int().min(PLAN_LIMITS.maintenanceMin).max(PLAN_LIMITS.maintenanceMax);
 
 function dayToApi(day: DayPlan): DayPlanApi {
-  return day.type === "deficit" || day.type === "surplus" ? { type: day.type, amount_kcal: day.amount } : { type: day.type };
+  if (day.type === "fast") return { type: "fast" };
+  const burn = targetBurnOf(day);
+  const extra = burn > 0 ? { target_burn_kcal: burn } : {};
+  return day.type === "maintain" ? { type: "maintain", ...extra } : { type: day.type, amount_kcal: day.amount, ...extra };
 }
 
+/** Plans saved before Target Burn existed have no target_burn_kcal and read as 0. */
 function dayFromApi(day: DayPlanApi): DayPlan {
-  return day.type === "deficit" || day.type === "surplus" ? { type: day.type, amount: day.amount_kcal } : { type: day.type };
+  if (day.type === "fast") return { type: "fast" };
+  const base: DayPlan = day.type === "maintain" ? { type: "maintain" } : { type: day.type, amount: day.amount_kcal };
+  return withTargetBurn(base, day.target_burn_kcal ?? 0);
 }
 
 export function caloriePlanToApi(settings: CaloriePlanSettings): CaloriePlanApi {
@@ -912,9 +986,9 @@ export function parseCaloriePlanJson(raw: string | null | undefined): CaloriePla
 }
 
 const DayPlanStoredSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("deficit"), amount: z.number() }),
-  z.object({ type: z.literal("maintain") }),
-  z.object({ type: z.literal("surplus"), amount: z.number() }),
+  z.object({ type: z.literal("deficit"), amount: z.number(), targetBurn: z.number().optional() }),
+  z.object({ type: z.literal("maintain"), targetBurn: z.number().optional() }),
+  z.object({ type: z.literal("surplus"), amount: z.number(), targetBurn: z.number().optional() }),
   z.object({ type: z.literal("fast") }),
 ]);
 
