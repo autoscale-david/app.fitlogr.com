@@ -22,8 +22,12 @@ export interface ImportResult {
   retryAfterSeconds?: number;
 }
 
-/** True when this local photo was already handled and should not be prepared or sent again. */
+/** Photos being sent right now, so two scans running at once never upload the same photo twice. */
+const inFlight = new Set<string>();
+
+/** True when this local photo was already handled (or is being sent) and should not be prepared again. */
 export async function alreadyChecked(db: SQLiteDatabase, assetId: string): Promise<boolean> {
+  if (inFlight.has(assetId)) return true;
   const seen = await db.getFirstAsync<{ scan_status: string }>(
     "SELECT scan_status FROM local_media_assets WHERE local_asset_id = ?",
     assetId,
@@ -44,6 +48,7 @@ export async function importPreparedPhoto(
     return { kind: "skipped", message: "That photo was already checked.", reconnect: false };
   }
 
+  inFlight.add(assetId);
   try {
     const hashes = await api.send<CheckHashesResponse>("POST", "/photos/check-hashes", {
       items: [
@@ -128,6 +133,8 @@ export async function importPreparedPhoto(
     await remember(db, assetId, image, input.capturedAt, "error", null);
     const message = error instanceof ApiError ? error.message : "The photo could not be analyzed.";
     return { kind: "error", message, reconnect: false };
+  } finally {
+    inFlight.delete(assetId);
   }
 }
 

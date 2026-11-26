@@ -45,6 +45,8 @@ import {
   scanRecentPhotos,
   type HistoryProgress,
   type HistoryScanResult,
+  type LibraryAccess,
+  type ScanResult,
 } from "./photos";
 import { isExpoGo } from "./expoGo";
 import { queueMeal, queueMealDelete, queuePhotoExclude, queueSettings, queueWeight, syncAccount } from "./sync";
@@ -52,6 +54,16 @@ import { queueMeal, queueMealDelete, queuePhotoExclude, queueSettings, queueWeig
 interface Account {
   email: string;
   displayName: string | null;
+}
+
+/** State of the automatic camera-roll scan, for the Log screen. */
+export interface PhotoScanState {
+  /** True while new photos are being analyzed. */
+  active: boolean;
+  /** Result worth showing after an automatic scan: meals found, limited access, or the analysis limit. */
+  message: string | null;
+  /** Photo-library access as of the last scan; null until one has run (or in Expo Go). */
+  access: LibraryAccess | null;
 }
 
 interface Store {
@@ -68,6 +80,7 @@ interface Store {
   googleReconnectRequired: boolean;
   /** Signed-in data is still on this phone, but the session ended; sign in again to resume syncing. */
   sessionExpired: boolean;
+  photoScan: PhotoScanState;
   lastSyncedAt: string | null;
   loadDay: (date: string) => Promise<DayLog>;
   loadWeek: (from: string, to: string) => Promise<Record<string, WeekDayStatus>>;
@@ -102,6 +115,7 @@ interface Store {
 const StoreContext = createContext<Store | null>(null);
 let syncChain: Promise<void> = Promise.resolve();
 let lastRecentScanAt = 0;
+let lastLibraryAccess: LibraryAccess | null = null;
 const RECENT_SCAN_GAP_MS = 60 * 1000;
 
 export function StoreProvider({ children }: { children: ReactNode }) {
@@ -118,6 +132,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [googleReconnectRequired, setGoogleReconnectRequired] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [sessionExpired, setSessionExpired] = useState(false);
+  const [photoScan, setPhotoScan] = useState<PhotoScanState>({ active: false, message: null, access: null });
+
+  /** One camera-roll scan. The Log refreshes as each meal lands, not only when the scan ends. */
+  async function runRecentScan(database: SQLiteDatabase, ask: boolean): Promise<ScanResult> {
+    lastRecentScanAt = Date.now();
+    try {
+      const result = await scanRecentPhotos(database, {
+        ask,
+        onSend: () => setPhotoScan((current) => ({ ...current, active: true, message: null })),
+        onMeal: () => setRefreshToken((token) => token + 1),
+      });
+      lastLibraryAccess = result.access;
+      setPhotoScan({ active: false, message: result.imported > 0 ? result.message : result.notice, access: result.access });
+      if (result.imported > 0) {
+        setRefreshToken((token) => token + 1);
+        void sync(database, true);
+      }
+      return result;
+    } catch (error) {
+      setPhotoScan((current) => ({ ...current, active: false }));
+      throw error;
+    }
+  }
 
   /**
    * Stores a new session. Re-signing into the account already on this phone keeps its data and queued
@@ -284,13 +321,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if ((await readMode(database)) !== "account") return;
     if (!(await readSession()).refreshToken) return;
     if ((await readSetting(database, "ai_photo_consent_version")) !== AI_PHOTO_CONSENT_VERSION) return;
-    if (Date.now() - lastRecentScanAt < RECENT_SCAN_GAP_MS) return;
-    lastRecentScanAt = Date.now();
-    const result = await scanRecentPhotos(database, { ask: false });
-    if (result.imported > 0) {
-      setRefreshToken((token) => token + 1);
-      void sync(database, true);
-    }
+    // While access is missing or limited, re-check on every return to the app: the person may have
+    // just changed it in iOS Settings.
+    const waitingOnAccess = lastLibraryAccess !== null && lastLibraryAccess !== "full";
+    if (!waitingOnAccess && Date.now() - lastRecentScanAt < RECENT_SCAN_GAP_MS) return;
+    await runRecentScan(database, false);
   }
 
   const value = useMemo<Store>(
@@ -307,6 +342,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       health,
       googleReconnectRequired,
       sessionExpired,
+      photoScan,
       lastSyncedAt,
       loadDay: (date) => {
         if (!db) throw new Error("Database is not open");
@@ -504,6 +540,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         } catch {
           await writeSetting(db, "ai_photo_consent_pending", "1");
         }
+        // The server knows about the consent now, so the Log can run its first automatic scan right away.
+        lastRecentScanAt = 0;
+        setRefreshToken((token) => token + 1);
       },
       addMealPhoto: async (uri, captured) => {
         if (!db || mode !== "account") return "Sign in with Google before analyzing a meal photo.";
@@ -555,12 +594,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (!db || mode !== "account" || !photoConsent) return "";
         if (sessionExpired) return announceEmpty ? "Sign in again to keep importing meal photos." : "";
         if (!announceEmpty && Date.now() - lastRecentScanAt < RECENT_SCAN_GAP_MS) return "";
-        lastRecentScanAt = Date.now();
-        const result = await scanRecentPhotos(db, { ask: announceEmpty });
-        if (result.imported > 0) {
-          setRefreshToken((token) => token + 1);
-          void sync(db, true);
-        }
+        const result = await runRecentScan(db, announceEmpty);
         return result.status === "empty" && !announceEmpty ? "" : result.message;
       },
       logWeight: async (localDate, weightKg) => {
@@ -574,7 +608,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setRefreshToken((token) => token + 1);
       },
     }),
-    [account, db, goals, googleReconnectRequired, health, lastSyncedAt, mode, pending, photoConsent, refreshToken, sessionExpired, syncError, syncing],
+    [account, db, goals, googleReconnectRequired, health, lastSyncedAt, mode, pending, photoConsent, photoScan, refreshToken, sessionExpired, syncError, syncing],
   );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { requestCameraPermissionsAsync, requestMediaLibraryPermissionsAsync, launchCameraAsync, launchImageLibraryAsync } from "expo-image-picker";
@@ -19,6 +19,16 @@ export function MealPhotoPicker({ onManual }: { onManual: () => void }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const canScan = !isExpoGo();
+  // Automatic meal logging needs full photo access. Say so here instead of silently finding nothing.
+  const access = store.photoScan.access;
+  const accessPrompt =
+    !canScan || store.mode !== "account" || !store.photoConsent || store.sessionExpired || access === null || access === "full"
+      ? null
+      : access === "undetermined"
+        ? "Allow photo access so fitlogr can log meals from your new photos automatically."
+        : access === "limited"
+          ? "fitlogr only sees the photos you selected. Tap to allow all photos so new meals are logged automatically."
+          : "Photo access is off. Tap to turn it on in Settings so new meal photos are logged automatically.";
 
   function start(action: PhotoAction) {
     if (store.mode !== "account") {
@@ -66,6 +76,16 @@ export function MealPhotoPicker({ onManual }: { onManual: () => void }) {
           <Text style={styles.bannerText}>Allow meal photo analysis to log meals from photos.</Text>
         </Pressable>
       ) : null}
+      {accessPrompt ? (
+        <Pressable
+          style={styles.banner}
+          onPress={() => (access === "undetermined" ? start("scan") : void Linking.openSettings())}
+          accessibilityRole="button"
+        >
+          <Ionicons name="images-outline" size={18} color={colors.green} />
+          <Text style={styles.bannerText}>{accessPrompt}</Text>
+        </Pressable>
+      ) : null}
       <View style={styles.actions}>
         <Action icon="images-outline" label="Photos" primary disabled={busy} onPress={() => start("library")} />
         <Action icon="camera-outline" label="Camera" disabled={busy} onPress={() => start("camera")} />
@@ -82,7 +102,17 @@ export function MealPhotoPicker({ onManual }: { onManual: () => void }) {
           <Text style={styles.note}>Checking photo…</Text>
         </View>
       ) : null}
-      {note ? <Text style={styles.note}>{note}</Text> : null}
+      {!busy && store.photoScan.active ? (
+        <View style={styles.busyRow}>
+          <ActivityIndicator color={colors.green} />
+          <Text style={styles.note}>Checking your new photos…</Text>
+        </View>
+      ) : null}
+      {note ? (
+        <Text style={styles.note}>{note}</Text>
+      ) : !busy && !store.photoScan.active && store.photoScan.message && !accessPrompt ? (
+        <Text style={styles.note}>{store.photoScan.message}</Text>
+      ) : null}
       <MealPhotoConsent
         visible={consentOpen}
         onDecline={() => {

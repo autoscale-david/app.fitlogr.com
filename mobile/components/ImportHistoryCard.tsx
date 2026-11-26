@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { router, useFocusEffect } from "expo-router";
 import { getMediaLibraryPermissionsAsync, requestMediaLibraryPermissionsAsync } from "expo-image-picker";
 import { PickerScopeRequired, type HistoryProgress } from "../services/photos";
@@ -20,6 +20,7 @@ const RANGES = [
 const APPLE_PHOTOS_SYNCED = "apple_photos_synced_at";
 const GOOGLE_PHOTOS_SYNCED = "google_photos_synced_at";
 const NATIVE_APP = "Needs the fitlogr iPhone app.";
+const LIMITED_ACCESS = "Limited access: only selected photos are visible. Tap to allow all photos in Settings.";
 const NATIVE_IMPORT = "Importing Apple Health and scanning the whole photo library need the fitlogr iPhone app.";
 
 type Busy = "health" | "health-connect" | "apple-photos" | "google-photos" | "apple-sync" | "google-sync" | null;
@@ -45,6 +46,8 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
   const [cancel, setCancel] = useState<AbortController | null>(null);
   const [counts, setCounts] = useState<ImportCounts>(EMPTY_COUNTS);
   const [applePhotos, setApplePhotos] = useState(false);
+  /** iOS "Limited Access": connected, but new photos are invisible to the automatic scan. */
+  const [applePhotosLimited, setApplePhotosLimited] = useState(false);
   const [applePhotosSynced, setApplePhotosSynced] = useState<string | null>(null);
   const [googlePhotos, setGooglePhotos] = useState(false);
   const [googlePhotosSynced, setGooglePhotosSynced] = useState<string | null>(null);
@@ -57,7 +60,9 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
     ]);
     setApplePhotosSynced(appleStamp);
     setGooglePhotosSynced(googleStamp);
-    setApplePhotos(await photoLibraryGranted());
+    const library = await photoLibraryAccess();
+    setApplePhotos(library !== "none");
+    setApplePhotosLimited(library === "limited");
     if (current.mode !== "account") {
       setGooglePhotos(false);
       return;
@@ -101,10 +106,21 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
     setNote(null);
     try {
       const current = await getMediaLibraryPermissionsAsync();
+      if (current.granted && current.accessPrivileges === "limited") {
+        // iOS only changes Limited to Full Access from its own Settings screen.
+        await Linking.openSettings();
+        return;
+      }
       const permission = current.granted ? current : await requestMediaLibraryPermissionsAsync();
       setApplePhotos(permission.granted);
+      setApplePhotosLimited(permission.granted && permission.accessPrivileges === "limited");
       if (!permission.granted) {
-        setNote("Photo library access is off. You can still pick a photo when iOS asks.");
+        if (!permission.canAskAgain) await Linking.openSettings();
+        else setNote("Photo library access is off. You can still pick a photo when iOS asks.");
+        return;
+      }
+      if (permission.accessPrivileges === "limited") {
+        setNote(LIMITED_ACCESS);
         return;
       }
       // Picking photos works here. Scanning the whole library is the import button, and only the iPhone app can do it.
@@ -257,7 +273,7 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
         />
         <SetupRow
           title="Connect Apple Photos"
-          detail={applePhotos ? connectedLine(applePhotosSynced) : null}
+          detail={applePhotosLimited ? LIMITED_ACCESS : applePhotos ? connectedLine(applePhotosSynced) : null}
           busy={busy === "apple-sync"}
           onPress={() => void connectApplePhotos()}
         />
@@ -344,12 +360,13 @@ function healthProblem(message: string | undefined): string | null {
   return message;
 }
 
-async function photoLibraryGranted(): Promise<boolean> {
+async function photoLibraryAccess(): Promise<"full" | "limited" | "none"> {
   try {
     const permission = await getMediaLibraryPermissionsAsync();
-    return permission.granted;
+    if (!permission.granted) return "none";
+    return permission.accessPrivileges === "limited" ? "limited" : "full";
   } catch {
-    return false;
+    return "none";
   }
 }
 
