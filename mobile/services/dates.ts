@@ -13,6 +13,23 @@ export function localDateISO(date = new Date()): string {
   return `${year}-${month}-${day}`;
 }
 
+/** `YYYY-MM-DD` from a calendar day or a longer timestamp. Empty when it is not a date. */
+export function calendarDay(value: string | null | undefined): string {
+  const match = /^(\d{4}-\d{2}-\d{2})/.exec(value ?? "");
+  return match?.[1] ?? "";
+}
+
+/**
+ * Photo-library clocks are milliseconds. Older readers report seconds.
+ * Values at or below zero are missing.
+ */
+export function timestampToDate(value: number | null | undefined): Date | null {
+  if (value == null || !Number.isFinite(value) || value <= 0) return null;
+  const millis = value > 1e12 ? value : value * 1000;
+  const date = new Date(millis);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 export function addDays(dateISO: string, days: number): string {
   const date = parseLocalDate(dateISO);
   date.setDate(date.getDate() + days);

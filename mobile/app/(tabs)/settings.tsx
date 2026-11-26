@@ -91,7 +91,7 @@ export default function SettingsScreen() {
 }
 
 function dataSummary(store: ReturnType<typeof useStore>): string[] {
-  const imports = "Import history · Apple Health · Export";
+  const imports = "Setup · Import · Export";
   if (store.mode !== "account") return ["Sample preview · sign in to sync", imports];
   if (store.syncError) return ["Sync needs attention · tap to retry", imports];
   if (store.syncing) return ["Syncing now", imports];

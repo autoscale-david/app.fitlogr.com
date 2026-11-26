@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { ActivityIndicator, Alert, Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { SyncStatusBanner } from "../../components/AccountBanners";
-import { HealthSyncCard } from "../../components/HealthSyncCard";
 import { ImportHistoryCard } from "../../components/ImportHistoryCard";
 import { DetailScreen, ui } from "../../components/settingsUi";
 import { useStore } from "../../services/store";
@@ -25,7 +24,6 @@ export default function MyDataScreen() {
         onRetry={() => void store.sync(true)}
       />
       <ImportHistoryCard signedIn={signedIn} />
-      <HealthSyncCard connection={store.health} syncing={store.syncing} onSync={() => void store.syncHealth()} />
 
       <View style={ui.card}>
         <Text style={ui.cardTitle}>Data & privacy</Text>

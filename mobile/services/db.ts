@@ -13,7 +13,7 @@ import {
   type UnitSystem,
 } from "@fitlogr/shared";
 import { LB_PER_KG } from "../theme";
-import { addDays, atLocalTime, localDateISO } from "./dates";
+import { addDays, atLocalTime, calendarDay, localDateISO } from "./dates";
 
 export interface Goals {
   unitSystem: UnitSystem;
@@ -258,28 +258,29 @@ export async function writeGoals(db: SQLiteDatabase, goals: Goals, options: { se
 }
 
 export async function loadDay(db: SQLiteDatabase, localDate: string): Promise<DayLog> {
+  const day = calendarDay(localDate) || localDate;
   const meals = await db.getAllAsync<MealRecord>(
-    `SELECT id, local_date as localDate, name, eaten_at as eatenAt, calories_kcal as caloriesKcal,
+    `SELECT id, substr(local_date, 1, 10) as localDate, name, eaten_at as eatenAt, calories_kcal as caloriesKcal,
             protein_g as proteinG, carbs_g as carbsG, fat_g as fatG, badge, photo_id as photoId
-     FROM meals WHERE local_date = ? ORDER BY eaten_at`,
-    localDate,
+     FROM meals WHERE substr(local_date, 1, 10) = ? ORDER BY eaten_at`,
+    day,
   );
   const workouts = await db.getAllAsync<WorkoutRecord>(
-    `SELECT id, local_date as localDate, name, start_time as startTime, calories_kcal as caloriesKcal,
+    `SELECT id, substr(local_date, 1, 10) as localDate, name, start_time as startTime, calories_kcal as caloriesKcal,
             duration_min as durationMin, source
-     FROM workouts WHERE local_date = ? ORDER BY start_time`,
-    localDate,
+     FROM workouts WHERE substr(local_date, 1, 10) = ? ORDER BY start_time`,
+    day,
   );
   const weight = await db.getFirstAsync<{ weight_kg: number }>(
-    "SELECT weight_kg FROM weights WHERE local_date <= ? ORDER BY local_date DESC LIMIT 1",
-    localDate,
+    "SELECT weight_kg FROM weights WHERE substr(local_date, 1, 10) <= ? ORDER BY local_date DESC LIMIT 1",
+    day,
   );
   const activity = await db.getFirstAsync<{
     active_kcal: number | null;
     resting_kcal: number | null;
     steps: number | null;
     avg_hr: number | null;
-  }>("SELECT active_kcal, resting_kcal, steps, avg_hr FROM daily_activity WHERE local_date = ?", localDate);
+  }>("SELECT active_kcal, resting_kcal, steps, avg_hr FROM daily_activity WHERE substr(local_date, 1, 10) = ?", day);
   const workoutKcal = workouts.reduce((sum, workout) => sum + workout.caloriesKcal, 0);
   // A daily active-energy total already includes workout calories. Workouts fill in only when that total is absent.
   const energy = dailyCalorieExpenditure({
@@ -299,7 +300,7 @@ export async function loadDay(db: SQLiteDatabase, localDate: string): Promise<Da
     restingBurnedKcal: energy.restingCaloriesKcal,
     steps: activity?.steps ?? null,
     heartRateBpm: activity?.avg_hr ?? null,
-    planSnapshot: await readPlanSnapshot(db, localDate),
+    planSnapshot: await readPlanSnapshot(db, day),
   };
 }
 
@@ -341,14 +342,14 @@ export async function sealPlanSnapshots(db: SQLiteDatabase, goals: Goals, today 
 /** Intake, burn, and stored plan per date for the week strip. "Logged" means at least one meal. */
 export async function loadWeekStatus(db: SQLiteDatabase, from: string, to: string): Promise<Record<string, WeekDayStatus>> {
   const meals = await db.getAllAsync<{ local_date: string; eaten: number; n: number }>(
-    `SELECT local_date, SUM(calories_kcal) AS eaten, COUNT(*) AS n FROM meals
-     WHERE local_date >= ? AND local_date <= ? GROUP BY local_date`,
+    `SELECT substr(local_date, 1, 10) AS local_date, SUM(calories_kcal) AS eaten, COUNT(*) AS n FROM meals
+     WHERE substr(local_date, 1, 10) >= ? AND substr(local_date, 1, 10) <= ? GROUP BY substr(local_date, 1, 10)`,
     from,
     to,
   );
   const workouts = await db.getAllAsync<{ local_date: string; kcal: number }>(
-    `SELECT local_date, SUM(calories_kcal) AS kcal FROM workouts
-     WHERE local_date >= ? AND local_date <= ? GROUP BY local_date`,
+    `SELECT substr(local_date, 1, 10) AS local_date, SUM(calories_kcal) AS kcal FROM workouts
+     WHERE substr(local_date, 1, 10) >= ? AND substr(local_date, 1, 10) <= ? GROUP BY substr(local_date, 1, 10)`,
     from,
     to,
   );
@@ -602,6 +603,7 @@ export async function readMealItems(db: SQLiteDatabase, mealId: string): Promise
 
 export async function writeMeal(db: SQLiteDatabase, meal: MealRecord, pendingCreate: boolean): Promise<void> {
   const updatedAt = new Date().toISOString();
+  const day = calendarDay(meal.localDate) || meal.localDate;
   await db.runAsync(
     `INSERT INTO meals (
        id, local_date, name, eaten_at, calories_kcal, protein_g, carbs_g, fat_g, badge,
@@ -620,7 +622,7 @@ export async function writeMeal(db: SQLiteDatabase, meal: MealRecord, pendingCre
        updated_at = excluded.updated_at,
        pending_create = excluded.pending_create`,
     meal.id,
-    meal.localDate,
+    day,
     meal.name,
     meal.eatenAt,
     meal.caloriesKcal,
@@ -639,6 +641,7 @@ export async function writeServerMeal(
   meal: MealRecord & { mealType?: string; timezone?: string; isUserEdited?: boolean; updatedAt?: string },
 ): Promise<void> {
   const updatedAt = meal.updatedAt || new Date().toISOString();
+  const day = calendarDay(meal.localDate) || meal.localDate;
   await db.runAsync(
     `INSERT INTO meals (
        id, local_date, name, eaten_at, calories_kcal, protein_g, carbs_g, fat_g, badge,
@@ -660,7 +663,7 @@ export async function writeServerMeal(
        pending_create = 0,
        photo_id = excluded.photo_id`,
     meal.id,
-    meal.localDate,
+    day,
     meal.name,
     meal.eatenAt,
     meal.caloriesKcal,

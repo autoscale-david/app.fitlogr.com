@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { Stack, router, useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { formatHeading, localDateISO } from "../services/dates";
 import { useStore } from "../services/store";
@@ -9,8 +9,9 @@ import { colors, LB_PER_KG } from "../theme";
 export default function WeightScreen() {
   const insets = useSafeAreaInsets();
   const store = useStore();
-  const params = useLocalSearchParams<{ date?: string }>();
-  const date = params.date || localDateISO();
+  const params = useLocalSearchParams<{ date?: string | string[] }>();
+  const rawDate = Array.isArray(params.date) ? params.date[0] : params.date;
+  const date = rawDate && /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : localDateISO();
   const metric = store.goals?.unitSystem === "metric";
   const unit = metric ? "kg" : "lb";
   const [value, setValue] = useState("");
@@ -43,7 +44,6 @@ export default function WeightScreen() {
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top + 12 }]}>
-      <Stack.Screen options={{ presentation: "modal", headerShown: false }} />
       <View style={styles.header}>
         <View style={styles.headerText}>
           <Text style={styles.title}>Log weight</Text>

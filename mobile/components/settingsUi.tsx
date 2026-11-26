@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { router, Stack } from "expo-router";
+import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors } from "../theme";
 
@@ -40,7 +40,6 @@ export function DetailScreen({ title, children }: { title: string; children: Rea
   const insets = useSafeAreaInsets();
   return (
     <View style={styles.screen}>
-      <Stack.Screen options={{ headerShown: false }} />
       <View style={[styles.header, { paddingTop: insets.top + 4 }]}>
         <Pressable
           onPress={() => (router.canGoBack() ? router.back() : router.replace("/settings"))}

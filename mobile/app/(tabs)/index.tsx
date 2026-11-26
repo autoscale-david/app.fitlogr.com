@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
@@ -48,20 +48,25 @@ export default function LogScreen() {
   const [editing, setEditing] = useState<DayKey | null>(null);
   const [endedBanner, setEndedBanner] = useState(false);
   const weekStart = startOfWeek(selected);
+  const storeRef = useRef(store);
+  storeRef.current = store;
 
-  useEffect(() => {
-    if (!store.ready) return;
-    let cancelled = false;
-    Promise.all([store.loadDay(selected), store.loadWeek(weekStart, addDays(weekStart, 6))]).then(([nextDay, nextWeek]) => {
-      if (!cancelled) {
-        setDay(nextDay);
-        setWeek(nextWeek);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [store, selected, weekStart, store.refreshToken, store.ready]);
+  useFocusEffect(
+    useCallback(() => {
+      const current = storeRef.current;
+      if (!current.ready) return;
+      let cancelled = false;
+      Promise.all([current.loadDay(selected), current.loadWeek(weekStart, addDays(weekStart, 6))]).then(([nextDay, nextWeek]) => {
+        if (!cancelled) {
+          setDay(nextDay);
+          setWeek(nextWeek);
+        }
+      });
+      return () => {
+        cancelled = true;
+      };
+    }, [selected, weekStart, store.ready, store.refreshToken]),
+  );
 
   const plan = store.goals?.plan ?? null;
   useFocusEffect(
@@ -276,8 +281,6 @@ export default function LogScreen() {
             />
           ) : null}
 
-          <MealPhotoPicker onManual={() => router.push({ pathname: "/meal/[id]", params: { id: "new", date: selected } })} />
-
           <Text style={styles.section}>{selected === today ? "TODAY'S LOG" : "LOG"}</Text>
           {entries.length === 0 ? (
             <View style={styles.emptyCard}>
@@ -295,6 +298,7 @@ export default function LogScreen() {
               ),
             )
           )}
+          <MealPhotoPicker onManual={() => router.push({ pathname: "/meal/[id]", params: { id: "new", date: selected } })} />
         </>
       )}
       {goals ? (

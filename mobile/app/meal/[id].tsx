@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { Stack, router, useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Crypto from "expo-crypto";
 import { round1 } from "@fitlogr/shared";
@@ -27,8 +27,10 @@ interface ItemDraft {
 export default function MealScreen() {
   const insets = useSafeAreaInsets();
   const store = useStore();
-  const params = useLocalSearchParams<{ id: string; date?: string }>();
-  const creating = params.id === "new";
+  const params = useLocalSearchParams<{ id: string | string[]; date?: string | string[] }>();
+  const mealId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const rawDate = Array.isArray(params.date) ? params.date[0] : params.date;
+  const creating = mealId === "new";
   const [name, setName] = useState("");
   const [calories, setCalories] = useState("");
   const [protein, setProtein] = useState("");
@@ -40,13 +42,13 @@ export default function MealScreen() {
   const [aiMeal, setAiMeal] = useState(false);
   const [pendingCreate, setPendingCreate] = useState(creating);
   const [ready, setReady] = useState(creating);
-  const [localDate, setLocalDate] = useState(params.date || localDateISO());
+  const [localDate, setLocalDate] = useState(rawDate && /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : localDateISO());
   const [eatenAt, setEatenAt] = useState<string | null>(null);
 
   useEffect(() => {
-    if (creating || !params.id) return;
+    if (creating || !mealId) return;
     let cancelled = false;
-    void store.readMeal(params.id).then((meal) => {
+    void store.readMeal(mealId).then((meal) => {
       if (cancelled || !meal) return;
       setName(meal.name);
       setCalories(String(meal.caloriesKcal));
@@ -66,7 +68,7 @@ export default function MealScreen() {
     };
     // Load once. `store` changes identity as sync state updates and must not reset the form.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [creating, params.id]);
+  }, [creating, mealId]);
 
   const itemTotals = items.reduce(
     (sum, item) => ({
@@ -103,7 +105,7 @@ export default function MealScreen() {
           }))
         : undefined;
     const meal: MealRecord = {
-      id: creating ? randomUuid(await Crypto.getRandomBytesAsync(16)) : params.id,
+      id: creating ? randomUuid(await Crypto.getRandomBytesAsync(16)) : mealId,
       localDate,
       name: name.trim() || "Meal",
       eatenAt: eatenAt ?? atLocalTime(localDate, new Date().getHours(), new Date().getMinutes()),
@@ -135,7 +137,7 @@ export default function MealScreen() {
           text: excluding ? "Exclude" : "Delete",
           style: "destructive",
           onPress: () => {
-            void store.deleteMeal(params.id, pendingCreate, photoId).then(() => router.back());
+            void store.deleteMeal(mealId, pendingCreate, photoId).then(() => router.back());
           },
         },
       ],
@@ -149,7 +151,6 @@ export default function MealScreen() {
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode="on-drag"
     >
-      <Stack.Screen options={{ presentation: "modal", headerShown: false }} />
       <View style={styles.header}>
         <View style={styles.headerText}>
           <Text style={styles.title}>{creating ? "Add meal" : "Edit meal"}</Text>

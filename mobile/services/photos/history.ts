@@ -1,7 +1,7 @@
 import Constants, { ExecutionEnvironment } from "expo-constants";
 import { AssetField, MediaSubtype, MediaType, Query, getPermissionsAsync, requestPermissionsAsync } from "expo-media-library";
 import type { SQLiteDatabase } from "expo-sqlite";
-import { localDateISO } from "../dates";
+import { localDateISO, timestampToDate } from "../dates";
 import { prepareMealImage } from "./prepare";
 import { importPreparedPhoto } from "./upload";
 
@@ -35,7 +35,7 @@ export async function scanMealPhotosFromPastDays(
   if (Constants.executionEnvironment === ExecutionEnvironment.StoreClient) {
     return { ...progress, status: "unavailable", capped: false, message: EXPO_GO_MESSAGE };
   }
-  const days = Math.min(180, Math.max(1, Math.round(options.days)));
+  const days = Math.min(365, Math.max(1, Math.round(options.days)));
   const cap = options.maxPhotosPerRun ?? 100;
   try {
     const current = await getPermissionsAsync(false, ["photo"]);
@@ -52,55 +52,59 @@ export async function scanMealPhotosFromPastDays(
     let offset = 0;
     let capped = false;
     let unseen = 0;
-    while (unseen < cap) {
+    let reachedOlder = false;
+    while (unseen < cap && !reachedOlder) {
       if (options.signal?.aborted) return { ...progress, status: "cancelled", capped, message: "Import cancelled." };
+      // Keep the date window in JS. A native creation-time predicate that disagrees
+      // on seconds versus milliseconds matches no photos, so the import saves nothing.
       const assets = await new Query()
         .eq(AssetField.MEDIA_TYPE, MediaType.IMAGE)
-        .gte(AssetField.CREATION_TIME, cutoff)
         .orderBy({ key: AssetField.CREATION_TIME, ascending: false })
         .limit(40)
         .offset(offset)
         .exe();
       if (assets.length === 0) break;
       offset += assets.length;
-      for (let index = 0; index < assets.length && unseen < cap; index += 2) {
+      for (const asset of assets) {
         if (options.signal?.aborted) return { ...progress, status: "cancelled", capped, message: "Import cancelled." };
-        const pair = assets.slice(index, index + 2);
-        await Promise.all(pair.map(async (asset) => {
-          if (unseen >= cap) return;
-          const info = await asset.getInfo();
-          progress.scanned += 1;
-          if (info.mediaSubtypes?.includes(MediaSubtype.SCREENSHOT) || /screenshot/i.test(info.filename)) {
-            progress.skipped += 1;
-            options.onProgress?.({ ...progress });
-            return;
-          }
-          const captured = captureDate(info.creationTime);
-          if (!captured || captured.getTime() < cutoff) {
-            progress.skipped += 1;
-            options.onProgress?.({ ...progress });
-            return;
-          }
-          unseen += 1;
-          try {
-            const uri = info.uri || (await asset.getUri());
-            const prepared = await prepareMealImage(uri);
-            const result = await importPreparedPhoto(db, prepared, {
-              capturedAt: captured.toISOString(),
-              localDate: localDateISO(captured),
-              source: "device_library",
-              assetId: info.id,
-            });
-            if (result.message.startsWith("Logged")) progress.meals += 1;
-            else if (result.message.includes("already") || result.message.includes("skipped")) progress.skipped += 1;
-            else if (result.message.includes("doesn't look like a meal")) progress.nonMeals += 1;
-            else if (result.message.includes("offline") || result.message.includes("could not")) progress.errors += 1;
-            else progress.skipped += 1;
-          } catch {
-            progress.errors += 1;
-          }
+        if (unseen >= cap) break;
+        const info = await asset.getInfo();
+        const captured = timestampToDate(info.creationTime) ?? timestampToDate(await asset.getCreationTime());
+        if (captured && captured.getTime() < cutoff) {
+          reachedOlder = true;
+          break;
+        }
+        progress.scanned += 1;
+        const filename = typeof info.filename === "string" ? info.filename : "";
+        if (info.mediaSubtypes?.includes(MediaSubtype.SCREENSHOT) || /screenshot/i.test(filename)) {
+          progress.skipped += 1;
           options.onProgress?.({ ...progress });
-        }));
+          continue;
+        }
+        if (!captured) {
+          progress.skipped += 1;
+          options.onProgress?.({ ...progress });
+          continue;
+        }
+        unseen += 1;
+        try {
+          const uri = info.uri || (await asset.getUri());
+          const prepared = await prepareMealImage(uri);
+          const result = await importPreparedPhoto(db, prepared, {
+            capturedAt: captured.toISOString(),
+            localDate: localDateISO(captured),
+            source: "device_library",
+            assetId: info.id,
+          });
+          if (result.message.startsWith("Logged")) progress.meals += 1;
+          else if (result.message.includes("already") || result.message.includes("skipped")) progress.skipped += 1;
+          else if (result.message.includes("doesn't look like a meal")) progress.nonMeals += 1;
+          else if (result.message.includes("offline") || result.message.includes("could not")) progress.errors += 1;
+          else progress.skipped += 1;
+        } catch {
+          progress.errors += 1;
+        }
+        options.onProgress?.({ ...progress });
       }
       if (unseen >= cap) capped = true;
     }
@@ -115,9 +119,3 @@ export async function scanMealPhotosFromPastDays(
   }
 }
 
-function captureDate(creationTime: number | null): Date | null {
-  if (creationTime == null || !Number.isFinite(creationTime) || creationTime <= 0) return null;
-  const millis = creationTime > 1e12 ? creationTime : creationTime * 1000;
-  const date = new Date(millis);
-  return Number.isNaN(date.getTime()) ? null : date;
-}

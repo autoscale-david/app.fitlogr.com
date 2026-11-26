@@ -9,27 +9,30 @@ export interface HealthBackfillResult {
   status: "imported" | "unavailable" | "denied" | "empty";
   days: number;
   records: number;
+  workouts: number;
   message: string;
 }
 
 export async function syncHealthHistory(db: SQLiteDatabase, days: number): Promise<HealthBackfillResult> {
   const provider = getHealthProvider();
-  const window = Math.min(180, Math.max(1, Math.round(days)));
+  const window = Math.min(365, Math.max(1, Math.round(days)));
   if (provider.id !== "healthkit") {
     return {
       status: "unavailable",
       days: window,
       records: 0,
+      workouts: 0,
       message: "Apple Health history import runs in the native iOS preview build. Expo Go does not include HealthKit.",
     };
   }
   const permission = await provider.requestPermissions();
   if (permission !== "authorized") {
-    return { status: "denied", days: window, records: 0, message: "Apple Health access is off. Enable weight, calories, steps, and workouts." };
+    return { status: "denied", days: window, records: 0, workouts: 0, message: "Apple Health access is off. Enable weight, calories, steps, and workouts." };
   }
   const batch = await provider.syncHistory(window);
+  const workouts = batch.records.filter((record) => record.record_type === "workout").length;
   if (batch.records.length === 0) {
-    return { status: "empty", days: window, records: 0, message: `No Apple Health samples in the last ${window} days.` };
+    return { status: "empty", days: window, records: 0, workouts: 0, message: `No Apple Health samples in the last ${window} days.` };
   }
   const id = await deviceId();
   const chunks = chunkByLocalDate(batch.records, 14).flatMap((chunk) => splitPayload(chunk, 200));
@@ -42,6 +45,7 @@ export async function syncHealthHistory(db: SQLiteDatabase, days: number): Promi
     status: "imported",
     days: window,
     records: batch.records.length,
+    workouts,
     message: `Imported ${batch.records.length} Apple Health records from the last ${window} days.`,
   };
 }

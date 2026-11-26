@@ -83,7 +83,7 @@ interface Store {
   scanMealPhotos: (announceEmpty?: boolean) => Promise<string>;
   grantPickerAccess: () => Promise<void>;
   scanHistory: (days: number, onProgress: (progress: HistoryProgress) => void, signal: AbortSignal) => Promise<HistoryScanResult>;
-  importHealthHistory: (days: number) => Promise<string>;
+  importHealthHistory: (days: number) => Promise<{ message: string; total: number; workouts: number }>;
 }
 
 const StoreContext = createContext<Store | null>(null);
@@ -461,13 +461,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (!db || mode !== "account") return "Sign in with Google before analyzing a meal photo.";
         const prepared = await prepareMealImage(uri);
         const result = await importPreparedPhoto(db, prepared, { ...capturedToday(), source: "manual" });
-        setRefreshToken((token) => token + 1);
         if (result.reconnect) {
           setSyncError(result.message);
           await writeSetting(db, "google_status", "revoked");
           setGoogleReconnectRequired(true);
         }
-        void sync(db, true);
+        try {
+          await sync(db, true);
+        } finally {
+          // Sync's own refresh can be cancelled by a later store tick. Bump again so the Log reloads today's meal.
+          setRefreshToken((token) => token + 1);
+        }
         return result.message;
       },
       scanHistory: async (days, onProgress, signal) => {
@@ -484,14 +488,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           };
         }
         const result = await scanMealPhotosFromPastDays(db, { days, onProgress, signal });
-        setRefreshToken((token) => token + 1);
+        try {
+          await sync(db, true);
+        } finally {
+          setRefreshToken((token) => token + 1);
+        }
         return result;
       },
       importHealthHistory: async (days) => {
-        if (!db || mode !== "account") return "Sign in with Google before importing Apple Health.";
+        if (!db || mode !== "account") return { message: "Sign in with Google before importing Apple Health.", total: 0, workouts: 0 };
         const result = await syncHealthHistory(db, days);
         setRefreshToken((token) => token + 1);
-        return result.message;
+        return { message: result.message, total: result.records, workouts: result.workouts };
       },
       scanMealPhotos: async (announceEmpty = false) => {
         if (!db || mode !== "account" || !photoConsent) return "";

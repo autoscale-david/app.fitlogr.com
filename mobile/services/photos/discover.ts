@@ -1,6 +1,6 @@
 import { AssetField, MediaSubtype, MediaType, Query, getPermissionsAsync, requestPermissionsAsync } from "expo-media-library";
 import type { SQLiteDatabase } from "expo-sqlite";
-import { localDateISO } from "../dates";
+import { localDateISO, timestampToDate } from "../dates";
 import { prepareMealImage } from "./prepare";
 import { importPreparedPhoto } from "./upload";
 
@@ -40,7 +40,7 @@ export async function scanRecentPhotos(db: SQLiteDatabase): Promise<ScanResult> 
       const info = await asset.getInfo();
       if (info.mediaSubtypes?.includes(MediaSubtype.SCREENSHOT)) continue;
       if (/screenshot/i.test(info.filename)) continue;
-      const captured = captureDate(info.creationTime);
+      const captured = timestampToDate(info.creationTime) ?? timestampToDate(await asset.getCreationTime());
       if (captured && captured.getTime() < oldest) continue;
       const seen = await db.getFirstAsync<{ scan_status: string }>(
         "SELECT scan_status FROM local_media_assets WHERE local_asset_id = ?",
@@ -95,9 +95,3 @@ export async function retryPendingPhotos(db: SQLiteDatabase): Promise<number> {
   return imported;
 }
 
-function captureDate(creationTime: number | null): Date | null {
-  if (creationTime == null || !Number.isFinite(creationTime) || creationTime <= 0) return null;
-  const millis = creationTime > 1e12 ? creationTime : creationTime * 1000;
-  const date = new Date(millis);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
