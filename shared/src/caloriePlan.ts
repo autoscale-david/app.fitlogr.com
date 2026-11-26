@@ -36,7 +36,7 @@ export const PLAN_LIMITS = {
   maintenanceMax: 6000,
   amountMin: 50,
   amountMax: 1000,
-  amountStep: 50,
+  amountStep: 100,
   amountDefault: 500,
   cycleMin: 2,
   cycleMax: 28,
@@ -47,10 +47,10 @@ export const PLAN_LIMITS = {
   fastAllowanceMin: 0,
   fastAllowanceMax: 200,
   fastAllowanceDefault: 0,
-  /** Target Burn is 0 (none) or 50-2000 in steps of 50. */
+  /** Target Burn is 0 (none) or 50-2000; editor steppers move by 100. */
   burnMin: 50,
   burnMax: 2000,
-  burnStep: 50,
+  burnStep: 100,
   burnDefault: 0,
   lowIntakeKcal: 1200,
 } as const;
@@ -71,7 +71,7 @@ export const DAY_PLAN_TYPES: readonly DayPlanType[] = ["deficit", "maintain", "s
 /** Editor picker labels; days are described relative to the maintenance baseline. */
 export const DAY_PLAN_TYPE_LABELS: Record<DayPlanType, string> = {
   deficit: "Below",
-  maintain: "At baseline",
+  maintain: "Maintain",
   surplus: "Above",
   fast: "Fast",
 };
@@ -643,6 +643,21 @@ export function dayTargetLine(day: DayPlan, maintenanceCalories: number, fastAll
   if (day.type === "fast") return `Target: ${target} kcal`;
   const burn = targetBurnOf(day);
   return burn > 0 ? `${target} to eat if you burn ${formatKcal(burn)}.` : `Target: ${target} kcal + workout burn`;
+}
+
+/**
+ * Day-editor summary primary line: net intake plus any workout burn, or the resolved
+ * consumption target once a workout target is set.
+ */
+export function dayEditorSummaryPrimary(day: DayPlan, maintenanceCalories: number, fastAllowanceKcal: number): string {
+  if (day.type === "fast") {
+    return `${formatKcal(dayTarget(day, maintenanceCalories, fastAllowanceKcal))} kcal`;
+  }
+  const burn = targetBurnOf(day);
+  if (burn > 0) {
+    return `${formatKcal(dayTarget(day, maintenanceCalories, fastAllowanceKcal))} kcal`;
+  }
+  return `${formatKcal(netTarget(day, maintenanceCalories, fastAllowanceKcal))} kcal + workout burn`;
 }
 
 export const LOW_INTAKE_NOTE = "This is a very low intake day.";

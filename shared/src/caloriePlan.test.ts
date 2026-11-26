@@ -18,6 +18,7 @@ import {
   cycleDateLabels,
   cycleFooter,
   dayDotStatus,
+  dayEditorSummaryPrimary,
   dayEditorTitle,
   dayKeyFor,
   dayPlanHelper,
@@ -477,11 +478,15 @@ describe("editor copy and limits", () => {
     expect(dayPlanHelper(surplus(500), 100)).toBe("Counts as met within ±100 kcal of 500 kcal above baseline.");
     expect(dayPlanHelper(FAST, 100)).toBe("No calories planned. Workout burn isn't added back on fast days.");
     expect(dayTargetLine(deficit(500), 1900, 0)).toBe("Target: 1400 kcal + workout burn");
+    expect(dayEditorSummaryPrimary(deficit(500), 2000, 0)).toBe("1500 kcal + workout burn");
+    expect(dayEditorSummaryPrimary(withTargetBurn(deficit(500), 500), 2000, 0)).toBe("2000 kcal");
+    expect(dayEditorSummaryPrimary(MAINTAIN, 2000, 0)).toBe("2000 kcal + workout burn");
+    expect(dayEditorSummaryPrimary(FAST, 2000, 0)).toBe("0 kcal");
     expect(planPillLabel(snapshotForDate(customExample(), "2026-11-25"))).toBe("Day 2 of 3 · Fast");
   });
 
-  it("steps amounts by 50 within 50-1000 and caps deficits at maintenance", () => {
-    expect(stepAmount("deficit", 500, 1, 1900)).toBe(550);
+  it("steps amounts by 100 within 50-1000 and caps deficits at maintenance", () => {
+    expect(stepAmount("deficit", 500, 1, 1900)).toBe(600);
     expect(stepAmount("deficit", 520, -1, 1900)).toBe(500);
     expect(stepAmount("deficit", 50, -1, 1900)).toBe(50);
     expect(stepAmount("surplus", 1000, 1, 1900)).toBe(1000);
@@ -529,7 +534,7 @@ describe("Target Net and Target Burn", () => {
     expect(dayPlanLabel(withTargetBurn(surplus(500), 200))).toBe("500 kcal above baseline · burn 200+");
     expect(dayPlanLabel(withTargetBurn(surplus(1000), 1000))).toBe("1000 kcal above baseline · burn 1000+");
     expect(dayPlanLabel(FAST)).toBe("Fast");
-    expect(Object.values(DAY_PLAN_TYPE_LABELS)).toEqual(["Below", "At baseline", "Above", "Fast"]);
+    expect(Object.values(DAY_PLAN_TYPE_LABELS)).toEqual(["Below", "Maintain", "Above", "Fast"]);
     const copy = [
       ...[maintainBurn(500), MAINTAIN, deficit(500), surplus(500), FAST].flatMap((day) => [dayPlanLabel(day), dayPlanHelper(day, 100), dayTargetLine(day, 2000, 0)]),
       ...Object.values(DAY_PLAN_TYPE_LABELS),
@@ -615,12 +620,12 @@ describe("Target Net and Target Burn", () => {
     expect(isLowIntakeDay(withTargetBurn(deficit(700), 500), 1900)).toBe(false);
   });
 
-  it("steps and clamps the burn: 0, then 50-2000 in 50s", () => {
-    expect(stepTargetBurn(0, 1)).toBe(50);
+  it("steps and clamps the burn: 0, then 50-2000, steppers by 100", () => {
+    expect(stepTargetBurn(0, 1)).toBe(100);
     expect(stepTargetBurn(50, -1)).toBe(0);
     expect(stepTargetBurn(0, -1)).toBe(0);
     expect(stepTargetBurn(480, 1)).toBe(500);
-    expect(stepTargetBurn(480, -1)).toBe(450);
+    expect(stepTargetBurn(480, -1)).toBe(400);
     expect(stepTargetBurn(1950, 1)).toBe(2000);
     expect(stepTargetBurn(2000, 1)).toBe(2000);
     expect(clampTargetBurn(30)).toBe(50);
