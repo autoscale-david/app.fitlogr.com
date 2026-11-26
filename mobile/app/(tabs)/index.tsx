@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
@@ -51,22 +51,22 @@ export default function LogScreen() {
   const storeRef = useRef(store);
   storeRef.current = store;
 
-  useFocusEffect(
-    useCallback(() => {
-      const current = storeRef.current;
-      if (!current.ready) return;
-      let cancelled = false;
-      Promise.all([current.loadDay(selected), current.loadWeek(weekStart, addDays(weekStart, 6))]).then(([nextDay, nextWeek]) => {
-        if (!cancelled) {
-          setDay(nextDay);
-          setWeek(nextWeek);
-        }
-      });
-      return () => {
-        cancelled = true;
-      };
-    }, [selected, weekStart, store.ready, store.refreshToken]),
-  );
+  useEffect(() => {
+    const current = storeRef.current;
+    if (!current.ready) return;
+    let cancelled = false;
+    // Runs even while the photo picker has this screen unfocused, so a finished pick is not dropped.
+    void current.scanMealPhotos();
+    Promise.all([current.loadDay(selected), current.loadWeek(weekStart, addDays(weekStart, 6))]).then(([nextDay, nextWeek]) => {
+      if (!cancelled) {
+        setDay(nextDay);
+        setWeek(nextWeek);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected, weekStart, store.ready, store.refreshToken]);
 
   const plan = store.goals?.plan ?? null;
   useFocusEffect(

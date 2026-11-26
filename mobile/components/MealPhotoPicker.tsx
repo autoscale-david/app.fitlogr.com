@@ -1,16 +1,15 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { requestCameraPermissionsAsync, requestMediaLibraryPermissionsAsync, launchCameraAsync, launchImageLibraryAsync } from "expo-image-picker";
+import { localCaptureFromExif } from "@fitlogr/shared";
 import { MealPhotoConsent } from "./MealPhotoConsent";
 import { isExpoGo } from "../services/expoGo";
 import { useStore } from "../services/store";
 import { colors } from "../theme";
 
 type PhotoAction = "camera" | "library" | "scan";
-
-let scannedThisSession = false;
 
 /** Log screen actions: analyze a meal photo, take one, or enter a meal by hand. */
 export function MealPhotoPicker({ onManual }: { onManual: () => void }) {
@@ -20,16 +19,6 @@ export function MealPhotoPicker({ onManual }: { onManual: () => void }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const canScan = !isExpoGo();
-
-  useEffect(() => {
-    if (!canScan || !store.ready || store.mode !== "account" || !store.photoConsent || scannedThisSession) return;
-    scannedThisSession = true;
-    setBusy(true);
-    void store.scanMealPhotos().then((message) => {
-      if (message) setNote(message);
-      setBusy(false);
-    });
-  }, [store, canScan]);
 
   function start(action: PhotoAction) {
     if (store.mode !== "account") {
@@ -55,9 +44,13 @@ export function MealPhotoPicker({ onManual }: { onManual: () => void }) {
         setNote(await store.scanMealPhotos(true));
         return;
       }
-      const uri = await pick(action);
-      if (!uri) return;
-      setNote(await store.addMealPhoto(uri));
+      const picked = await pick(action);
+      if (!picked) {
+        setNote("No photo was selected.");
+        return;
+      }
+      const when = localCaptureFromExif(picked.exif);
+      setNote(await store.addMealPhoto(picked.uri, when));
     } catch (error) {
       setNote(error instanceof Error ? error.message : "The photo could not be analyzed.");
     } finally {
@@ -136,7 +129,7 @@ function Action({
   );
 }
 
-async function pick(action: "camera" | "library"): Promise<string | null> {
+async function pick(action: "camera" | "library"): Promise<{ uri: string; exif: Record<string, unknown> | null } | null> {
   const permission =
     action === "camera" ? await requestCameraPermissionsAsync() : await requestMediaLibraryPermissionsAsync();
   if (!permission.granted) {
@@ -145,10 +138,12 @@ async function pick(action: "camera" | "library"): Promise<string | null> {
   }
   const result =
     action === "camera"
-      ? await launchCameraAsync({ mediaTypes: "images", quality: 1, exif: false })
-      : await launchImageLibraryAsync({ mediaTypes: "images", quality: 1, exif: false });
+      ? await launchCameraAsync({ mediaTypes: ["images"], quality: 1, exif: true })
+      : await launchImageLibraryAsync({ mediaTypes: ["images"], quality: 1, exif: true });
   if (result.canceled) return null;
-  return result.assets[0]?.uri ?? null;
+  const asset = result.assets[0];
+  if (!asset?.uri) return null;
+  return { uri: asset.uri, exif: asset.exif ?? null };
 }
 
 const styles = StyleSheet.create({

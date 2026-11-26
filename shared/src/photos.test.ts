@@ -12,9 +12,25 @@ import {
   dHashFromLuma,
   hammingDistance,
   isConfirmedMeal,
+  localCaptureFromExif,
   matchHash,
   totalsFromVisionItems,
 } from "./photos";
+
+describe("photo capture day", () => {
+  it("uses the EXIF local day, not UTC", () => {
+    const when = localCaptureFromExif({ DateTimeOriginal: "2026:11:26 18:30:00" }, new Date("2026-11-27T02:00:00.000Z"));
+    expect(when.localDate).toBe("2026-11-26");
+    expect(new Date(when.capturedAt).getFullYear()).toBe(2026);
+    expect(new Date(when.capturedAt).getDate()).toBe(26);
+  });
+
+  it("falls back to now when the photo has no capture time", () => {
+    const now = new Date(2026, 10, 26, 13, 5, 0);
+    expect(localCaptureFromExif(null, now).localDate).toBe("2026-11-26");
+    expect(localCaptureFromExif({ DateTimeOriginal: "not a date" }, now).localDate).toBe("2026-11-26");
+  });
+});
 
 describe("photo contracts", () => {
   it("accepts a hash batch and rejects an empty one", () => {

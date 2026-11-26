@@ -16,10 +16,10 @@ export interface ScanResult {
  * Recent camera-roll scan. Native EAS builds can read the library. Expo Go and a denied
  * permission return a message instead of throwing, so Add meal photo still works.
  */
-export async function scanRecentPhotos(db: SQLiteDatabase): Promise<ScanResult> {
+export async function scanRecentPhotos(db: SQLiteDatabase, options?: { ask?: boolean }): Promise<ScanResult> {
   try {
     const current = await getPermissionsAsync(false, ["photo"]);
-    const permission = current.granted ? current : await requestPermissionsAsync(false, ["photo"]);
+    const permission = current.granted || options?.ask === false ? current : await requestPermissionsAsync(false, ["photo"]);
     if (!permission.granted) {
       return {
         status: "permission_denied",

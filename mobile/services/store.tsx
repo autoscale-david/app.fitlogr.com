@@ -36,6 +36,7 @@ import {
 import { clearSession, readSession, saveSession } from "./session";
 import { shareAccountExport } from "./exportAccount";
 import { capturedToday, importPreparedPhoto, prepareMealImage, retryPendingPhotos, scanMealPhotosFromPastDays, scanRecentPhotos, type HistoryProgress, type HistoryScanResult } from "./photos";
+import { isExpoGo } from "./expoGo";
 import { queueMeal, queueMealDelete, queuePhotoExclude, queueSettings, queueWeight, syncAccount } from "./sync";
 
 interface Account {
@@ -78,7 +79,7 @@ interface Store {
   deleteMeal: (id: string, pendingCreate: boolean, photoId?: string | null) => Promise<void>;
   logWeight: (localDate: string, weightKg: number) => Promise<void>;
   acceptPhotoConsent: () => Promise<void>;
-  addMealPhoto: (uri: string) => Promise<string>;
+  addMealPhoto: (uri: string, captured?: { capturedAt: string; localDate: string }) => Promise<string>;
   /** Returns "" when nothing new turned up, unless `announceEmpty` asks for that message too. */
   scanMealPhotos: (announceEmpty?: boolean) => Promise<string>;
   grantPickerAccess: () => Promise<void>;
@@ -88,6 +89,8 @@ interface Store {
 
 const StoreContext = createContext<Store | null>(null);
 let syncChain: Promise<void> = Promise.resolve();
+let lastRecentScanAt = 0;
+const RECENT_SCAN_GAP_MS = 60 * 1000;
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [db, setDb] = useState<SQLiteDatabase | null>(null);
@@ -219,10 +222,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!db) return;
     const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") void sync(db, false);
+      if (state !== "active") return;
+      void sync(db, false);
+      void pickupRecentPhotos(db);
     });
     return () => subscription.remove();
   }, [db]);
+
+  async function pickupRecentPhotos(database: SQLiteDatabase) {
+    if (isExpoGo()) return;
+    if ((await readMode(database)) !== "account") return;
+    if ((await readSetting(database, "ai_photo_consent_version")) !== AI_PHOTO_CONSENT_VERSION) return;
+    if (Date.now() - lastRecentScanAt < RECENT_SCAN_GAP_MS) return;
+    lastRecentScanAt = Date.now();
+    const result = await scanRecentPhotos(database, { ask: false });
+    if (result.imported > 0) {
+      setRefreshToken((token) => token + 1);
+      void sync(database, true);
+    }
+  }
 
   const value = useMemo<Store>(
     () => ({
@@ -460,19 +478,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           await writeSetting(db, "ai_photo_consent_pending", "1");
         }
       },
-      addMealPhoto: async (uri) => {
+      addMealPhoto: async (uri, captured) => {
         if (!db || mode !== "account") return "Sign in with Google before analyzing a meal photo.";
         const prepared = await prepareMealImage(uri);
-        const result = await importPreparedPhoto(db, prepared, { ...capturedToday(), source: "manual" });
+        const when = captured ?? capturedToday();
+        const result = await importPreparedPhoto(db, prepared, { ...when, source: "manual" });
         if (result.reconnect) {
           setSyncError(result.message);
           await writeSetting(db, "google_status", "revoked");
           setGoogleReconnectRequired(true);
         }
+        // The meal is already in the local log. Refresh before sync so a picker blur cannot skip the update.
+        setRefreshToken((token) => token + 1);
         try {
           await sync(db, true);
         } finally {
-          // Sync's own refresh can be cancelled by a later store tick. Bump again so the Log reloads today's meal.
           setRefreshToken((token) => token + 1);
         }
         return result.message;
@@ -506,7 +526,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       },
       scanMealPhotos: async (announceEmpty = false) => {
         if (!db || mode !== "account" || !photoConsent) return "";
-        const result = await scanRecentPhotos(db);
+        if (!announceEmpty && Date.now() - lastRecentScanAt < RECENT_SCAN_GAP_MS) return "";
+        lastRecentScanAt = Date.now();
+        const result = await scanRecentPhotos(db, { ask: announceEmpty });
         if (result.imported > 0) {
           setRefreshToken((token) => token + 1);
           void sync(db, true);

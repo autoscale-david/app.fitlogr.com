@@ -288,6 +288,7 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
                 </Pressable>
               ))}
             </View>
+            <Text style={ui.meta}>These months scan Apple Health and the iPhone photo library.</Text>
             {progress && busy === "apple-photos" ? (
               <Text style={ui.body}>
                 Scanned {progress.scanned}. Meals {progress.meals}. Skipped {progress.skipped}.
@@ -311,8 +312,9 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
             </Pressable>
             {expoGo ? <Text style={ui.meta}>{NATIVE_IMPORT}</Text> : null}
             <Pressable style={ui.secondary} disabled={locked} onPress={() => void importGoogle()} accessibilityRole="button">
-              {busy === "google-photos" ? <ActivityIndicator color={colors.text} /> : <Text style={ui.secondaryText}>Import Google Photos</Text>}
+              {busy === "google-photos" ? <ActivityIndicator color={colors.text} /> : <Text style={ui.secondaryText}>Pick from Google Photos</Text>}
             </Pressable>
+            <Text style={ui.meta}>Google Photos only shares photos you pick. It cannot list your library or limit a session to these months.</Text>
             {note ? <Text style={ui.body}>{note}</Text> : null}
             <Text style={ui.body}>Photos imported: {counts.photos}</Text>
             <Text style={ui.body}>

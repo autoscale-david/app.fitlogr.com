@@ -171,6 +171,46 @@ export const PickerImportSummarySchema = z.object({
 });
 export type PickerImportSummary = z.infer<typeof PickerImportSummarySchema>;
 
+/**
+ * EXIF DateTimeOriginal is local wall time (`YYYY:MM:DD HH:MM:SS`), not UTC.
+ * Missing or unreadable tags fall back to `now` so a photo taken today still lands on today.
+ */
+export function localCaptureFromExif(
+  exif: Record<string, unknown> | null | undefined,
+  now = new Date(),
+): { capturedAt: string; localDate: string } {
+  const raw = exifString(exif, "DateTimeOriginal") ?? exifString(exif, "DateTimeDigitized") ?? exifString(exif, "DateTime");
+  const parsed = raw ? parseExifLocal(raw) : null;
+  if (parsed) return parsed;
+  return { capturedAt: now.toISOString(), localDate: formatLocalDate(now) };
+}
+
+function exifString(exif: Record<string, unknown> | null | undefined, key: string): string | null {
+  const value = exif?.[key];
+  return typeof value === "string" && value.trim() !== "" ? value : null;
+}
+
+function parseExifLocal(raw: string): { capturedAt: string; localDate: string } | null {
+  const match = /^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/.exec(raw.trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 60) return null;
+  const date = new Date(year, month - 1, day, hour, minute, second);
+  if (Number.isNaN(date.getTime()) || date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+  return { capturedAt: date.toISOString(), localDate: `${match[1]}-${match[2]}-${match[3]}` };
+}
+
+function formatLocalDate(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
 export const PhotoExcludeResponseSchema = z.object({
   photo_id: z.string(),
   status: z.literal("excluded"),

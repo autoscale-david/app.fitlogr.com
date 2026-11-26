@@ -82,6 +82,7 @@ export {
   dHashFromLuma,
   hammingDistance,
   isConfirmedMeal,
+  localCaptureFromExif,
   matchHash,
   totalsFromVisionItems,
 } from "./photos";
