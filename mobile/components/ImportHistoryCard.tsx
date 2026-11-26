@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { router, useFocusEffect } from "expo-router";
-import { getPermissionsAsync, requestPermissionsAsync } from "expo-media-library";
+import { getMediaLibraryPermissionsAsync, requestMediaLibraryPermissionsAsync } from "expo-image-picker";
 import { PickerScopeRequired, type HistoryProgress } from "../services/photos";
 import { importFromGooglePhotos } from "../services/photos/picker";
 import { api } from "../services/api";
@@ -18,7 +18,8 @@ const RANGES = [
 
 const APPLE_PHOTOS_SYNCED = "apple_photos_synced_at";
 const GOOGLE_PHOTOS_SYNCED = "google_photos_synced_at";
-const EXPO_GO_NOTE = "Scanning the whole photo library and Apple Health import need the fitlogr iPhone app.";
+const NATIVE_APP = "Needs the fitlogr iPhone app.";
+const NATIVE_IMPORT = "Importing Apple Health and scanning the whole photo library need the fitlogr iPhone app.";
 
 type Busy = "health" | "health-connect" | "apple-photos" | "google-photos" | "apple-sync" | "google-sync" | null;
 
@@ -55,14 +56,7 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
     ]);
     setApplePhotosSynced(appleStamp);
     setGooglePhotosSynced(googleStamp);
-    if (!expoGo) {
-      try {
-        const permission = await getPermissionsAsync(false, ["photo"]);
-        setApplePhotos(permission.granted);
-      } catch {
-        setApplePhotos(false);
-      }
-    }
+    setApplePhotos(await photoLibraryGranted());
     if (current.mode !== "account") {
       setGooglePhotos(false);
       return;
@@ -74,7 +68,7 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
     } catch {
       setGooglePhotos(false);
     }
-  }, [expoGo]);
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -93,25 +87,27 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
     setBusy("health-connect");
     setNote(null);
     try {
-      await store.syncHealth();
+      const connection = await store.syncHealth();
+      if (connection && !connection.connected) setNote(connection.message);
     } finally {
       setBusy(null);
     }
   }
 
   async function connectApplePhotos() {
-    if (expoGo || busy) return;
+    if (busy) return;
     setBusy("apple-sync");
     setNote(null);
     try {
-      const current = await getPermissionsAsync(false, ["photo"]);
-      const permission = current.granted ? current : await requestPermissionsAsync(false, ["photo"]);
+      const current = await getMediaLibraryPermissionsAsync();
+      const permission = current.granted ? current : await requestMediaLibraryPermissionsAsync();
       setApplePhotos(permission.granted);
       if (!permission.granted) {
-        setNote("Photo library access is off.");
+        setNote("Photo library access is off. You can still pick a photo when iOS asks.");
         return;
       }
-      if (store.mode !== "account") return;
+      // Picking photos works here. Scanning the whole library is the import button, and only the iPhone app can do it.
+      if (expoGo || store.mode !== "account") return;
       const message = await store.scanMealPhotos(true);
       await stamp(APPLE_PHOTOS_SYNCED, setApplePhotosSynced);
       if (message) setNote(message);
@@ -222,7 +218,7 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
       );
     } catch (error) {
       if (error instanceof PickerScopeRequired) {
-        Alert.alert("Google Photos", "Allow fitlogr to open the Google Photos picker, then try again.", [
+        Alert.alert("Google Photos", error.message, [
           { text: "Cancel", style: "cancel" },
           {
             text: "Reconnect Google",
@@ -238,6 +234,7 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
   }
 
   const healthConnected = store.health?.connected === true;
+  const healthDetail = expoGo ? NATIVE_APP : healthConnected ? connectedLine(store.health?.lastSyncedAt ?? null) : healthProblem(store.health?.message);
   const locked = busy !== null;
 
   return (
@@ -247,7 +244,7 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
         <SetupRow
           first
           title="Connect Apple Health"
-          detail={healthConnected ? connectedLine(store.health?.lastSyncedAt ?? null) : null}
+          detail={healthDetail}
           disabled={expoGo}
           busy={busy === "health-connect"}
           onPress={() => void connectHealth()}
@@ -255,7 +252,6 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
         <SetupRow
           title="Connect Apple Photos"
           detail={applePhotos ? connectedLine(applePhotosSynced) : null}
-          disabled={expoGo}
           busy={busy === "apple-sync"}
           onPress={() => void connectApplePhotos()}
         />
@@ -265,7 +261,6 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
           busy={busy === "google-sync"}
           onPress={() => void connectGooglePhotos()}
         />
-        {expoGo ? <Text style={ui.meta}>{EXPO_GO_NOTE}</Text> : null}
       </View>
 
       <View style={ui.card}>
@@ -314,10 +309,10 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
             >
               {busy === "apple-photos" ? <ActivityIndicator color={colors.text} /> : <Text style={ui.secondaryText}>Import Apple Photos</Text>}
             </Pressable>
+            {expoGo ? <Text style={ui.meta}>{NATIVE_IMPORT}</Text> : null}
             <Pressable style={ui.secondary} disabled={locked} onPress={() => void importGoogle()} accessibilityRole="button">
               {busy === "google-photos" ? <ActivityIndicator color={colors.text} /> : <Text style={ui.secondaryText}>Import Google Photos</Text>}
             </Pressable>
-            {expoGo ? <Text style={ui.meta}>{EXPO_GO_NOTE}</Text> : null}
             {note ? <Text style={ui.body}>{note}</Text> : null}
             <Text style={ui.body}>Photos imported: {counts.photos}</Text>
             <Text style={ui.body}>
@@ -333,6 +328,20 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
       </View>
     </>
   );
+}
+
+function healthProblem(message: string | undefined): string | null {
+  if (!message || message.startsWith("Connect Apple Health")) return null;
+  return message;
+}
+
+async function photoLibraryGranted(): Promise<boolean> {
+  try {
+    const permission = await getMediaLibraryPermissionsAsync();
+    return permission.granted;
+  } catch {
+    return false;
+  }
 }
 
 function connectedLine(iso: string | null): string {
@@ -361,13 +370,13 @@ function SetupRow({
     <Pressable
       onPress={onPress}
       disabled={disabled || busy}
-      style={[styles.row, !first && styles.rowDivider, disabled && styles.disabled]}
+      style={[styles.row, !first && styles.rowDivider]}
       accessibilityRole="button"
       accessibilityState={{ disabled: Boolean(disabled || busy) }}
       accessibilityLabel={detail ? `${title}. ${detail}` : title}
     >
       <View style={styles.rowBody}>
-        <Text style={styles.rowTitle}>{title}</Text>
+        <Text style={[styles.rowTitle, disabled && styles.rowTitleOff]}>{title}</Text>
         {detail ? <Text style={ui.body}>{detail}</Text> : null}
       </View>
       {busy ? <ActivityIndicator color={colors.green} /> : null}
@@ -385,5 +394,6 @@ const styles = StyleSheet.create({
   rowDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "#2E3338" },
   rowBody: { flex: 1, minWidth: 0 },
   rowTitle: { color: colors.text, fontSize: 15, fontWeight: "700" },
+  rowTitleOff: { color: colors.muted, fontWeight: "600" },
   disabled: { opacity: 0.45 },
 });

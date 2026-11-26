@@ -72,7 +72,7 @@ interface Store {
   signIn: () => Promise<void>;
   signOut: () => Promise<void>;
   sync: (force?: boolean) => Promise<void>;
-  syncHealth: () => Promise<void>;
+  syncHealth: () => Promise<HealthConnection | null>;
   readMeal: (id: string) => Promise<(MealRecord & { pendingCreate: boolean }) | null>;
   saveMeal: (meal: MealRecord, pendingCreate: boolean) => Promise<void>;
   deleteMeal: (id: string, pendingCreate: boolean, photoId?: string | null) => Promise<void>;
@@ -402,7 +402,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return sync(db, force);
       },
       syncHealth: async () => {
-        if (!db) return;
+        if (!db) return null;
         try {
           const provider = getHealthProvider();
           if (provider.id === "healthkit" && (await provider.getPermissionState()) !== "authorized") {
@@ -410,14 +410,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }
         } catch (error) {
           setSyncError(error instanceof Error ? error.message : "Apple Health sync failed");
-          setHealth(await readHealthConnection(db));
-          return;
+          const connection = await readHealthConnection(db);
+          setHealth(connection);
+          return connection;
         }
         if (mode !== "account") {
-          setHealth(await readHealthConnection(db));
-          return;
+          const connection = await readHealthConnection(db);
+          setHealth(connection);
+          return connection;
         }
         await sync(db, true);
+        return readHealthConnection(db);
       },
       readMeal: (id) => {
         if (!db) throw new Error("Database is not open");

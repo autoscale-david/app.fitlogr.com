@@ -33,6 +33,7 @@ let database: D1Database;
 let visionCalls = 0;
 let deletedSessions = 0;
 let mode: "meal" | "not_meal" = "meal";
+let pickerHttp: "ok" | "disabled" = "ok";
 
 const app = createApp({
   fetch: mockFetch,
@@ -44,6 +45,7 @@ beforeEach(() => {
   visionCalls = 0;
   deletedSessions = 0;
   mode = "meal";
+  pickerHttp = "ok";
 });
 
 describe("history import and maintenance", () => {
@@ -215,6 +217,16 @@ describe("history import and maintenance", () => {
       .first<{ n: number }>();
     expect(nonMeal?.n).toBe(1);
   });
+
+  it("names a disabled Photos Picker API instead of a generic failure", async () => {
+    pickerHttp = "disabled";
+    const token = await signIn("user-picker-off", true);
+    const created = await post("/api/photos/picker/sessions", {}, token);
+    expect(created.status).toBe(403);
+    const body = await created.json();
+    expect(body.error.code).toBe("PICKER_API_DISABLED");
+    expect(body.error.message).toContain("photospicker.googleapis.com");
+  });
 });
 
 async function signIn(userId: string, picker = false): Promise<string> {
@@ -279,6 +291,21 @@ function mockFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respon
     return json({ ok: true });
   }
   if (url.endsWith("/v1/sessions") && init?.method === "POST") {
+    if (pickerHttp === "disabled") {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: {
+              code: 403,
+              message: "Photos Picker API has not been used in project 1 before or it is disabled.",
+              status: "PERMISSION_DENIED",
+              details: [{ reason: "SERVICE_DISABLED" }],
+            },
+          }),
+          { status: 403, headers: { "content-type": "application/json" } },
+        ),
+      );
+    }
     return json({
       id: "picker-session-1",
       pickerUri: "https://photos.google.com/picker/session",

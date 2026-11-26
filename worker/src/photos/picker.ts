@@ -155,10 +155,62 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 }
 
 async function readJson(response: Response): Promise<Record<string, unknown>> {
-  if (!response.ok) throw new ApiError(502, "UPSTREAM_ERROR", "Google Photos Picker request failed");
-  const payload = (await response.json()) as unknown;
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) throw explainPickerFailure(response.status, payload);
   if (!payload || typeof payload !== "object") throw new ApiError(502, "UPSTREAM_ERROR", "Google Photos Picker returned an empty response");
   return payload as Record<string, unknown>;
+}
+
+/** Turns a Photos Picker HTTP error into a message that names the cause. */
+export function explainPickerFailure(status: number, payload: unknown): ApiError {
+  const { message, reason } = googleError(payload);
+  const blob = `${reason} ${message}`.toLowerCase();
+  if (
+    reason === "SERVICE_DISABLED" ||
+    reason === "accessNotConfigured" ||
+    blob.includes("photospicker.googleapis.com") ||
+    blob.includes("has not been used") ||
+    blob.includes("api has not been used") ||
+    (blob.includes("disabled") && blob.includes("picker"))
+  ) {
+    return new ApiError(
+      403,
+      "PICKER_API_DISABLED",
+      "Google Photos Picker is not enabled for this Google Cloud project. Enable the Photos Picker API (photospicker.googleapis.com) in Google Cloud Console, then try again.",
+    );
+  }
+  if (reason === "ACCESS_TOKEN_SCOPE_INSUFFICIENT" || blob.includes("insufficient authentication scopes")) {
+    return new ApiError(
+      403,
+      "SCOPE_REQUIRED",
+      "Google Photos Picker needs the photospicker.mediaitems.readonly permission. Reconnect Google Photos and allow it.",
+    );
+  }
+  const detail = clip(message);
+  return new ApiError(502, "UPSTREAM_ERROR", detail ? `Google Photos Picker request failed (${status}). ${detail}` : `Google Photos Picker request failed (${status}).`);
+}
+
+function googleError(payload: unknown): { message: string; reason: string } {
+  if (!payload || typeof payload !== "object") return { message: "", reason: "" };
+  const error = (payload as { error?: unknown }).error;
+  if (!error || typeof error !== "object") return { message: "", reason: "" };
+  const record = error as { message?: unknown; status?: unknown; details?: unknown };
+  const message = typeof record.message === "string" ? record.message : "";
+  let reason = typeof record.status === "string" ? record.status : "";
+  if (Array.isArray(record.details)) {
+    for (const detail of record.details) {
+      if (detail && typeof detail === "object" && typeof (detail as { reason?: unknown }).reason === "string") {
+        reason = (detail as { reason: string }).reason;
+        break;
+      }
+    }
+  }
+  return { message, reason };
+}
+
+function clip(value: string): string {
+  const text = value.replace(/\s+/g, " ").trim();
+  return text.length > 180 ? `${text.slice(0, 177)}...` : text;
 }
 
 function stringField(record: Record<string, unknown> | null, key: string): string | null {

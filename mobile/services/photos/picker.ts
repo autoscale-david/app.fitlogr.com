@@ -3,8 +3,8 @@ import type { PickerImportSummary, PickerSession, PickerStatus } from "@fitlogr/
 import { ApiError, api } from "../api";
 
 export class PickerScopeRequired extends Error {
-  constructor() {
-    super("Google Photos Picker needs another permission.");
+  constructor(message = "Google Photos Picker needs another permission.") {
+    super(message);
     this.name = "PickerScopeRequired";
   }
 }
@@ -14,7 +14,7 @@ export async function importFromGooglePhotos(): Promise<PickerImportSummary> {
   try {
     session = await api.send<PickerSession>("POST", "/photos/picker/sessions", {});
   } catch (error) {
-    if (error instanceof ApiError && error.code === "SCOPE_REQUIRED") throw new PickerScopeRequired();
+    if (error instanceof ApiError && error.code === "SCOPE_REQUIRED") throw new PickerScopeRequired(error.message);
     throw error;
   }
   await WebBrowser.openBrowserAsync(session.picker_uri);
