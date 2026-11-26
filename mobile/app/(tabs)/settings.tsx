@@ -40,6 +40,7 @@ export default function SettingsScreen() {
 
       <GoogleReconnectBanner
         visible={store.googleReconnectRequired}
+        sessionExpired={store.sessionExpired}
         busy={reconnecting}
         onReconnect={() => {
           setReconnecting(true);

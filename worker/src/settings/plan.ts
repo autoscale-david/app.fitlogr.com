@@ -43,7 +43,11 @@ export async function daySnapshot(db: D1Database, userId: string, date: string, 
 
 /** Snapshot JSON for a summary row write, plus the user's today so frozen days stay frozen. */
 export async function snapshotForWrite(db: D1Database, userId: string, date: string, now: Date): Promise<{ json: string; today: string }> {
-  const user = await loadUserPlan(db, userId, now);
+  return snapshotFromPlan(await loadUserPlan(db, userId, now), date);
+}
+
+/** Same as snapshotForWrite, for callers that already loaded the plan (one read for many dates). */
+export function snapshotFromPlan(user: UserPlan, date: string): { json: string; today: string } {
   return { json: JSON.stringify(snapshotForDate(user.plan, date)), today: user.today };
 }
 

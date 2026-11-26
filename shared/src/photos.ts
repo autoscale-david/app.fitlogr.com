@@ -11,11 +11,19 @@ export const PHOTO_LIMITS = {
   maxBatch: 100,
   maxEdgePx: 1280,
   jpegQuality: 0.8,
-  dailyVision: 30,
-  burstVision: 10,
+  /** Rolling 24 h cap on vision calls per user. Sized for a one-time history import, not only daily logging. */
+  dailyVision: 200,
+  burstVision: 30,
   burstWindowMs: 5 * 60 * 1000,
   nearDuplicateDistance: 8,
+  /** A perceptual match only counts as the same meal when the two photos were taken this close together. */
+  nearDuplicateWindowMs: 15 * 60 * 1000,
+  /** Two photos captured this close together are one moment (a burst, or the same photo from another source). */
+  sameMomentMs: 2000,
   mealConfidenceMin: 0.55,
+  /** Picked Google Photos handled per import request, so one request stays inside Worker limits. */
+  pickerPageSize: 5,
+  pickerMaxItems: 50,
 } as const;
 
 export const AI_PHOTO_CONSENT_VERSION = "2026-11-23";
@@ -125,6 +133,8 @@ export const AnalyzePhotoResponseSchema = z.object({
   outcome: z.enum(["meal", "not_meal", "duplicate"]),
   photo: PhotoReferenceSchema,
   meal: MealSchema.nullable(),
+  /** The meal was saved but Google refused the album upload; the app should ask the person to reconnect. */
+  google_reconnect_required: z.boolean().optional(),
 });
 export type AnalyzePhotoResponse = z.infer<typeof AnalyzePhotoResponseSchema>;
 
@@ -162,12 +172,22 @@ export const PickerStatusSchema = z.object({
 });
 export type PickerStatus = z.infer<typeof PickerStatusSchema>;
 
+export const PickerImportRequestSchema = z.object({
+  /** Opaque position from the previous page's `next_cursor`. Omit for the first page. */
+  cursor: z.string().min(1).max(4000).optional(),
+});
+export type PickerImportRequest = z.infer<typeof PickerImportRequestSchema>;
+
 export const PickerImportSummarySchema = z.object({
   total_picked: z.number().int(),
   meals_imported: z.number().int(),
   non_meals_skipped: z.number().int(),
   duplicates_skipped: z.number().int(),
   errors: z.number().int(),
+  /** Send this back to import the next picked photos. Null once every picked photo was handled. */
+  next_cursor: z.string().nullable().optional(),
+  /** Set when photo analysis hit its rate limit; wait this long, then resume with `next_cursor`. */
+  retry_after_seconds: z.number().int().positive().nullable().optional(),
 });
 export type PickerImportSummary = z.infer<typeof PickerImportSummarySchema>;
 
@@ -231,6 +251,7 @@ export interface KnownPhotoHash {
   perceptual_hash: string | null;
   status: string;
   meal_id: string | null;
+  captured_at?: string | null;
 }
 
 export function hammingDistance(left: string, right: string): number {
@@ -292,24 +313,49 @@ export function atwaterWarning(items: readonly MealVisionItem[]): string | null 
   return `Calorie check differs from 4/4/9 for: ${names.join(", ")}`.slice(0, 300);
 }
 
+/**
+ * Exact SHA-256 matches are always duplicates. A perceptual (dHash) match, or a photo with no
+ * usable hash, only counts as the same meal when both photos were taken close together: the same
+ * bowl photographed on two different mornings is two meals.
+ */
 export function matchHash(item: CheckHashItem, known: readonly KnownPhotoHash[]): CheckHashResult {
   const exact = known.find((photo) => photo.content_sha256 === item.content_sha256);
   if (exact) return toHashResult(item.content_sha256, exact, "exact");
+  const capturedAt = timestamp(item.captured_at);
+  if (capturedAt === null) return newResult(item.content_sha256);
   const hash = item.perceptual_hash;
-  if (hash) {
-    let nearest: KnownPhotoHash | null = null;
-    let nearestDistance = PHOTO_LIMITS.nearDuplicateDistance + 1;
-    for (const photo of known) {
-      if (!photo.perceptual_hash) continue;
+  let nearest: KnownPhotoHash | null = null;
+  let nearestScore = Number.POSITIVE_INFINITY;
+  for (const photo of known) {
+    const knownAt = timestamp(photo.captured_at);
+    if (knownAt === null) continue;
+    const gap = Math.abs(knownAt - capturedAt);
+    if (gap > PHOTO_LIMITS.nearDuplicateWindowMs) continue;
+    let score: number | null = null;
+    // Same instant, one side without a dHash: a Google Photos copy of a phone photo. Two photos that both
+    // lack a dHash are not matched by time alone, since a batch upload can give many photos one timestamp.
+    if (gap <= PHOTO_LIMITS.sameMomentMs && !hash !== !photo.perceptual_hash) score = 0;
+    else if (hash && photo.perceptual_hash) {
       const distance = hammingDistance(hash, photo.perceptual_hash);
-      if (distance <= PHOTO_LIMITS.nearDuplicateDistance && distance < nearestDistance) {
-        nearest = photo;
-        nearestDistance = distance;
-      }
+      if (distance <= PHOTO_LIMITS.nearDuplicateDistance) score = distance + 1;
     }
-    if (nearest) return toHashResult(item.content_sha256, nearest, "near");
+    if (score !== null && score < nearestScore) {
+      nearest = photo;
+      nearestScore = score;
+    }
   }
-  return { content_sha256: item.content_sha256, status: "new", photo_id: null, meal_id: null };
+  if (nearest) return toHashResult(item.content_sha256, nearest, "near");
+  return newResult(item.content_sha256);
+}
+
+function newResult(contentSha256: string): CheckHashResult {
+  return { content_sha256: contentSha256, status: "new", photo_id: null, meal_id: null };
+}
+
+function timestamp(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function toHashResult(contentSha256: string, photo: KnownPhotoHash, kind: "exact" | "near"): CheckHashResult {

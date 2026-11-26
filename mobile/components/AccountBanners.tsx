@@ -5,21 +5,27 @@ import { colors } from "../theme";
 export function GoogleReconnectBanner({
   visible,
   busy,
+  sessionExpired,
   onReconnect,
 }: {
   visible: boolean;
   busy?: boolean;
+  /** The fitlogr session ended (not only Google Photos access); the same button signs in again. */
+  sessionExpired?: boolean;
   onReconnect: () => void;
 }) {
-  if (!visible) return null;
+  if (!visible && !sessionExpired) return null;
+  const title = sessionExpired ? "Sign in again" : "Reconnect Google";
   return (
     <View style={[ui.card, styles.banner]}>
-      <Text style={ui.cardTitle}>Reconnect Google</Text>
+      <Text style={ui.cardTitle}>{title}</Text>
       <Text style={ui.body}>
-        Google Photos access was revoked. Your meals stay here. Reconnect to keep saving new photos to your fitlogr album.
+        {sessionExpired
+          ? "Your fitlogr session ended. Everything on this phone is kept, including changes not synced yet. Sign in with the same Google account to sync again."
+          : "Google Photos access was revoked. Your meals stay here. Reconnect to keep saving new photos to your fitlogr album."}
       </Text>
-      <Pressable style={ui.primary} disabled={busy} onPress={onReconnect}>
-        {busy ? <ActivityIndicator color="#062214" /> : <Text style={ui.primaryText}>Reconnect Google</Text>}
+      <Pressable style={ui.primary} disabled={busy} onPress={onReconnect} accessibilityRole="button">
+        {busy ? <ActivityIndicator color="#062214" /> : <Text style={ui.primaryText}>{title}</Text>}
       </Pressable>
     </View>
   );

@@ -1,14 +1,14 @@
-import { PickerImportSummarySchema, dHashFromLuma, type PickerImportSummary } from "@fitlogr/shared";
+import { PHOTO_LIMITS, PickerImportSummarySchema, type PickerImportSummary } from "@fitlogr/shared";
 import { PICKER_SCOPE } from "../config";
+import { base64UrlToJson, jsonToBase64Url } from "../encoding";
 import { ApiError } from "../http";
 import { localDateInTimeZone } from "../review/dates";
 import { googleFetch } from "../google-photos/tokens";
 import type { Env } from "../env";
 import type { AppDeps } from "../types";
-import { analyzeUploadedPhoto } from "./service";
+import { RateLimitError, analyzeUploadedPhoto } from "./service";
 
 const PICKER_API = "https://photospicker.googleapis.com/v1";
-const MAX_IMPORT = 10;
 
 export async function userHasPickerScope(db: D1Database, userId: string): Promise<boolean> {
   const row = await db
@@ -33,7 +33,7 @@ export async function createPickerSession(
   const response = await googleFetch(db, env, userId, deps.fetch, deps.now(), `${PICKER_API}/sessions`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ pickingConfig: { maxItemCount: "100" } }),
+    body: JSON.stringify({ pickingConfig: { maxItemCount: String(PHOTO_LIMITS.pickerMaxItems) } }),
   });
   const payload = await readJson(response);
   const sessionId = stringField(payload, "id");
@@ -63,43 +63,83 @@ export async function pickerSessionStatus(
   return { session_id: stringField(payload, "id") || sessionId, media_items_set: payload.mediaItemsSet === true };
 }
 
+interface PickerCursor {
+  /** Google's page token for the page being worked on; null for the first page. */
+  p: string | null;
+  /** Items on that page already handled. */
+  o: number;
+}
+
+/**
+ * Imports one page of picked photos. The app calls again with `next_cursor` until it is null, so each
+ * request stays small. When photo analysis is rate limited the cursor points at the first unhandled
+ * photo and `retry_after_seconds` says when to resume. The session is deleted after the last page.
+ */
 export async function importPickerSession(
   db: D1Database,
   env: Env,
   deps: AppDeps,
   userId: string,
   sessionId: string,
+  rawCursor?: string,
 ): Promise<PickerImportSummary> {
   if (!(await userHasPickerScope(db, userId))) throw scopeRequired();
+  const cursor = decodeCursor(rawCursor);
   const settings = await db.prepare("SELECT timezone FROM user_settings WHERE user_id = ?").bind(userId).first<{ timezone: string }>();
   const timezone = settings?.timezone || "UTC";
-  const listed = await googleFetch(
-    db,
-    env,
-    userId,
-    deps.fetch,
-    deps.now(),
-    `${PICKER_API}/mediaItems?sessionId=${encodeURIComponent(sessionId)}&pageSize=${MAX_IMPORT}`,
-  );
+  const url = new URL(`${PICKER_API}/mediaItems`);
+  url.searchParams.set("sessionId", sessionId);
+  url.searchParams.set("pageSize", String(PHOTO_LIMITS.pickerPageSize));
+  if (cursor.p) url.searchParams.set("pageToken", cursor.p);
+  const listed = await googleFetch(db, env, userId, deps.fetch, deps.now(), url.toString());
   const payload = await readJson(listed);
-  const items = Array.isArray(payload.mediaItems) ? payload.mediaItems.slice(0, MAX_IMPORT) : [];
-  const summary = { total_picked: items.length, meals_imported: 0, non_meals_skipped: 0, duplicates_skipped: 0, errors: 0 };
-  for (const item of items) {
+  const items = Array.isArray(payload.mediaItems) ? payload.mediaItems : [];
+  const nextPageToken = stringField(payload, "nextPageToken");
+  const summary = { total_picked: 0, meals_imported: 0, non_meals_skipped: 0, duplicates_skipped: 0, errors: 0 };
+  let resumeAt: PickerCursor | null = null;
+  let retryAfter: number | null = null;
+  for (let index = Math.min(cursor.o, items.length); index < items.length; index += 1) {
     try {
-      const outcome = await importOne(db, env, deps, userId, timezone, item);
+      const outcome = await importOne(db, env, deps, userId, timezone, items[index]);
+      summary.total_picked += 1;
       if (outcome === "meal") summary.meals_imported += 1;
       else if (outcome === "not_meal") summary.non_meals_skipped += 1;
       else summary.duplicates_skipped += 1;
-    } catch {
+    } catch (error) {
+      if (error instanceof RateLimitError) {
+        resumeAt = { p: cursor.p, o: index };
+        retryAfter = error.retryAfter;
+        break;
+      }
+      summary.total_picked += 1;
       summary.errors += 1;
     }
   }
-  try {
-    await googleFetch(db, env, userId, deps.fetch, deps.now(), `${PICKER_API}/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
-  } catch {
-    // The picked photos are already processed. Leaving the session is safe.
+  const next = resumeAt ?? (nextPageToken ? { p: nextPageToken, o: 0 } : null);
+  if (!next) {
+    try {
+      await googleFetch(db, env, userId, deps.fetch, deps.now(), `${PICKER_API}/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+    } catch {
+      // The picked photos are already processed. Leaving the session is safe.
+    }
   }
-  return PickerImportSummarySchema.parse(summary);
+  return PickerImportSummarySchema.parse({
+    ...summary,
+    next_cursor: next ? jsonToBase64Url(next) : null,
+    retry_after_seconds: retryAfter,
+  });
+}
+
+function decodeCursor(raw: string | undefined): PickerCursor {
+  if (!raw) return { p: null, o: 0 };
+  try {
+    const parsed = base64UrlToJson(raw) as Partial<PickerCursor> | null;
+    const page = typeof parsed?.p === "string" && parsed.p.length > 0 ? parsed.p : null;
+    const offset = typeof parsed?.o === "number" && Number.isInteger(parsed.o) && parsed.o >= 0 ? parsed.o : 0;
+    return { p: page, o: offset };
+  } catch {
+    throw new ApiError(400, "VALIDATION_ERROR", "Picker cursor is not valid");
+  }
 }
 
 async function importOne(
@@ -112,6 +152,8 @@ async function importOne(
 ): Promise<"meal" | "not_meal" | "duplicate"> {
   if (!item || typeof item !== "object") throw new Error("bad item");
   const record = item as Record<string, unknown>;
+  // Videos are not meal photos, and their thumbnail would cost a model call.
+  if (stringField(record, "type") === "VIDEO") return "not_meal";
   const mediaFile = record.mediaFile;
   if (!mediaFile || typeof mediaFile !== "object") throw new Error("no file");
   const baseUrl = stringField(mediaFile as Record<string, unknown>, "baseUrl");
@@ -131,7 +173,9 @@ async function importOne(
     { bytes, type: "image/jpeg" },
     {
       content_sha256: hash,
-      perceptual_hash: sampleDhash(bytes),
+      // The Worker cannot decode a JPEG, so there is no real dHash here. Duplicates of a phone photo are
+      // still caught by the exact hash or by the capture time (see matchHash).
+      perceptual_hash: null,
       captured_at: capturedAt,
       local_date: localDate,
       timezone,
@@ -141,12 +185,6 @@ async function importOne(
   if (result.body.outcome === "meal") return "meal";
   if (result.body.outcome === "not_meal") return "not_meal";
   return "duplicate";
-}
-
-function sampleDhash(bytes: Uint8Array): string {
-  const luma = new Uint8Array(9 * 8);
-  for (let index = 0; index < luma.length; index += 1) luma[index] = bytes[index % Math.max(bytes.length, 1)] ?? 0;
-  return dHashFromLuma(luma, 9, 8);
 }
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {

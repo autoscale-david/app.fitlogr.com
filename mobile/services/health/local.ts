@@ -1,5 +1,6 @@
 import type { SQLiteDatabase } from "expo-sqlite";
 import type { HealthSyncRecord } from "@fitlogr/shared";
+import { writeSyncedWeight } from "../db";
 
 export async function applyHealthRecords(db: SQLiteDatabase, records: HealthSyncRecord[]): Promise<void> {
   if (records.length === 0) return;
@@ -52,13 +53,8 @@ async function applyDay(db: SQLiteDatabase, localDate: string, records: HealthSy
   const weight = weights.at(-1);
   if (weight) {
     const kg = weight.unit.toLowerCase() === "lb" ? weight.value / 2.2046226218 : weight.value;
-    await db.runAsync(
-      `INSERT INTO weights (local_date, weight_kg, source_record_id) VALUES (?, ?, ?)
-       ON CONFLICT(local_date) DO UPDATE SET weight_kg = excluded.weight_kg, source_record_id = excluded.source_record_id`,
-      localDate,
-      kg,
-      weight.external_id,
-    );
+    // A weight typed in by hand for this day stays; the scale reading only fills an empty day.
+    await writeSyncedWeight(db, localDate, kg, weight.external_id);
   }
   await writeAggregate(db, localDate, "active_kcal", sum(live, "active_calories"));
   await writeAggregate(db, localDate, "resting_kcal", sum(live, "resting_calories"));

@@ -5,5 +5,5 @@ export { importFromGooglePhotos, PickerScopeRequired } from "./picker";
 export type { ScanResult } from "./discover";
 export { prepareMealImage } from "./prepare";
 export type { PreparedMealImage } from "./prepare";
-export { capturedToday, importPreparedPhoto } from "./upload";
-export type { ImportResult } from "./upload";
+export { capturedToday, importPreparedPhoto, retryAlbumUploads } from "./upload";
+export type { ImportKind, ImportResult } from "./upload";

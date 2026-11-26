@@ -112,6 +112,7 @@ export default function ReviewScreen() {
 
       <GoogleReconnectBanner
         visible={store.googleReconnectRequired}
+        sessionExpired={store.sessionExpired}
         busy={reconnecting}
         onReconnect={() => {
           setReconnecting(true);

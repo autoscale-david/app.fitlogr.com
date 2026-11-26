@@ -202,6 +202,8 @@ export async function migrate(db: SQLiteDatabase): Promise<void> {
       created_at TEXT NOT NULL
     );
   `);
+  // 1 when the meal was saved but its photo has not reached the Google Photos album yet.
+  await addColumn(db, "ALTER TABLE local_media_assets ADD COLUMN google_pending INTEGER NOT NULL DEFAULT 0");
   const seeded = await db.getFirstAsync<{ value: string }>(
     "SELECT value FROM settings WHERE key = ?",
     "seeded",
@@ -714,6 +716,34 @@ export async function writeWeightKg(db: SQLiteDatabase, localDate: string, weigh
     localDate,
     weightKg,
   );
+}
+
+/**
+ * A weight that came from sync. `sourceRecordId` null means the person typed it in. A manual weight is
+ * never replaced by a scale reading for the same day, matching how the server picks the day's weight.
+ */
+export async function writeSyncedWeight(db: SQLiteDatabase, localDate: string, weightKg: number, sourceRecordId: string | null): Promise<void> {
+  if (sourceRecordId === null) {
+    await writeWeightKg(db, localDate, weightKg);
+    return;
+  }
+  await db.runAsync(
+    `INSERT INTO weights (local_date, weight_kg, source_record_id) VALUES (?, ?, ?)
+     ON CONFLICT(local_date) DO UPDATE SET weight_kg = excluded.weight_kg, source_record_id = excluded.source_record_id
+     WHERE weights.source_record_id IS NOT NULL`,
+    localDate,
+    weightKg,
+    sourceRecordId,
+  );
+}
+
+/** Removes the day's weight only if it is the record that was deleted. */
+export async function deleteSyncedWeight(db: SQLiteDatabase, localDate: string, sourceRecordId: string | null): Promise<void> {
+  if (sourceRecordId === null) {
+    await db.runAsync("DELETE FROM weights WHERE local_date = ? AND source_record_id IS NULL", localDate);
+    return;
+  }
+  await db.runAsync("DELETE FROM weights WHERE local_date = ? AND source_record_id = ?", localDate, sourceRecordId);
 }
 
 export async function pendingChanges(db: SQLiteDatabase): Promise<number> {

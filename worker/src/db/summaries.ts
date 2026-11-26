@@ -1,6 +1,6 @@
 import { snapshotForWrite } from "../settings/plan";
 
-interface IntakeTotals {
+export interface IntakeTotals {
   calories_kcal: number;
   protein_g: number;
   carbs_g: number;
@@ -34,9 +34,26 @@ export async function recomputeDailyIntake(
     )
     .bind(userId, localDate)
     .first<IntakeTotals>();
-  const intake = totals ?? { calories_kcal: 0, protein_g: 0, carbs_g: 0, fat_g: 0, meal_count: 0 };
+  const intake = totals ?? EMPTY_INTAKE;
   const snapshot = await snapshotForWrite(db, userId, localDate, new Date(now));
-  await db
+  await intakeUpsert(db, { userId, localDate, timezone, intake, snapshot, now }).run();
+}
+
+export const EMPTY_INTAKE: IntakeTotals = { calories_kcal: 0, protein_g: 0, carbs_g: 0, fat_g: 0, meal_count: 0 };
+
+/** The daily_summaries intake write, as a statement so callers can batch many dates. */
+export function intakeUpsert(
+  db: D1Database,
+  input: {
+    userId: string;
+    localDate: string;
+    timezone: string;
+    intake: IntakeTotals;
+    snapshot: { json: string; today: string };
+    now: string;
+  },
+): D1PreparedStatement {
+  return db
     .prepare(
       `INSERT INTO daily_summaries (
          user_id, local_date, timezone, calories_in_kcal, protein_g, carbs_g, fat_g, meal_count,
@@ -54,20 +71,19 @@ export async function recomputeDailyIntake(
          updated_at = excluded.updated_at`,
     )
     .bind(
-      userId,
-      localDate,
-      timezone,
-      intake.calories_kcal,
-      intake.protein_g,
-      intake.carbs_g,
-      intake.fat_g,
-      intake.meal_count,
-      intake.calories_kcal,
-      snapshot.json,
-      now,
-      snapshot.today,
-    )
-    .run();
+      input.userId,
+      input.localDate,
+      input.timezone,
+      input.intake.calories_kcal,
+      input.intake.protein_g,
+      input.intake.carbs_g,
+      input.intake.fat_g,
+      input.intake.meal_count,
+      input.intake.calories_kcal,
+      input.snapshot.json,
+      input.now,
+      input.snapshot.today,
+    );
 }
 
 export async function setDailyWeight(db: D1Database, userId: string, localDate: string, timezone: string, weightKg: number, now: string): Promise<void> {

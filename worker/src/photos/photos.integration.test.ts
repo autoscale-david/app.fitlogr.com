@@ -83,8 +83,8 @@ describe("meal photo analysis", () => {
       {
         items: [
           { content_sha256: await sha256HexBytes(jpeg(1)), perceptual_hash: "0000000000000000" },
-          { content_sha256: await sha256HexBytes(jpeg(2)), perceptual_hash: "00000000000000ff" },
-          { content_sha256: "e".repeat(64), perceptual_hash: "0f0f0f0f0f0f0f0f" },
+          { content_sha256: await sha256HexBytes(jpeg(2)), perceptual_hash: "00000000000000ff", captured_at: "2026-11-23T19:31:00.000Z" },
+          { content_sha256: "e".repeat(64), perceptual_hash: "0f0f0f0f0f0f0f0f", captured_at: "2026-11-23T19:31:00.000Z" },
         ],
       },
       user.access_token,
@@ -187,8 +187,11 @@ describe("meal photo analysis", () => {
     await database.prepare("UPDATE user_oauth_tokens SET access_token_expires_at = ? WHERE user_id = ?").bind("2000-01-01T00:00:00.000Z", owner.userId).run();
     refreshMode = "revoked";
     const response = await analyze(owner.access_token, jpeg(6), "dddddddddddddddd");
-    expect(response.status).toBe(403);
-    expect((await response.json()).error.code).toBe("google_reconnect_required");
+    expect(response.status).toBe(201);
+    const saved = await response.json();
+    expect(saved.google_reconnect_required).toBe(true);
+    expect(saved.photo.google_status).toBe("failed");
+    expect(saved.meal.photo_id).toBe(saved.photo.id);
     expect(uploadCalls).toBe(0);
     const meal = await database.prepare("SELECT name, calories_kcal, is_user_edited FROM meals WHERE user_id = ?").bind(owner.userId).first<{ name: string; calories_kcal: number; is_user_edited: number }>();
     expect(meal).toMatchObject({ name: "Chicken rice bowl", calories_kcal: 150.7, is_user_edited: 0 });
@@ -205,6 +208,19 @@ describe("meal photo analysis", () => {
     expect((await otherHashes.json()).results[0].status).toBe("new");
 
     refreshMode = "ok";
+    // Still revoked: the retry asks for a reconnect instead of uploading.
+    expect((await googleUpload(owner.access_token, photo!.id, jpeg(6))).status).toBe(403);
+    // Reconnecting Google (a new sign-in) marks the grant active again.
+    await database.prepare("UPDATE user_oauth_tokens SET status = 'active' WHERE user_id = ?").bind(owner.userId).run();
+    // After reconnecting, the phone re-sends the same JPEG and the photo lands in the album.
+    expect((await googleUpload(other.access_token, photo!.id, jpeg(6))).status).toBe(404);
+    expect((await googleUpload(owner.access_token, photo!.id, jpeg(7))).status).toBe(400);
+    const retried = await googleUpload(owner.access_token, photo!.id, jpeg(6));
+    expect(retried.status).toBe(200);
+    expect((await retried.json()).google_status).toBe("uploaded");
+    expect(uploadCalls).toBe(1);
+    expect((await googleUpload(owner.access_token, photo!.id, jpeg(6))).status).toBe(409);
+
     const excluded = await post(`/api/photos/${photo!.id}/exclude`, { reason: "not_meal" }, owner.access_token);
     expect(excluded.status).toBe(200);
     const after = await database.prepare("SELECT status FROM photos WHERE id = ?").bind(photo!.id).first<{ status: string }>();
@@ -310,6 +326,16 @@ async function analyze(token: string, image: Uint8Array, dhash: string) {
       headers: { authorization: `Bearer ${token}`, "content-type": payload.contentType },
       body: payload.body,
     },
+    env(),
+  );
+}
+
+async function googleUpload(token: string, photoId: string, image: Uint8Array) {
+  const form = new FormData();
+  form.append("image", new File([image], "meal.jpg", { type: "image/jpeg" }));
+  return app.request(
+    `https://fitlogr.com/api/photos/${photoId}/google-upload`,
+    { method: "POST", headers: { authorization: `Bearer ${token}` }, body: form },
     env(),
   );
 }

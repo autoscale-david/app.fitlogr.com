@@ -16,9 +16,10 @@ let database: D1Database;
 let tokenBodies: string[] = [];
 let pending: { nonce: string; sub: string; email: string; name: string; refreshToken: string } | null = null;
 
+let clockOffsetMs = 0;
 const app = createApp({
   fetch: mockFetch,
-  now: () => new Date(),
+  now: () => new Date(Date.now() + clockOffsetMs),
 });
 
 beforeAll(async () => {
@@ -36,6 +37,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   database = createTestDb();
+  clockOffsetMs = 0;
   tokenBodies = [];
   pending = null;
   clearJwksCache();
@@ -175,10 +177,21 @@ describe("stage 2 API", () => {
     const next = await rotated.json();
     expect(next.refresh_token).not.toBe(session.refresh_token);
 
+    // A retry right after rotation (the phone never saw the response) still works.
+    const retry = await post("/api/auth/refresh", { refresh_token: session.refresh_token });
+    expect(retry.status).toBe(200);
+    const retried = await retry.json();
+    expect(retried.refresh_token).not.toBe(next.refresh_token);
+
+    // Replaying a rotated token after the grace window revokes the whole device family.
+    clockOffsetMs = 10 * 60 * 1000;
     const replay = await post("/api/auth/refresh", { refresh_token: session.refresh_token });
     expect(replay.status).toBe(401);
     const afterReplay = await post("/api/auth/refresh", { refresh_token: next.refresh_token });
     expect(afterReplay.status).toBe(401);
+    const afterReplayRetried = await post("/api/auth/refresh", { refresh_token: retried.refresh_token });
+    expect(afterReplayRetried.status).toBe(401);
+    clockOffsetMs = 0;
 
     const loggedOut = await signIn({
       sub: "google-sub-out",

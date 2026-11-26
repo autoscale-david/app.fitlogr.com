@@ -1,6 +1,7 @@
 import { AssetField, MediaSubtype, MediaType, Query, getPermissionsAsync, requestPermissionsAsync } from "expo-media-library";
 import type { SQLiteDatabase } from "expo-sqlite";
 import { localDateISO, timestampToDate } from "../dates";
+import { SessionExpired } from "../api";
 import { prepareMealImage } from "./prepare";
 import { importPreparedPhoto } from "./upload";
 
@@ -56,12 +57,18 @@ export async function scanRecentPhotos(db: SQLiteDatabase, options?: { ask?: boo
         source: "device_library",
         assetId: info.id,
       });
-      if (result.message.startsWith("Logged")) imported += 1;
-      if (result.message.includes("offline")) break;
+      if (result.kind === "meal") imported += 1;
+      if (result.kind === "offline") break;
+      if (result.kind === "rate_limited") {
+        return { status: imported > 0 ? "imported" : "empty", imported, message: result.message };
+      }
     }
     if (imported === 0) return { status: "empty", imported: 0, message: "No new meal photos in the last two days." };
     return { status: "imported", imported, message: imported === 1 ? "Found 1 meal photo." : `Found ${imported} meal photos.` };
-  } catch {
+  } catch (error) {
+    if (error instanceof SessionExpired) {
+      return { status: "unavailable", imported: 0, message: "Sign in again to keep importing meal photos." };
+    }
     return {
       status: "unavailable",
       imported: 0,
@@ -86,9 +93,10 @@ export async function retryPendingPhotos(db: SQLiteDatabase): Promise<number> {
         source: "manual",
         assetId: row.local_asset_id,
       });
-      if (result.message.startsWith("Logged")) imported += 1;
-      if (result.message.includes("offline")) break;
-    } catch {
+      if (result.kind === "meal") imported += 1;
+      if (result.kind === "offline" || result.kind === "rate_limited") break;
+    } catch (error) {
+      if (error instanceof SessionExpired) throw error;
       // Leave the row pending for the next sync.
     }
   }

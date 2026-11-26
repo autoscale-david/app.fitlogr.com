@@ -5,13 +5,21 @@ import { clearSession, readSession, saveSession } from "./session";
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
+  /** Seconds from the Retry-After header on a 429, when the server sent one. */
+  readonly retryAfterSeconds: number | null;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, retryAfterSeconds: number | null = null) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
+}
+
+function retryAfter(response: Response): number | null {
+  const value = Number(response.headers.get("retry-after"));
+  return Number.isFinite(value) && value > 0 ? Math.ceil(value) : null;
 }
 
 export class OfflineError extends Error {
@@ -98,7 +106,12 @@ async function send<T>(method: string, path: string, body: unknown, authenticate
   const payload = (await response.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null;
   if (!response.ok) {
     if (response.status === 401) throw new SessionExpired();
-    throw new ApiError(response.status, payload?.error?.code ?? "INTERNAL_ERROR", payload?.error?.message ?? "Request failed");
+    throw new ApiError(
+      response.status,
+      payload?.error?.code ?? "INTERNAL_ERROR",
+      payload?.error?.message ?? "Request failed",
+      retryAfter(response),
+    );
   }
   return payload as T;
 }
@@ -141,7 +154,12 @@ async function sendForm<T>(path: string, form: FormData, retried: boolean): Prom
   const payload = (await response.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null;
   if (!response.ok) {
     if (response.status === 401) throw new SessionExpired();
-    throw new ApiError(response.status, payload?.error?.code ?? "INTERNAL_ERROR", payload?.error?.message ?? "Request failed");
+    throw new ApiError(
+      response.status,
+      payload?.error?.code ?? "INTERNAL_ERROR",
+      payload?.error?.message ?? "Request failed",
+      retryAfter(response),
+    );
   }
   return payload as T;
 }

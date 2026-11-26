@@ -2,7 +2,7 @@ import type { AccessClaims } from "../jwt";
 import { signAccessToken, verifyAccessToken } from "../jwt";
 import { sha256Hex, randomToken } from "../encoding";
 import { addSeconds, nowIso, uuidv7 } from "../ids";
-import { ACCESS_TOKEN_SECONDS, REFRESH_TOKEN_SECONDS } from "../config";
+import { ACCESS_TOKEN_SECONDS, REFRESH_ROTATION_GRACE_SECONDS, REFRESH_TOKEN_SECONDS } from "../config";
 import { ApiError } from "../http";
 
 export interface AuthContext {
@@ -63,8 +63,15 @@ export async function rotateSession(
     .first<SessionRow>();
   if (!current) throw new ApiError(401, "AUTH_INVALID", "Refresh token is not valid");
   if (current.revoked_at) {
-    await revokeDeviceSessions(db, current.user_id, current.device_id, now);
-    throw new ApiError(401, "AUTH_INVALID", "Refresh token is not valid");
+    // A token rotated moments ago is most likely a retry after the phone lost the refresh response,
+    // not a stolen token. Issue another session instead of signing the device out. Replays after the
+    // grace window still revoke the whole device family.
+    const rotatedAgoMs = now.getTime() - Date.parse(current.revoked_at);
+    const graceful = Number.isFinite(rotatedAgoMs) && rotatedAgoMs >= 0 && rotatedAgoMs <= REFRESH_ROTATION_GRACE_SECONDS * 1000;
+    if (!graceful || !(await deviceFamilyActive(db, current.user_id, current.device_id, now))) {
+      await revokeDeviceSessions(db, current.user_id, current.device_id, now);
+      throw new ApiError(401, "AUTH_INVALID", "Refresh token is not valid");
+    }
   }
   if (current.expires_at <= nowIso(now)) throw new ApiError(401, "AUTH_EXPIRED", "Refresh token expired");
 
@@ -126,6 +133,18 @@ export async function revokeAllSessions(db: D1Database, userId: string, now: Dat
     .prepare("UPDATE user_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL")
     .bind(nowIso(now), userId)
     .run();
+}
+
+/** True while the device still has a live session (the rotation successor was not revoked). */
+async function deviceFamilyActive(db: D1Database, userId: string, deviceId: string | null, now: Date): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM user_sessions
+       WHERE user_id = ? AND (device_id = ? OR (? IS NULL AND device_id IS NULL)) AND revoked_at IS NULL AND expires_at > ?`,
+    )
+    .bind(userId, deviceId, deviceId, nowIso(now))
+    .first<{ n: number }>();
+  return (row?.n ?? 0) > 0;
 }
 
 async function revokeDeviceSessions(db: D1Database, userId: string, deviceId: string | null, now: Date): Promise<void> {

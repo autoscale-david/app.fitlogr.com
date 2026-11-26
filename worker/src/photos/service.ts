@@ -227,15 +227,14 @@ export async function analyzeUploadedPhoto(
     offset += 1;
   }
   await recomputeDailyIntake(db, userId, metadata.local_date, metadata.timezone, stamp);
-  if (reconnect) {
-    throw new ApiError(403, GOOGLE_RECONNECT, "The meal was saved. Reconnect Google to store the photo in your fitlogr album.");
-  }
+  // The meal is saved either way. The app keeps the photo id so it can retry the album upload after a reconnect.
   return {
     status: 201,
     body: {
       outcome: "meal",
       photo: await photoReference(db, userId, photoId),
       meal: await getMeal(db, userId, mealId),
+      ...(reconnect ? { google_reconnect_required: true } : {}),
     },
   };
 }
@@ -256,13 +255,56 @@ export async function freshPhotoUrl(db: D1Database, env: Env, deps: AppDeps, use
     return { photo_id: photoId, status: "missing", url: null, expires_at: null };
   }
   if ("quota" in lookedUp) {
-    await db
-      .prepare("UPDATE photos SET google_status = 'quota_exceeded', updated_at = ? WHERE id = ? AND user_id = ?")
-      .bind(nowIso(now), photoId, userId)
-      .run();
+    // Usually Google's request-rate limit on lookups, which passes. The stored photo status is left alone.
     return { photo_id: photoId, status: "quota_exceeded", url: null, expires_at: null };
   }
   return { photo_id: photoId, status: "ok", url: lookedUp.url, expires_at: urlExpiresAt(now) };
+}
+
+/**
+ * Re-sends a meal photo whose album upload failed (Google outage, rate limit, revoked access).
+ * The bytes must be the same JPEG that was analyzed, so the stored SHA-256 still matches.
+ */
+export async function retryGoogleUpload(
+  db: D1Database,
+  env: Env,
+  deps: AppDeps,
+  userId: string,
+  photoId: string,
+  file: { bytes: Uint8Array; type: string },
+): Promise<PhotoReference> {
+  const row = await ownedPhoto(db, userId, photoId);
+  if (!row) throw new ApiError(404, "NOT_FOUND", "Photo not found");
+  if (row.google_media_item_id) throw new ApiError(409, "CONFLICT", "Photo is already in Google Photos");
+  if (row.status !== "analyzed_meal") throw new ApiError(409, "CONFLICT", "Only meal photos are saved to Google Photos");
+  if (file.bytes.byteLength > PHOTO_LIMITS.maxImageBytes) throw new ApiError(413, "PAYLOAD_TOO_LARGE", "Photo must be 2 MB or smaller");
+  if (!isJpeg(file)) throw new ApiError(415, "UNSUPPORTED_MEDIA_TYPE", "Photo must be a JPEG");
+  if ((await sha256Hex(file.bytes)) !== row.content_sha256) throw new ApiError(400, "VALIDATION_ERROR", "Photo does not match");
+  const now = deps.now();
+  const meal = await db
+    .prepare("SELECT name, calories_kcal FROM meals WHERE photo_id = ? AND user_id = ? AND deleted_at IS NULL")
+    .bind(photoId, userId)
+    .first<{ name: string; calories_kcal: number }>();
+  const description = meal ? `${meal.name} — ${meal.calories_kcal} kcal (fitlogr estimate)` : "fitlogr meal";
+  let googleStatus: GooglePhotoStatus = "failed";
+  try {
+    const uploaded = await uploadMealPhoto(db, env, userId, deps.fetch, now, file.bytes, description, `fitlogr-${photoId}.jpg`);
+    await db
+      .prepare(
+        `UPDATE photos SET google_media_item_id = ?, google_album_id = ?, google_status = 'uploaded', updated_at = ?
+         WHERE id = ? AND user_id = ?`,
+      )
+      .bind(uploaded.mediaItemId, uploaded.albumId, nowIso(now), photoId, userId)
+      .run();
+    return photoReference(db, userId, photoId);
+  } catch (error) {
+    if (error instanceof ApiError && error.code === "GOOGLE_QUOTA_EXCEEDED") googleStatus = "quota_exceeded";
+    await db
+      .prepare("UPDATE photos SET google_status = ?, updated_at = ? WHERE id = ? AND user_id = ?")
+      .bind(googleStatus, nowIso(now), photoId, userId)
+      .run();
+    throw error;
+  }
 }
 
 export async function excludePhoto(db: D1Database, userId: string, photoId: string, now: Date): Promise<PhotoExcludeResponse> {
@@ -332,37 +374,57 @@ async function duplicateResult(
 }
 
 async function enforceRateLimit(db: D1Database, userId: string, now: Date): Promise<void> {
-  const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
-  const burstAgo = new Date(now.getTime() - PHOTO_LIMITS.burstWindowMs).toISOString();
-  const daily = await db
+  const dayWindowMs = 24 * 60 * 60 * 1000;
+  const daily = await countVision(db, userId, now, dayWindowMs, PHOTO_LIMITS.dailyVision);
+  const burst = await countVision(db, userId, now, PHOTO_LIMITS.burstWindowMs, PHOTO_LIMITS.burstVision);
+  if (daily.count < PHOTO_LIMITS.dailyVision && burst.count < PHOTO_LIMITS.burstVision) return;
+  await insertAi(db, {
+    userId,
+    model: "rate-limit",
+    fallbackUsed: false,
+    promptTokens: null,
+    completionTokens: null,
+    estimatedCostUsd: null,
+    latencyMs: 0,
+    status: "rate_limited",
+    relatedEntityId: null,
+    now,
+  });
+  const waits = [
+    daily.count >= PHOTO_LIMITS.dailyVision ? daily.retryAfterSeconds : 0,
+    burst.count >= PHOTO_LIMITS.burstVision ? burst.retryAfterSeconds : 0,
+  ];
+  throw new RateLimitError(Math.max(1, ...waits));
+}
+
+/** Vision calls in the window, and how long until the call that holds the limit leaves it. */
+async function countVision(
+  db: D1Database,
+  userId: string,
+  now: Date,
+  windowMs: number,
+  limit: number,
+): Promise<{ count: number; retryAfterSeconds: number }> {
+  const since = new Date(now.getTime() - windowMs).toISOString();
+  const count = await db
     .prepare(
       `SELECT COUNT(*) AS n FROM ai_requests
        WHERE user_id = ? AND request_type = 'meal_vision' AND status != 'rate_limited' AND created_at >= ?`,
     )
-    .bind(userId, dayAgo)
+    .bind(userId, since)
     .first<{ n: number }>();
-  const burst = await db
+  const n = count?.n ?? 0;
+  if (n < limit) return { count: n, retryAfterSeconds: 0 };
+  const blocking = await db
     .prepare(
-      `SELECT COUNT(*) AS n FROM ai_requests
-       WHERE user_id = ? AND request_type = 'meal_vision' AND status != 'rate_limited' AND created_at >= ?`,
+      `SELECT created_at FROM ai_requests
+       WHERE user_id = ? AND request_type = 'meal_vision' AND status != 'rate_limited' AND created_at >= ?
+       ORDER BY created_at DESC LIMIT 1 OFFSET ?`,
     )
-    .bind(userId, burstAgo)
-    .first<{ n: number }>();
-  if ((daily?.n ?? 0) >= PHOTO_LIMITS.dailyVision || (burst?.n ?? 0) >= PHOTO_LIMITS.burstVision) {
-    await insertAi(db, {
-      userId,
-      model: "rate-limit",
-      fallbackUsed: false,
-      promptTokens: null,
-      completionTokens: null,
-      estimatedCostUsd: null,
-      latencyMs: 0,
-      status: "rate_limited",
-      relatedEntityId: null,
-      now,
-    });
-    throw new RateLimitError((burst?.n ?? 0) >= PHOTO_LIMITS.burstVision ? 60 : 3600);
-  }
+    .bind(userId, since, limit - 1)
+    .first<{ created_at: string }>();
+  const leavesAt = blocking ? Date.parse(blocking.created_at) + windowMs : now.getTime() + windowMs;
+  return { count: n, retryAfterSeconds: Math.max(1, Math.ceil((leavesAt - now.getTime()) / 1000)) };
 }
 
 async function requireConsent(db: D1Database, userId: string): Promise<void> {
@@ -378,7 +440,7 @@ async function requireConsent(db: D1Database, userId: string): Promise<void> {
 async function loadKnown(db: D1Database, userId: string, hashes: string[]): Promise<KnownPhotoHash[]> {
   const recent = await db
     .prepare(
-      `SELECT p.id, p.content_sha256, p.perceptual_hash, p.status, m.id AS meal_id
+      `SELECT p.id, p.content_sha256, p.perceptual_hash, p.status, p.captured_at, m.id AS meal_id
        FROM photos p
        LEFT JOIN meals m ON m.photo_id = p.id AND m.user_id = p.user_id AND m.deleted_at IS NULL
        WHERE p.user_id = ? AND p.deleted_at IS NULL
@@ -392,7 +454,7 @@ async function loadKnown(db: D1Database, userId: string, hashes: string[]): Prom
     const placeholders = hashes.map(() => "?").join(", ");
     const exact = await db
       .prepare(
-        `SELECT p.id, p.content_sha256, p.perceptual_hash, p.status, m.id AS meal_id
+        `SELECT p.id, p.content_sha256, p.perceptual_hash, p.status, p.captured_at, m.id AS meal_id
          FROM photos p
          LEFT JOIN meals m ON m.photo_id = p.id AND m.user_id = p.user_id AND m.deleted_at IS NULL
          WHERE p.user_id = ? AND p.deleted_at IS NULL AND p.content_sha256 IN (${placeholders})`,

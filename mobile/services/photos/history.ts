@@ -3,7 +3,8 @@ import { AssetField, MediaSubtype, MediaType, Query, getPermissionsAsync, reques
 import type { SQLiteDatabase } from "expo-sqlite";
 import { localDateISO, timestampToDate } from "../dates";
 import { prepareMealImage } from "./prepare";
-import { importPreparedPhoto } from "./upload";
+import { SessionExpired } from "../api";
+import { alreadyChecked, importPreparedPhoto, type ImportResult } from "./upload";
 
 export interface HistoryProgress {
   scanned: number;
@@ -11,7 +12,12 @@ export interface HistoryProgress {
   meals: number;
   nonMeals: number;
   errors: number;
+  /** Seconds left while the scan waits for the photo analysis limit to reset. */
+  waitingSeconds?: number;
 }
+
+/** Waits this long at most for the analysis limit inside one scan; a longer wait ends the scan. */
+const MAX_LIMIT_WAIT_SECONDS = 10 * 60;
 
 export interface HistoryScanResult extends HistoryProgress {
   status: "imported" | "permission_denied" | "unavailable" | "cancelled" | "empty";
@@ -86,22 +92,51 @@ export async function scanMealPhotosFromPastDays(
           options.onProgress?.({ ...progress });
           continue;
         }
+        // Already handled in an earlier scan: skip before resizing, and do not spend this run's budget on it.
+        if (await alreadyChecked(db, info.id)) {
+          progress.skipped += 1;
+          options.onProgress?.({ ...progress });
+          continue;
+        }
         unseen += 1;
         try {
           const uri = info.uri || (await asset.getUri());
           const prepared = await prepareMealImage(uri);
-          const result = await importPreparedPhoto(db, prepared, {
-            capturedAt: captured.toISOString(),
-            localDate: localDateISO(captured),
-            source: "device_library",
-            assetId: info.id,
-          });
-          if (result.message.startsWith("Logged")) progress.meals += 1;
-          else if (result.message.includes("already") || result.message.includes("skipped")) progress.skipped += 1;
-          else if (result.message.includes("doesn't look like a meal")) progress.nonMeals += 1;
-          else if (result.message.includes("offline") || result.message.includes("could not")) progress.errors += 1;
+          const send = () =>
+            importPreparedPhoto(db, prepared, {
+              capturedAt: captured.toISOString(),
+              localDate: localDateISO(captured),
+              source: "device_library",
+              assetId: info.id,
+            });
+          let result: ImportResult = await send();
+          while (result.kind === "rate_limited") {
+            const wait = result.retryAfterSeconds ?? 60;
+            if (wait > MAX_LIMIT_WAIT_SECONDS) {
+              const logged = progress.meals > 0 ? `Logged ${progress.meals} meal${progress.meals === 1 ? "" : "s"}. ` : "";
+              return {
+                ...progress,
+                status: progress.meals > 0 ? "imported" : "empty",
+                capped: true,
+                message: `${logged}${result.message} Scan again then to continue.`,
+              };
+            }
+            const finished = await waitFor(wait, options.signal, (left) => options.onProgress?.({ ...progress, waitingSeconds: left }));
+            if (!finished) return { ...progress, status: "cancelled", capped, message: "Import cancelled." };
+            result = await send();
+          }
+          if (result.kind === "meal") progress.meals += 1;
+          else if (result.kind === "not_meal") progress.nonMeals += 1;
+          else if (result.kind === "offline" || result.kind === "error") progress.errors += 1;
           else progress.skipped += 1;
-        } catch {
+          if (result.kind === "offline") {
+            options.onProgress?.({ ...progress });
+            return { ...progress, status: "unavailable", capped: true, message: "You're offline. Scan again when you reconnect." };
+          }
+        } catch (error) {
+          if (error instanceof SessionExpired) {
+            return { ...progress, status: "unavailable", capped: true, message: "Sign in again to keep importing photos." };
+          }
           progress.errors += 1;
         }
         options.onProgress?.({ ...progress });
@@ -119,3 +154,24 @@ export async function scanMealPhotosFromPastDays(
   }
 }
 
+/** Waits `seconds`, reporting the countdown. Resolves false if the scan was cancelled. */
+function waitFor(seconds: number, signal: AbortSignal | undefined, tick: (left: number) => void): Promise<boolean> {
+  return new Promise((resolve) => {
+    let left = Math.ceil(seconds);
+    tick(left);
+    const timer = setInterval(() => {
+      left -= 1;
+      if (signal?.aborted) {
+        clearInterval(timer);
+        resolve(false);
+        return;
+      }
+      if (left <= 0) {
+        clearInterval(timer);
+        resolve(true);
+        return;
+      }
+      tick(left);
+    }, 1000);
+  });
+}

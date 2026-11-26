@@ -13,6 +13,7 @@ export default function AccountScreen() {
     <DetailScreen title="Account">
       <GoogleReconnectBanner
         visible={store.googleReconnectRequired}
+        sessionExpired={store.sessionExpired}
         busy={reconnecting}
         onReconnect={() => {
           setReconnecting(true);

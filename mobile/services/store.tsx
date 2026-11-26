@@ -35,7 +35,17 @@ import {
 } from "./db";
 import { clearSession, readSession, saveSession } from "./session";
 import { shareAccountExport } from "./exportAccount";
-import { capturedToday, importPreparedPhoto, prepareMealImage, retryPendingPhotos, scanMealPhotosFromPastDays, scanRecentPhotos, type HistoryProgress, type HistoryScanResult } from "./photos";
+import {
+  capturedToday,
+  importPreparedPhoto,
+  prepareMealImage,
+  retryAlbumUploads,
+  retryPendingPhotos,
+  scanMealPhotosFromPastDays,
+  scanRecentPhotos,
+  type HistoryProgress,
+  type HistoryScanResult,
+} from "./photos";
 import { isExpoGo } from "./expoGo";
 import { queueMeal, queueMealDelete, queuePhotoExclude, queueSettings, queueWeight, syncAccount } from "./sync";
 
@@ -56,6 +66,8 @@ interface Store {
   photoConsent: boolean;
   health: HealthConnection | null;
   googleReconnectRequired: boolean;
+  /** Signed-in data is still on this phone, but the session ended; sign in again to resume syncing. */
+  sessionExpired: boolean;
   lastSyncedAt: string | null;
   loadDay: (date: string) => Promise<DayLog>;
   loadWeek: (from: string, to: string) => Promise<Record<string, WeekDayStatus>>;
@@ -105,6 +117,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [health, setHealth] = useState<HealthConnection | null>(null);
   const [googleReconnectRequired, setGoogleReconnectRequired] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const [sessionExpired, setSessionExpired] = useState(false);
+
+  /**
+   * Stores a new session. Re-signing into the account already on this phone keeps its data and queued
+   * changes; only a different account (or leaving the sample preview) starts from an empty log.
+   */
+  async function adoptSession(database: SQLiteDatabase, session: Awaited<ReturnType<typeof signInWithGoogle>>) {
+    await saveSession(session);
+    const current = await readAccount(database);
+    const sameAccount = (await readMode(database)) === "account" && current?.email === session.user.email;
+    if (!sameAccount) {
+      await enterAccountMode(database);
+      if ((await readSetting(database, "ai_photo_consent_version")) === AI_PHOTO_CONSENT_VERSION) {
+        await writeSetting(database, "ai_photo_consent_pending", "1");
+        setPhotoConsent(true);
+      }
+    }
+    await writeAccount(database, session.user.email, session.user.display_name);
+    await writeSetting(database, "google_status", "active");
+    setMode("account");
+    setAccount({ email: session.user.email, displayName: session.user.display_name });
+    setGoogleReconnectRequired(false);
+    setSessionExpired(false);
+    setSyncError(null);
+    setGoals(await readGoals(database));
+  }
 
   async function refreshPending(database: SQLiteDatabase) {
     setPending(await pendingChanges(database));
@@ -117,21 +155,35 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setRefreshToken((token) => token + 1);
       return;
     }
+    if (!(await readSession()).refreshToken) {
+      // Session ended earlier: nothing can sync until the person signs in again.
+      setSessionExpired(true);
+      setRefreshToken((token) => token + 1);
+      return;
+    }
     setSyncing(true);
     try {
-      await syncAccount(database, force);
+      let rejected = (await syncAccount(database, force)).rejected;
       await retryPendingPhotos(database);
       let healthError: string | null = null;
       try {
         await syncAppleHealth(database, { force, upload: true });
-        await syncAccount(database, true);
+        rejected += (await syncAccount(database, true)).rejected;
       } catch (error) {
         if (error instanceof SessionExpired) throw error;
         healthError = error instanceof Error ? error.message : "Apple Health sync failed";
       }
+      try {
+        await retryAlbumUploads(database);
+      } catch (error) {
+        if (error instanceof SessionExpired) throw error;
+        // Offline or Google still failing: the photos stay queued for the next sync.
+      }
       setGoals(await readGoals(database));
       setHealth(await readHealthConnection(database));
-      setSyncError(healthError);
+      setSessionExpired(false);
+      const rejectedNote = rejected > 0 ? `${rejected} change${rejected === 1 ? " was" : "s were"} rejected by fitlogr.com and not saved there.` : null;
+      setSyncError(healthError ?? rejectedNote);
       const stamp = new Date().toISOString();
       await writeSetting(database, "last_synced_at", stamp);
       setLastSyncedAt(stamp);
@@ -153,12 +205,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setGoogleReconnectRequired(true);
       }
       if (error instanceof SessionExpired) {
+        // Keep the log and any unsynced changes on the phone. They sync after the person signs in again.
         await clearSession();
-        await enterDemoMode(database);
-        setMode("demo");
-        setAccount(null);
-        setGoals(await readGoals(database));
-        setSyncError("Sign in again");
+        setSessionExpired(true);
+        setSyncError("Your session ended. Sign in again to keep syncing. Everything on this phone is kept.");
         setRefreshToken((token) => token + 1);
       } else {
         setSyncError(error instanceof Error ? error.message : "Sync failed");
@@ -189,10 +239,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           await enterAccountMode(database);
           nextMode = "account";
         }
-        if (!session.refreshToken && nextMode === "account") {
-          await enterDemoMode(database);
-          nextMode = "demo";
-        }
+        // Account data without a session means the session ended. Keep the data and ask to sign in.
+        const expired = !session.refreshToken && nextMode === "account";
         const nextGoals = await readGoals(database);
         const nextAccount = nextMode === "account" ? await readAccount(database) : null;
         const nextConsent = (await readSetting(database, "ai_photo_consent_version")) === AI_PHOTO_CONSENT_VERSION;
@@ -208,6 +256,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const googleStatus = await readSetting(database, "google_status");
           setLastSyncedAt(syncedAt || null);
           setGoogleReconnectRequired(googleStatus === "revoked" || googleStatus === "error");
+          setSessionExpired(expired);
+          if (expired) setSyncError("Your session ended. Sign in again to keep syncing. Everything on this phone is kept.");
         }
         if (!cancelled && session.refreshToken) await sync(database, true);
       })
@@ -232,6 +282,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   async function pickupRecentPhotos(database: SQLiteDatabase) {
     if (isExpoGo()) return;
     if ((await readMode(database)) !== "account") return;
+    if (!(await readSession()).refreshToken) return;
     if ((await readSetting(database, "ai_photo_consent_version")) !== AI_PHOTO_CONSENT_VERSION) return;
     if (Date.now() - lastRecentScanAt < RECENT_SCAN_GAP_MS) return;
     lastRecentScanAt = Date.now();
@@ -255,6 +306,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       photoConsent,
       health,
       googleReconnectRequired,
+      sessionExpired,
       lastSyncedAt,
       loadDay: (date) => {
         if (!db) throw new Error("Database is not open");
@@ -316,29 +368,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       },
       grantPickerAccess: async () => {
         if (!db) return;
-        const session = await signInWithGoogle({ includePickerScope: true });
-        await saveSession(session);
-        await writeSetting(db, "google_status", "active");
-        setGoogleReconnectRequired(false);
-        if (mode !== "account") {
-          await enterAccountMode(db);
-          await writeAccount(db, session.user.email, session.user.display_name);
-          setMode("account");
-          setAccount({ email: session.user.email, displayName: session.user.display_name });
-        }
+        await adoptSession(db, await signInWithGoogle({ includePickerScope: true }));
+        setRefreshToken((token) => token + 1);
       },
       reconnectGoogle: async () => {
         if (!db) return;
-        const session = await signInWithGoogle();
-        await saveSession(session);
-        await writeSetting(db, "google_status", "active");
-        setGoogleReconnectRequired(false);
-        if (mode !== "account") {
-          await enterAccountMode(db);
-          await writeAccount(db, session.user.email, session.user.display_name);
-          setMode("account");
-          setAccount({ email: session.user.email, displayName: session.user.display_name });
-        }
+        await adoptSession(db, await signInWithGoogle());
         await sync(db, true);
       },
       exportAccount: async () => {
@@ -357,6 +392,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setMode("demo");
         setAccount(null);
         setGoogleReconnectRequired(false);
+        setSessionExpired(false);
         setLastSyncedAt(null);
         setSyncError(null);
         setPending(0);
@@ -382,17 +418,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       },
       signIn: async () => {
         if (!db) return;
-        const session = await signInWithGoogle();
-        await saveSession(session);
-        await enterAccountMode(db);
-        await writeAccount(db, session.user.email, session.user.display_name);
-        if ((await readSetting(db, "ai_photo_consent_version")) === AI_PHOTO_CONSENT_VERSION) {
-          await writeSetting(db, "ai_photo_consent_pending", "1");
-          setPhotoConsent(true);
-        }
-        setMode("account");
-        setAccount({ email: session.user.email, displayName: session.user.display_name });
-        setGoals(await readGoals(db));
+        await adoptSession(db, await signInWithGoogle());
         await sync(db, true);
       },
       signOut: async () => {
@@ -409,6 +435,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setMode("demo");
         setAccount(null);
         setGoogleReconnectRequired(false);
+        setSessionExpired(false);
         setLastSyncedAt(null);
         setSyncError(null);
         setGoals(await readGoals(db));
@@ -526,6 +553,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       },
       scanMealPhotos: async (announceEmpty = false) => {
         if (!db || mode !== "account" || !photoConsent) return "";
+        if (sessionExpired) return announceEmpty ? "Sign in again to keep importing meal photos." : "";
         if (!announceEmpty && Date.now() - lastRecentScanAt < RECENT_SCAN_GAP_MS) return "";
         lastRecentScanAt = Date.now();
         const result = await scanRecentPhotos(db, { ask: announceEmpty });
@@ -546,7 +574,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setRefreshToken((token) => token + 1);
       },
     }),
-    [account, db, goals, googleReconnectRequired, health, lastSyncedAt, mode, pending, photoConsent, refreshToken, syncError, syncing],
+    [account, db, goals, googleReconnectRequired, health, lastSyncedAt, mode, pending, photoConsent, refreshToken, sessionExpired, syncError, syncing],
   );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

@@ -1,10 +1,10 @@
 import type { Hono } from "hono";
-import { CheckHashesRequestSchema, PhotoExcludeRequestSchema } from "@fitlogr/shared";
+import { CheckHashesRequestSchema, PhotoExcludeRequestSchema, PickerImportRequestSchema } from "@fitlogr/shared";
 import { currentAuth, requireAuth } from "../auth/middleware";
 import { ApiError, errorBody, readJson, requireDb } from "../http";
 import type { AppEnv } from "../types";
 import { createPickerSession, importPickerSession, pickerSessionStatus } from "./picker";
-import { RateLimitError, analyzeUploadedPhoto, checkPhotoHashes, excludePhoto, freshPhotoUrl } from "./service";
+import { RateLimitError, analyzeUploadedPhoto, checkPhotoHashes, excludePhoto, freshPhotoUrl, retryGoogleUpload } from "./service";
 
 export function registerPhotoRoutes(app: Hono<AppEnv>): void {
   app.post("/api/photos/picker/sessions", requireAuth(), async (c) => {
@@ -20,7 +20,17 @@ export function registerPhotoRoutes(app: Hono<AppEnv>): void {
 
   app.post("/api/photos/picker/sessions/:sessionId/import", requireAuth(), async (c) => {
     const sessionId = requireSessionId(c.req.param("sessionId"));
-    const summary = await importPickerSession(requireDb(c.env.DB), c.env, c.get("deps"), currentAuth(c.get("auth")).userId, sessionId);
+    const body = await readOptionalJson(c.req.raw);
+    const parsed = PickerImportRequestSchema.safeParse(body);
+    if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", parsed.error.issues[0]?.message ?? "Invalid request");
+    const summary = await importPickerSession(
+      requireDb(c.env.DB),
+      c.env,
+      c.get("deps"),
+      currentAuth(c.get("auth")).userId,
+      sessionId,
+      parsed.data.cursor,
+    );
     return c.json(summary);
   });
 
@@ -58,6 +68,26 @@ export function registerPhotoRoutes(app: Hono<AppEnv>): void {
     }
   });
 
+  app.post("/api/photos/:id/google-upload", requireAuth(), async (c) => {
+    let form: FormData;
+    try {
+      form = await c.req.raw.formData();
+    } catch {
+      throw new ApiError(400, "VALIDATION_ERROR", "Photo upload must be multipart form data");
+    }
+    const image = form.get("image");
+    if (!(image instanceof File)) throw new ApiError(400, "VALIDATION_ERROR", "image is required");
+    const photo = await retryGoogleUpload(
+      requireDb(c.env.DB),
+      c.env,
+      c.get("deps"),
+      currentAuth(c.get("auth")).userId,
+      c.req.param("id"),
+      { bytes: new Uint8Array(await image.arrayBuffer()), type: image.type },
+    );
+    return c.json(photo);
+  });
+
   app.get("/api/photos/:id/url", requireAuth(), async (c) => {
     const result = await freshPhotoUrl(requireDb(c.env.DB), c.env, c.get("deps"), currentAuth(c.get("auth")).userId, c.req.param("id"));
     return c.json(result);
@@ -83,6 +113,16 @@ async function readMetadata(value: File | string | null): Promise<unknown> {
     throw new ApiError(400, "VALIDATION_ERROR", "metadata must be JSON");
   }
   throw new ApiError(400, "VALIDATION_ERROR", "metadata is required");
+}
+
+async function readOptionalJson(request: Request): Promise<unknown> {
+  const text = await request.text();
+  if (!text.trim()) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new ApiError(400, "VALIDATION_ERROR", "Request body must be JSON");
+  }
 }
 
 async function readExcludeBody(request: Request): Promise<void> {

@@ -38,5 +38,7 @@ export function googleScopes(includePickerScope: boolean): string[] {
 
 export const ACCESS_TOKEN_SECONDS = 60 * 60;
 export const REFRESH_TOKEN_SECONDS = 90 * 24 * 60 * 60;
+/** A just-rotated refresh token is accepted once more for this long (lost-response retries). */
+export const REFRESH_ROTATION_GRACE_SECONDS = 120;
 export const OAUTH_STATE_SECONDS = 10 * 60;
 export const EXCHANGE_CODE_SECONDS = 60;

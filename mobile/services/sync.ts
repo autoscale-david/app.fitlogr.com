@@ -1,7 +1,7 @@
 import type { SQLiteDatabase } from "expo-sqlite";
 import { caloriePlanFromApi, caloriePlanToApi, clampMaintenance } from "@fitlogr/shared";
 import type { Goals, MealItemRecord, MealRecord } from "./db";
-import { readGoals, readSetting, writeGoals, writeServerMeal, writeSetting, writeWeightKg } from "./db";
+import { deleteSyncedWeight, readGoals, readSetting, removeMeal, writeGoals, writeServerMeal, writeSetting, writeSyncedWeight } from "./db";
 import { deviceTimeZone, localDateISO } from "./dates";
 import { ApiError, OfflineError, SessionExpired, api } from "./api";
 import { randomUuid } from "./encoding";
@@ -67,10 +67,19 @@ export async function queueMealDelete(db: SQLiteDatabase, mealId: string, pendin
   await replaceOutbox(db, "meal", mealId, "DELETE", `/meals/${mealId}`, {});
 }
 
-export async function syncAccount(db: SQLiteDatabase, force: boolean): Promise<void> {
+/** Statuses that will not change on a retry: the server rejected the change itself. */
+const REJECTED_STATUSES = new Set([400, 404, 409, 410, 413, 415, 422]);
+
+export interface SyncOutcome {
+  /** Changes the server refused for good. They are dropped so they stop blocking the queue. */
+  rejected: number;
+}
+
+export async function syncAccount(db: SQLiteDatabase, force: boolean): Promise<SyncOutcome> {
   await pushPhotoConsent(db);
-  await drainOutbox(db, force);
+  const rejected = await drainOutbox(db, force);
   await pullChanges(db);
+  return { rejected };
 }
 
 async function pushPhotoConsent(db: SQLiteDatabase): Promise<void> {
@@ -80,16 +89,19 @@ async function pushPhotoConsent(db: SQLiteDatabase): Promise<void> {
   await writeSetting(db, "ai_photo_consent_pending", "0");
 }
 
-async function drainOutbox(db: SQLiteDatabase, force: boolean): Promise<void> {
+async function drainOutbox(db: SQLiteDatabase, force: boolean): Promise<number> {
   const rows = await db.getAllAsync<{
     id: string;
+    entity_type: string;
+    entity_id: string;
     method: string;
     path: string;
     payload_json: string;
     retry_count: number;
     next_retry_at: string | null;
-  }>("SELECT id, method, path, payload_json, retry_count, next_retry_at FROM sync_outbox ORDER BY created_at");
+  }>("SELECT id, entity_type, entity_id, method, path, payload_json, retry_count, next_retry_at FROM sync_outbox ORDER BY created_at");
   const now = new Date().toISOString();
+  let rejected = 0;
   for (const row of rows) {
     if (!force && row.next_retry_at && row.next_retry_at > now) continue;
     try {
@@ -99,15 +111,23 @@ async function drainOutbox(db: SQLiteDatabase, force: boolean): Promise<void> {
     } catch (error) {
       if (error instanceof OfflineError) throw error;
       if (error instanceof SessionExpired) throw error;
-      if (error instanceof ApiError && error.status === 404 && row.method === "DELETE") {
-        await db.runAsync("DELETE FROM sync_outbox WHERE id = ?", row.id);
-        continue;
-      }
       if (error instanceof ApiError && error.status === 409 && row.path === "/settings") {
         const body = JSON.parse(row.payload_json) as Record<string, unknown>;
         delete body.expected_updated_at;
         await sendOutbox(row.method, row.path, body);
         await db.runAsync("DELETE FROM sync_outbox WHERE id = ?", row.id);
+        continue;
+      }
+      if (error instanceof ApiError && REJECTED_STATUSES.has(error.status)) {
+        // Retrying cannot succeed, and a stuck row would also block every later change to this entity.
+        await db.runAsync("DELETE FROM sync_outbox WHERE id = ?", row.id);
+        if (row.entity_type === "meal" && error.status === 404) {
+          // The meal is gone on the server (deleted on another device). Drop the local copy too.
+          await removeMeal(db, row.entity_id);
+        } else if (!(row.method === "DELETE" && error.status === 404)) {
+          rejected += 1;
+          console.warn("fitlogr dropped a change the server rejected", row.method, row.path, error.status, error.message);
+        }
         continue;
       }
       const retryCount = row.retry_count + 1;
@@ -116,6 +136,7 @@ async function drainOutbox(db: SQLiteDatabase, force: boolean): Promise<void> {
       if (error instanceof ApiError && error.status >= 500) throw error;
     }
   }
+  return rejected;
 }
 
 async function sendOutbox(method: string, path: string, payload: unknown): Promise<void> {
@@ -186,10 +207,13 @@ async function pullChanges(db: SQLiteDatabase): Promise<void> {
       for (const record of changes.health_records) {
         if (record.record_type !== "weight") continue;
         if (blocked.has(`weight:${record.local_date}`)) continue;
+        // Same rule as the server: a weight typed in by hand wins over a scale reading for that day.
+        const manual = record.platform === "manual" || record.is_user_edited;
+        const sourceRecordId = manual ? null : record.source_record_id;
         if (record.deleted_at) {
-          await db.runAsync("DELETE FROM weights WHERE local_date = ?", record.local_date);
+          await deleteSyncedWeight(db, record.local_date, sourceRecordId);
         } else {
-          await writeWeightKg(db, record.local_date, record.value_num);
+          await writeSyncedWeight(db, record.local_date, record.value_num, sourceRecordId);
         }
       }
       await writeSetting(db, "sync_cursor", changes.cursor);

@@ -1,5 +1,6 @@
 import { dailyCalorieExpenditure, workoutDisplayName, type HealthRecordMetadata } from "@fitlogr/shared";
-import { recomputeDailyIntake } from "../db/summaries";
+import { EMPTY_INTAKE, intakeUpsert, type IntakeTotals } from "../db/summaries";
+import { loadUserPlan, snapshotFromPlan, type UserPlan } from "../settings/plan";
 
 interface HealthRow {
   id: string;
@@ -18,30 +19,68 @@ interface HealthRow {
   is_user_edited: number;
 }
 
+/** D1 allows 100 bound parameters per query; dates go into IN lists alongside the user id. */
+const DATES_PER_QUERY = 60;
+
+/**
+ * Rebuilds the daily summary rows for the given dates. Reads every date's records and meal totals in
+ * a few queries and writes all rows in one batch, so a large health sync stays inside Worker limits.
+ */
 export async function recomputeHealthDates(db: D1Database, userId: string, dates: Iterable<string>, now: string): Promise<void> {
-  const settings = await db
-    .prepare("SELECT timezone FROM user_settings WHERE user_id = ?")
-    .bind(userId)
-    .first<{ timezone: string }>();
-  for (const localDate of new Set(dates)) {
-    await recomputeOneDate(db, userId, localDate, settings?.timezone ?? "UTC", now);
+  const list = [...new Set(dates)].sort();
+  if (list.length === 0) return;
+  const user = await loadUserPlan(db, userId, new Date(now));
+  for (let start = 0; start < list.length; start += DATES_PER_QUERY) {
+    await recomputeDateGroup(db, userId, list.slice(start, start + DATES_PER_QUERY), user, now);
   }
 }
 
-async function recomputeOneDate(db: D1Database, userId: string, localDate: string, settingsTimezone: string, now: string): Promise<void> {
-  const rows = await db
-    .prepare(
-      `SELECT id, platform, record_type, source_record_id, source_app_id, source_device_name, start_time, end_time,
-              local_date, timezone, value_num, unit, metadata_json, is_user_edited
-       FROM health_records
-       WHERE user_id = ? AND local_date = ? AND deleted_at IS NULL`,
-    )
-    .bind(userId, localDate)
-    .all<HealthRow>();
-  const records = rows.results;
-  const timezone = recordTimezone(records) ?? settingsTimezone;
-  await recomputeDailyIntake(db, userId, localDate, timezone, now);
+async function recomputeDateGroup(db: D1Database, userId: string, dates: string[], user: UserPlan, now: string): Promise<void> {
+  const placeholders = dates.map(() => "?").join(", ");
+  const [health, meals] = await Promise.all([
+    db
+      .prepare(
+        `SELECT id, platform, record_type, source_record_id, source_app_id, source_device_name, start_time, end_time,
+                local_date, timezone, value_num, unit, metadata_json, is_user_edited
+         FROM health_records
+         WHERE user_id = ? AND local_date IN (${placeholders}) AND deleted_at IS NULL`,
+      )
+      .bind(userId, ...dates)
+      .all<HealthRow>(),
+    db
+      .prepare(
+        `SELECT local_date,
+                COALESCE(SUM(calories_kcal), 0) AS calories_kcal,
+                COALESCE(SUM(protein_g), 0) AS protein_g,
+                COALESCE(SUM(carbs_g), 0) AS carbs_g,
+                COALESCE(SUM(fat_g), 0) AS fat_g,
+                COUNT(*) AS meal_count
+         FROM meals
+         WHERE user_id = ? AND local_date IN (${placeholders}) AND deleted_at IS NULL
+         GROUP BY local_date`,
+      )
+      .bind(userId, ...dates)
+      .all<IntakeTotals & { local_date: string }>(),
+  ]);
+  const recordsByDate = new Map<string, HealthRow[]>();
+  for (const row of health.results) {
+    const list = recordsByDate.get(row.local_date) ?? [];
+    list.push(row);
+    recordsByDate.set(row.local_date, list);
+  }
+  const intakeByDate = new Map(meals.results.map((row) => [row.local_date, row]));
+  const statements: D1PreparedStatement[] = [];
+  for (const localDate of dates) {
+    const records = recordsByDate.get(localDate) ?? [];
+    const timezone = recordTimezone(records) ?? user.timezone;
+    const intake = intakeByDate.get(localDate) ?? EMPTY_INTAKE;
+    statements.push(intakeUpsert(db, { userId, localDate, timezone, intake, snapshot: snapshotFromPlan(user, localDate), now }));
+    statements.push(healthUpdate(db, userId, localDate, timezone, records, now));
+  }
+  await db.batch(statements);
+}
 
+function healthUpdate(db: D1Database, userId: string, localDate: string, timezone: string, records: HealthRow[], now: string): D1PreparedStatement {
   const activeRows = records.filter((row) => row.record_type === "active_calories");
   const restingRows = records.filter((row) => row.record_type === "resting_calories");
   const workouts = records.filter((row) => row.record_type === "workout");
@@ -56,8 +95,7 @@ async function recomputeOneDate(db: D1Database, userId: string, localDate: strin
   const weights = records.filter((row) => row.record_type === "weight");
   const manual = latest(weights.filter((row) => row.platform === "manual" || row.is_user_edited === 1));
   const weight = manual ?? latest(weights.filter((row) => row.platform !== "manual" && row.is_user_edited !== 1));
-
-  await db
+  return db
     .prepare(
       `UPDATE daily_summaries SET
          timezone = ?,
@@ -70,6 +108,7 @@ async function recomputeOneDate(db: D1Database, userId: string, localDate: strin
          workout_minutes = ?,
          avg_heart_rate_bpm = ?,
          resting_heart_rate_bpm = ?,
+         weight_kg = COALESCE(?, weight_kg),
          updated_at = ?
        WHERE user_id = ? AND local_date = ?`,
     )
@@ -84,17 +123,11 @@ async function recomputeOneDate(db: D1Database, userId: string, localDate: strin
       workouts.reduce((total, row) => total + durationMinutes(row), 0),
       heart ? heart.value_num : null,
       restingHeart ? restingHeart.value_num : null,
+      weight ? weight.value_num : null,
       now,
       userId,
       localDate,
-    )
-    .run();
-  if (weight) {
-    await db
-      .prepare("UPDATE daily_summaries SET weight_kg = ?, updated_at = ? WHERE user_id = ? AND local_date = ?")
-      .bind(weight.value_num, now, userId, localDate)
-      .run();
-  }
+    );
 }
 
 export function workoutKcal(row: { metadata_json: string | null }): number {

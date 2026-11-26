@@ -202,6 +202,42 @@ describe("health sync and daily rollup", () => {
     const rejected = await post("/api/health/sync", tooBig, tokenA);
     expect(rejected.status).toBe(400);
   });
+  it("skips a bad record instead of rejecting the batch, and ignores unchanged re-sends", async () => {
+    const token = await signIn("user-health-c", "c@example.com", "device-health-c");
+    const steps = sample({ record_type: "steps", external_id: "agg:steps:2026-11-23", local_date: "2026-11-23", value: 5000, unit: "count" });
+    const tooLong = sample({ record_type: "workout", external_id: "hk-long", local_date: "2026-11-23", value: 90_000, unit: "sec" });
+    const blankDevice = {
+      ...sample({ record_type: "steps", external_id: "agg:steps:2026-11-22", local_date: "2026-11-22", value: 10, unit: "count" }),
+      source_device_name: "",
+    };
+    const mixed = await post("/api/health/sync", { device_id: "device-health-c", records: [steps, tooLong, blankDevice], checkpoints: [] }, token);
+    expect(mixed.status).toBe(200);
+    expect(await mixed.json()).toMatchObject({ upserted: 1, skipped: 2, dates: ["2026-11-23"] });
+
+    const stamp = () =>
+      database
+        .prepare("SELECT updated_at FROM health_records WHERE user_id = ? AND source_record_id = ?")
+        .bind("user-health-c", "agg:steps:2026-11-23")
+        .first<{ updated_at: string }>();
+    const before = await stamp();
+    const resent = await post("/api/health/sync", { device_id: "device-health-c", records: [steps], checkpoints: [] }, token);
+    expect(await resent.json()).toMatchObject({ upserted: 0, skipped: 1, dates: [] });
+    expect(await stamp()).toEqual(before);
+
+    const changed = await post(
+      "/api/health/sync",
+      { device_id: "device-health-c", records: [{ ...steps, value: 6200 }], checkpoints: [] },
+      token,
+    );
+    expect(await changed.json()).toMatchObject({ upserted: 1, dates: ["2026-11-23"] });
+    const day = await (await get("/api/days/2026-11-23", token)).json();
+    expect(day.summary.steps).toBe(6200);
+    const summary = await database
+      .prepare("SELECT steps FROM daily_summaries WHERE user_id = ? AND local_date = ?")
+      .bind("user-health-c", "2026-11-23")
+      .first<{ steps: number }>();
+    expect(summary?.steps).toBe(6200);
+  });
 });
 
 function healthBatch() {

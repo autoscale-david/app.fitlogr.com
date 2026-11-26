@@ -54,7 +54,7 @@ export async function fetchMealPhotoUrl(
   if (response.status === 429) return { quota: true };
   if (!response.ok) {
     const detail = await readError(response);
-    if (isQuota(detail) || response.status === 403 && isQuota(detail)) return { quota: true };
+    if (isRateLimit(response.status, detail) || isStorageFull(detail)) return { quota: true };
     if (response.status === 401 || response.status === 403) {
       await markRevoked(db, userId, now);
       throw new ApiError(403, GOOGLE_RECONNECT, "Google Photos access was revoked. Reconnect Google to keep saving meal photos.");
@@ -218,8 +218,11 @@ async function batchCreate(
   const result = payload.newMediaItemResults?.[0];
   if (result?.mediaItem?.id) return result.mediaItem.id;
   const message = result?.status?.message ?? "";
-  if (/quota|exhausted|storage/i.test(message)) {
+  if (isStorageFull({ message, reason: "" })) {
     throw new ApiError(403, "GOOGLE_QUOTA_EXCEEDED", "Google Photos storage is full");
+  }
+  if (isRateLimit(0, { message, reason: "" })) {
+    throw new ApiError(502, "GOOGLE_UPSTREAM_ERROR", "Google Photos is busy. fitlogr will retry the upload.");
   }
   if (/album/i.test(message)) throw new ApiError(400, "ALBUM_MISSING", "The fitlogr album is missing");
   throw new ApiError(502, "GOOGLE_UPSTREAM_ERROR", "Google Photos did not save the photo");
@@ -232,7 +235,9 @@ async function googleFailure(db: D1Database, userId: string, now: Date, response
 }
 
 function failureFrom(status: number, detail: GoogleErrorDetail): ApiError {
-  if (isQuota(detail) || status === 429) return new ApiError(403, "GOOGLE_QUOTA_EXCEEDED", "Google Photos storage is full");
+  // A request-rate limit passes, so it is an upstream error the app retries, not a full library.
+  if (isRateLimit(status, detail)) return new ApiError(502, "GOOGLE_UPSTREAM_ERROR", "Google Photos is busy. fitlogr will retry the upload.");
+  if (isStorageFull(detail)) return new ApiError(403, "GOOGLE_QUOTA_EXCEEDED", "Google Photos storage is full");
   if (status === 401 || status === 403) {
     return new ApiError(403, GOOGLE_RECONNECT, "Google Photos access was revoked. Reconnect Google to keep saving meal photos.");
   }
@@ -257,8 +262,17 @@ async function readError(response: Response): Promise<GoogleErrorDetail> {
   }
 }
 
-function isQuota(detail: GoogleErrorDetail): boolean {
-  return /quota|exhausted|storage full/i.test(`${detail.reason} ${detail.message}`);
+/** Google API request quotas ("Quota exceeded for quota metric ... per minute", RESOURCE_EXHAUSTED, HTTP 429). */
+function isRateLimit(status: number, detail: GoogleErrorDetail): boolean {
+  if (status === 429) return true;
+  const text = `${detail.reason} ${detail.message}`;
+  if (isStorageFull(detail)) return false;
+  return /RESOURCE_EXHAUSTED|rateLimitExceeded|quota metric|per minute|per day|too many requests|quota exceeded/i.test(text);
+}
+
+/** The person's Google account is out of storage. */
+function isStorageFull(detail: GoogleErrorDetail): boolean {
+  return /storage (?:quota|is full|full|limit)|insufficient storage|out of storage|storageQuotaExceeded/i.test(`${detail.reason} ${detail.message}`);
 }
 
 function copyBuffer(bytes: Uint8Array): ArrayBuffer {

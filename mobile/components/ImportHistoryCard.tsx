@@ -4,6 +4,7 @@ import { router, useFocusEffect } from "expo-router";
 import { getMediaLibraryPermissionsAsync, requestMediaLibraryPermissionsAsync } from "expo-image-picker";
 import { PickerScopeRequired, type HistoryProgress } from "../services/photos";
 import { importFromGooglePhotos } from "../services/photos/picker";
+import { rateLimitMessage } from "../services/photos/upload";
 import { api } from "../services/api";
 import { AuthCancelled, useStore } from "../services/store";
 import { isExpoGo } from "../services/expoGo";
@@ -197,7 +198,9 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
     setBusy("google-photos");
     setNote(null);
     try {
-      const summary = await importFromGooglePhotos();
+      const summary = await importFromGooglePhotos((waiting) =>
+        setNote(waiting ? `Waiting ${formatWait(waiting)} for the photo analysis limit…` : null),
+      );
       setCounts({
         photos: summary.meals_imported,
         total: summary.total_picked,
@@ -211,10 +214,13 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
       } catch {
         // The meals are already on the account. The next sync will finish pulling them.
       }
+      const imported = `Imported ${summary.meals_imported} meal${summary.meals_imported === 1 ? "" : "s"} from Google Photos.`;
       setNote(
-        summary.total_picked === 0
-          ? "No Google Photos were selected."
-          : `Imported ${summary.meals_imported} meals from Google Photos.`,
+        summary.retry_after_seconds
+          ? `${imported} ${rateLimitMessage(summary.retry_after_seconds)} Pick the remaining photos again then.`
+          : summary.total_picked === 0
+            ? "No Google Photos were selected."
+            : imported,
       );
     } catch (error) {
       if (error instanceof PickerScopeRequired) {
@@ -292,6 +298,7 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
             {progress && busy === "apple-photos" ? (
               <Text style={ui.body}>
                 Scanned {progress.scanned}. Meals {progress.meals}. Skipped {progress.skipped}.
+                {progress.waitingSeconds ? ` Waiting ${formatWait(progress.waitingSeconds)} for the photo analysis limit.` : ""}
               </Text>
             ) : null}
             <Pressable
@@ -399,3 +406,9 @@ const styles = StyleSheet.create({
   rowTitleOff: { color: colors.muted, fontWeight: "600" },
   disabled: { opacity: 0.45 },
 });
+
+function formatWait(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return minutes > 0 ? `${minutes}:${String(rest).padStart(2, "0")}` : `${rest}s`;
+}
