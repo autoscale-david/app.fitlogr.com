@@ -237,6 +237,31 @@ describe("health sync and daily rollup", () => {
       .bind("user-health-c", "2026-11-23")
       .first<{ steps: number }>();
     expect(summary?.steps).toBe(6200);
+
+    // A workout re-sent on another day (edited in Apple Health) leaves the old day's totals.
+    const run = sample({
+      record_type: "workout",
+      external_id: "hk-move-1",
+      local_date: "2026-11-22",
+      value: 1800,
+      unit: "sec",
+      metadata: { activity_type: "Outdoor Run", workout_kcal: 250 },
+    });
+    await post("/api/health/sync", { device_id: "device-health-c", records: [run], checkpoints: [] }, token);
+    const moved = await post(
+      "/api/health/sync",
+      { device_id: "device-health-c", records: [{ ...run, local_date: "2026-11-23" }], checkpoints: [] },
+      token,
+    );
+    expect((await moved.json()).dates).toEqual(["2026-11-22", "2026-11-23"]);
+    const minutes = await database
+      .prepare("SELECT local_date, workout_minutes FROM daily_summaries WHERE user_id = ? AND local_date IN ('2026-11-22', '2026-11-23') ORDER BY local_date")
+      .bind("user-health-c")
+      .all<{ local_date: string; workout_minutes: number }>();
+    expect(minutes.results).toEqual([
+      { local_date: "2026-11-22", workout_minutes: 0 },
+      { local_date: "2026-11-23", workout_minutes: 30 },
+    ]);
   });
 });
 

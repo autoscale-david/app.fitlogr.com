@@ -9,6 +9,8 @@ import type { AppDeps } from "../types";
 import { RateLimitError, analyzeUploadedPhoto } from "./service";
 
 const PICKER_API = "https://photospicker.googleapis.com/v1";
+/** What one import call handled before paging existed; older app builds still call this way. */
+const LEGACY_IMPORT_LIMIT = 10;
 
 export async function userHasPickerScope(db: D1Database, userId: string): Promise<boolean> {
   const row = await db
@@ -81,15 +83,16 @@ export async function importPickerSession(
   deps: AppDeps,
   userId: string,
   sessionId: string,
-  rawCursor?: string,
+  request: { cursor?: string; paged?: boolean } = {},
 ): Promise<PickerImportSummary> {
   if (!(await userHasPickerScope(db, userId))) throw scopeRequired();
-  const cursor = decodeCursor(rawCursor);
+  const paged = request.paged === true || Boolean(request.cursor);
+  const cursor = decodeCursor(request.cursor);
   const settings = await db.prepare("SELECT timezone FROM user_settings WHERE user_id = ?").bind(userId).first<{ timezone: string }>();
   const timezone = settings?.timezone || "UTC";
   const url = new URL(`${PICKER_API}/mediaItems`);
   url.searchParams.set("sessionId", sessionId);
-  url.searchParams.set("pageSize", String(PHOTO_LIMITS.pickerPageSize));
+  url.searchParams.set("pageSize", String(paged ? PHOTO_LIMITS.pickerPageSize : LEGACY_IMPORT_LIMIT));
   if (cursor.p) url.searchParams.set("pageToken", cursor.p);
   const listed = await googleFetch(db, env, userId, deps.fetch, deps.now(), url.toString());
   const payload = await readJson(listed);
@@ -106,7 +109,7 @@ export async function importPickerSession(
       else if (outcome === "not_meal") summary.non_meals_skipped += 1;
       else summary.duplicates_skipped += 1;
     } catch (error) {
-      if (error instanceof RateLimitError) {
+      if (error instanceof RateLimitError && paged) {
         resumeAt = { p: cursor.p, o: index };
         retryAfter = error.retryAfter;
         break;
@@ -115,7 +118,8 @@ export async function importPickerSession(
       summary.errors += 1;
     }
   }
-  const next = resumeAt ?? (nextPageToken ? { p: nextPageToken, o: 0 } : null);
+  // An older app makes a single call and ignores the cursor, so that call finishes the session.
+  const next = paged ? (resumeAt ?? (nextPageToken ? { p: nextPageToken, o: 0 } : null)) : null;
   if (!next) {
     try {
       await googleFetch(db, env, userId, deps.fetch, deps.now(), `${PICKER_API}/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });

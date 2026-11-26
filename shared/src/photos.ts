@@ -175,6 +175,11 @@ export type PickerStatus = z.infer<typeof PickerStatusSchema>;
 export const PickerImportRequestSchema = z.object({
   /** Opaque position from the previous page's `next_cursor`. Omit for the first page. */
   cursor: z.string().min(1).max(4000).optional(),
+  /**
+   * Set by apps that follow `next_cursor`. Without it (older app builds) the server imports up to 10
+   * photos in one call and closes the session, as it always did.
+   */
+  paged: z.boolean().optional(),
 });
 export type PickerImportRequest = z.infer<typeof PickerImportRequestSchema>;
 

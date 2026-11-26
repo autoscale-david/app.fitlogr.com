@@ -236,7 +236,7 @@ describe("history import and maintenance", () => {
     pickerItems = Array.from({ length: 7 }, (_, index) =>
       item(`meal-${index}`, `https://images.example/meal-${index}`, `2026-10-0${index + 1}T18:00:00.000Z`),
     );
-    const first = await (await post("/api/photos/picker/sessions/picker-session-1/import", {}, token)).json();
+    const first = await (await post("/api/photos/picker/sessions/picker-session-1/import", { paged: true }, token)).json();
     expect(first).toMatchObject({ total_picked: 5, meals_imported: 5, retry_after_seconds: null });
     expect(first.next_cursor).toEqual(expect.any(String));
     expect(deletedSessions).toBe(0);
@@ -263,6 +263,20 @@ describe("history import and maintenance", () => {
     expect(deletedSessions).toBe(1);
     const meals = await database.prepare("SELECT COUNT(*) AS n FROM meals WHERE user_id = ?").bind("user-picker-pages").first<{ n: number }>();
     expect(meals?.n).toBe(7);
+  });
+
+  it("keeps the one-call import for older app builds that do not page", async () => {
+    const token = await signIn("user-picker-legacy", true);
+    await database
+      .prepare("UPDATE user_settings SET ai_consent_version = '2026-11-23', ai_consent_accepted_at = ? WHERE user_id = ?")
+      .bind(NOW.toISOString(), "user-picker-legacy")
+      .run();
+    pickerItems = Array.from({ length: 8 }, (_, index) =>
+      item(`meal-${index}`, `https://images.example/meal-${index}`, `2026-10-0${index + 1}T18:00:00.000Z`),
+    );
+    const result = await (await post("/api/photos/picker/sessions/picker-session-1/import", {}, token)).json();
+    expect(result).toMatchObject({ total_picked: 8, meals_imported: 8, next_cursor: null });
+    expect(deletedSessions).toBe(1);
   });
 
   it("names a disabled Photos Picker API instead of a generic failure", async () => {

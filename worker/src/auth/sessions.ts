@@ -17,6 +17,8 @@ interface SessionRow {
   device_id: string | null;
   expires_at: string;
   revoked_at: string | null;
+  replaced_by?: string | null;
+  grace_used_at?: string | null;
 }
 
 export async function issueSession(
@@ -56,19 +58,18 @@ export async function rotateSession(
   const hash = await sha256Hex(refreshToken);
   const current = await db
     .prepare(
-      `SELECT id, user_id, device_id, expires_at, revoked_at
+      `SELECT id, user_id, device_id, expires_at, revoked_at, replaced_by, grace_used_at
        FROM user_sessions WHERE refresh_token_hash = ?`,
     )
     .bind(hash)
     .first<SessionRow>();
   if (!current) throw new ApiError(401, "AUTH_INVALID", "Refresh token is not valid");
+  // Set when this refresh is the one allowed retry of a just-rotated token: the successor the phone
+  // never received is revoked in the same batch.
+  let lostSuccessor: string | null = null;
   if (current.revoked_at) {
-    // A token rotated moments ago is most likely a retry after the phone lost the refresh response,
-    // not a stolen token. Issue another session instead of signing the device out. Replays after the
-    // grace window still revoke the whole device family.
-    const rotatedAgoMs = now.getTime() - Date.parse(current.revoked_at);
-    const graceful = Number.isFinite(rotatedAgoMs) && rotatedAgoMs >= 0 && rotatedAgoMs <= REFRESH_ROTATION_GRACE_SECONDS * 1000;
-    if (!graceful || !(await deviceFamilyActive(db, current.user_id, current.device_id, now))) {
+    lostSuccessor = await graceSuccessor(db, current, now);
+    if (!lostSuccessor) {
       await revokeDeviceSessions(db, current.user_id, current.device_id, now);
       throw new ApiError(401, "AUTH_INVALID", "Refresh token is not valid");
     }
@@ -80,16 +81,36 @@ export async function rotateSession(
   const stamp = nowIso(now);
   const refreshExpiresAt = addSeconds(now, REFRESH_TOKEN_SECONDS);
   const accessExpiresAt = addSeconds(now, ACCESS_TOKEN_SECONDS);
-  await db.batch([
-    db
-      .prepare(
-        `INSERT INTO user_sessions
-          (id, user_id, device_id, refresh_token_hash, expires_at, revoked_at, created_at, last_used_at)
-         VALUES (?, ?, ?, ?, ?, NULL, ?, ?)`,
-      )
-      .bind(nextId, current.user_id, current.device_id, await sha256Hex(nextRefresh), refreshExpiresAt, stamp, stamp),
-    db.prepare("UPDATE user_sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL").bind(stamp, current.id),
-  ]);
+  const insert = db
+    .prepare(
+      `INSERT INTO user_sessions
+        (id, user_id, device_id, refresh_token_hash, expires_at, revoked_at, created_at, last_used_at)
+       VALUES (?, ?, ?, ?, ?, NULL, ?, ?)`,
+    )
+    .bind(nextId, current.user_id, current.device_id, await sha256Hex(nextRefresh), refreshExpiresAt, stamp, stamp);
+  if (lostSuccessor) {
+    // grace_used_at IS NULL makes a concurrent second retry change nothing; it is then refused below.
+    const results = await db.batch([
+      db
+        .prepare("UPDATE user_sessions SET grace_used_at = ? WHERE id = ? AND grace_used_at IS NULL RETURNING id")
+        .bind(stamp, current.id),
+      insert,
+      db
+        .prepare("UPDATE user_sessions SET revoked_at = ?, replaced_by = ? WHERE id = ? AND revoked_at IS NULL")
+        .bind(stamp, nextId, lostSuccessor),
+    ]);
+    if ((results[0]?.results?.length ?? 0) === 0) {
+      await revokeDeviceSessions(db, current.user_id, current.device_id, now);
+      throw new ApiError(401, "AUTH_INVALID", "Refresh token is not valid");
+    }
+  } else {
+    await db.batch([
+      insert,
+      db
+        .prepare("UPDATE user_sessions SET revoked_at = ?, replaced_by = ? WHERE id = ? AND revoked_at IS NULL")
+        .bind(stamp, nextId, current.id),
+    ]);
+  }
   const accessToken = await signSession(sessionSecret, {
     sub: current.user_id,
     sid: nextId,
@@ -135,16 +156,21 @@ export async function revokeAllSessions(db: D1Database, userId: string, now: Dat
     .run();
 }
 
-/** True while the device still has a live session (the rotation successor was not revoked). */
-async function deviceFamilyActive(db: D1Database, userId: string, deviceId: string | null, now: Date): Promise<boolean> {
-  const row = await db
-    .prepare(
-      `SELECT COUNT(*) AS n FROM user_sessions
-       WHERE user_id = ? AND (device_id = ? OR (? IS NULL AND device_id IS NULL)) AND revoked_at IS NULL AND expires_at > ?`,
-    )
-    .bind(userId, deviceId, deviceId, nowIso(now))
-    .first<{ n: number }>();
-  return (row?.n ?? 0) > 0;
+/**
+ * A revoked refresh token gets one more use only when all of these hold: it was revoked by rotation
+ * (not logout), within the grace window, its grace was not used yet, and the session it rotated into
+ * is still live and has not been rotated itself (so the phone never got its token). Returns that
+ * successor's id, which the caller revokes; otherwise null and the token counts as a replay.
+ */
+async function graceSuccessor(db: D1Database, current: SessionRow, now: Date): Promise<string | null> {
+  if (!current.revoked_at || !current.replaced_by || current.grace_used_at) return null;
+  const rotatedAgoMs = now.getTime() - Date.parse(current.revoked_at);
+  if (!Number.isFinite(rotatedAgoMs) || rotatedAgoMs < 0 || rotatedAgoMs > REFRESH_ROTATION_GRACE_SECONDS * 1000) return null;
+  const successor = await db
+    .prepare("SELECT id FROM user_sessions WHERE id = ? AND user_id = ? AND revoked_at IS NULL AND expires_at > ?")
+    .bind(current.replaced_by, current.user_id, nowIso(now))
+    .first<{ id: string }>();
+  return successor?.id ?? null;
 }
 
 async function revokeDeviceSessions(db: D1Database, userId: string, deviceId: string | null, now: Date): Promise<void> {

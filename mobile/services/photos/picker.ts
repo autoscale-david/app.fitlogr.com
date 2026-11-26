@@ -40,7 +40,7 @@ export async function importFromGooglePhotos(onWait?: (seconds: number | null) =
   const path = `/photos/picker/sessions/${encodeURIComponent(session.session_id)}/import`;
   let cursor: string | null = null;
   for (let page = 0; page < 100; page += 1) {
-    const result: PickerImportSummary = await api.send<PickerImportSummary>("POST", path, cursor ? { cursor } : {});
+    const result: PickerImportSummary = await api.send<PickerImportSummary>("POST", path, cursor ? { cursor, paged: true } : { paged: true });
     total.total_picked += result.total_picked;
     total.meals_imported += result.meals_imported;
     total.non_meals_skipped += result.non_meals_skipped;

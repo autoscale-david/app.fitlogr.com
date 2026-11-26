@@ -25,6 +25,9 @@ export async function syncHealth(
   const dates = new Set<string>();
   let skipped = rejected;
   const upserts: D1PreparedStatement[] = [];
+  /** Record key for each upsert, in order, so a changed record can also rebuild the day it moved from. */
+  const keys: string[] = [];
+  const canonicals: { platform: string; record_type: string; source_record_id: string }[] = [];
 
   for (const record of body.records) {
     let canonical;
@@ -37,6 +40,8 @@ export async function syncHealth(
       }
       throw error;
     }
+    keys.push(recordKey(canonical));
+    canonicals.push(canonical);
     upserts.push(
       db
         .prepare(
@@ -110,22 +115,57 @@ export async function syncHealth(
       .bind(userId, body.device_id, checkpoint.source, checkpoint.cursor, stamp, stamp),
   );
 
+  const previousDates = await storedDates(db, userId, canonicals);
   let upserted = 0;
   const statements = [...upserts, ...checkpoints];
   if (statements.length > 0) {
     const results = await db.batch<{ local_date: string }>(statements);
-    for (const result of results.slice(0, upserts.length)) {
+    results.slice(0, upserts.length).forEach((result, index) => {
       // RETURNING yields the stored date: for a deletion that is the day the record used to count toward.
       const row = result.results?.[0];
-      if (row) {
-        upserted += 1;
-        dates.add(row.local_date);
-      } else skipped += 1;
-    }
+      if (!row) {
+        skipped += 1;
+        return;
+      }
+      upserted += 1;
+      dates.add(row.local_date);
+      // A record that moved to another day (edited sample, timezone change) must leave the old day too.
+      const before = previousDates.get(keys[index] ?? "");
+      if (before) dates.add(before);
+    });
   }
 
   await recomputeHealthDates(db, userId, dates, stamp);
   return { upserted, skipped, dates: [...dates].sort() };
+}
+
+function recordKey(record: { platform: string; record_type: string; source_record_id: string }): string {
+  return `${record.platform}\u0000${record.record_type}\u0000${record.source_record_id}`;
+}
+
+/** D1 allows 100 bound parameters per query. */
+const IDS_PER_QUERY = 90;
+
+/** The day each already-stored record currently counts toward, read before the upserts change it. */
+async function storedDates(
+  db: D1Database,
+  userId: string,
+  records: { platform: string; record_type: string; source_record_id: string }[],
+): Promise<Map<string, string>> {
+  const dates = new Map<string, string>();
+  const ids = [...new Set(records.map((record) => record.source_record_id))];
+  for (let start = 0; start < ids.length; start += IDS_PER_QUERY) {
+    const chunk = ids.slice(start, start + IDS_PER_QUERY);
+    const rows = await db
+      .prepare(
+        `SELECT platform, record_type, source_record_id, local_date FROM health_records
+         WHERE user_id = ? AND source_record_id IN (${chunk.map(() => "?").join(", ")})`,
+      )
+      .bind(userId, ...chunk)
+      .all<{ platform: string; record_type: string; source_record_id: string; local_date: string }>();
+    for (const row of rows.results) dates.set(recordKey(row), row.local_date);
+  }
+  return dates;
 }
 
 async function ensureDevice(db: D1Database, userId: string, deviceId: string, now: Date): Promise<void> {

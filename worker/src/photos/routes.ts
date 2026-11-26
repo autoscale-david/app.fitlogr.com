@@ -29,7 +29,7 @@ export function registerPhotoRoutes(app: Hono<AppEnv>): void {
       c.get("deps"),
       currentAuth(c.get("auth")).userId,
       sessionId,
-      parsed.data.cursor,
+      parsed.data,
     );
     return c.json(summary);
   });

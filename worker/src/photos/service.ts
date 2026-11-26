@@ -450,16 +450,17 @@ async function loadKnown(db: D1Database, userId: string, hashes: string[]): Prom
     .bind(userId)
     .all<KnownPhotoHash>();
   const byId = new Map(recent.results.map((photo) => [photo.id, photo]));
-  if (hashes.length > 0) {
-    const placeholders = hashes.map(() => "?").join(", ");
+  // D1 allows 100 bound parameters per query; a full check-hashes batch is 100 hashes plus the user id.
+  for (let start = 0; start < hashes.length; start += 90) {
+    const chunk = hashes.slice(start, start + 90);
     const exact = await db
       .prepare(
         `SELECT p.id, p.content_sha256, p.perceptual_hash, p.status, p.captured_at, m.id AS meal_id
          FROM photos p
          LEFT JOIN meals m ON m.photo_id = p.id AND m.user_id = p.user_id AND m.deleted_at IS NULL
-         WHERE p.user_id = ? AND p.deleted_at IS NULL AND p.content_sha256 IN (${placeholders})`,
+         WHERE p.user_id = ? AND p.deleted_at IS NULL AND p.content_sha256 IN (${chunk.map(() => "?").join(", ")})`,
       )
-      .bind(userId, ...hashes)
+      .bind(userId, ...chunk)
       .all<KnownPhotoHash>();
     for (const photo of exact.results) byId.set(photo.id, photo);
   }

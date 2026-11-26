@@ -168,13 +168,15 @@ export async function retryAlbumUploads(db: SQLiteDatabase, limit = 5): Promise<
       await setAlbumPending(db, row.local_asset_id, false);
       uploaded += 1;
     } catch (error) {
-      if (error instanceof ApiError && [400, 404, 409, 413, 415].includes(error.status)) {
+      if (error instanceof OfflineError || error instanceof SessionExpired) throw error;
+      // Rejected for good, or Google storage is full (retrying only re-sends the photo until space is freed).
+      if (error instanceof ApiError && ([400, 404, 409, 413, 415].includes(error.status) || error.code === "GOOGLE_QUOTA_EXCEEDED")) {
         await setAlbumPending(db, row.local_asset_id, false);
         continue;
       }
-      // Offline, revoked Google access, or Google still failing: keep it for the next sync.
-      if (error instanceof OfflineError || error instanceof SessionExpired) throw error;
       if (error instanceof ApiError && error.code === "google_reconnect_required") break;
+      // Google still failing: keep it, but move it to the back so other queued photos get a turn.
+      await db.runAsync("UPDATE local_media_assets SET updated_at = ? WHERE local_asset_id = ?", new Date().toISOString(), row.local_asset_id);
     }
   }
   return uploaded;
