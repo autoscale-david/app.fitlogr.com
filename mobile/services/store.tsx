@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { AppState } from "react-native";
-import { openDatabaseAsync, type SQLiteDatabase } from "expo-sqlite";
+import type { SQLiteDatabase } from "expo-sqlite";
 import { AI_PHOTO_CONSENT_VERSION, type DailyInsight, type TrendsResponse } from "@fitlogr/shared";
 import { api, SessionExpired } from "./api";
 import { getHealthProvider, readHealthConnection, syncAppleHealth, syncHealthHistory, type HealthConnection } from "./health";
@@ -13,7 +13,7 @@ import {
   loadWeekStatus,
   localMealPhoto,
   loggedDates,
-  migrate,
+  openFitlogrDatabase,
   pendingChanges,
   readAccount,
   readGoals,
@@ -41,14 +41,12 @@ import {
   importPreparedPhoto,
   prepareMealImage,
   retryPendingPhotos,
-  scanMealPhotosFromPastDays,
-  scanRecentPhotos,
   type HistoryProgress,
   type HistoryScanResult,
   type LibraryAccess,
-  type ScanResult,
 } from "./photos";
-import { isExpoGo } from "./expoGo";
+import { subscribeEngine, runPass } from "./engine/runPass";
+import { runPhotoPipeline } from "./engine/photoPass";
 import { queueMeal, queueMealDelete, queuePhotoExclude, queueSettings, queueWeight, syncAccount } from "./sync";
 
 interface Account {
@@ -88,7 +86,7 @@ interface Store {
   listWeights: (from: string, to: string) => Promise<{ localDate: string; weightKg: number }[]>;
   loadInsight: (date: string) => Promise<DailyInsight | null>;
   loadTrends: (days: 7 | 14 | 30) => Promise<TrendsResponse | null>;
-  localMealPhoto: (photoId: string) => Promise<{ fileUri: string | null; libraryId: string | null } | null>;
+  localMealPhoto: (photoId: string) => Promise<{ thumbUri: string | null; fileUri: string | null; libraryId: string | null } | null>;
   exportAccount: () => Promise<void>;
   deleteAccount: () => Promise<void>;
   loggedDates: () => Promise<string[]>;
@@ -112,9 +110,6 @@ interface Store {
 
 const StoreContext = createContext<Store | null>(null);
 let syncChain: Promise<void> = Promise.resolve();
-let lastRecentScanAt = 0;
-let lastLibraryAccess: LibraryAccess | null = null;
-const RECENT_SCAN_GAP_MS = 60 * 1000;
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [db, setDb] = useState<SQLiteDatabase | null>(null);
@@ -130,28 +125,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [sessionExpired, setSessionExpired] = useState(false);
   const [photoScan, setPhotoScan] = useState<PhotoScanState>({ active: false, message: null, access: null });
-
-  /** One camera-roll scan. The Log refreshes as each meal lands, not only when the scan ends. */
-  async function runRecentScan(database: SQLiteDatabase, ask: boolean): Promise<ScanResult> {
-    lastRecentScanAt = Date.now();
-    try {
-      const result = await scanRecentPhotos(database, {
-        ask,
-        onSend: () => setPhotoScan((current) => ({ ...current, active: true, message: null })),
-        onMeal: () => setRefreshToken((token) => token + 1),
-      });
-      lastLibraryAccess = result.access;
-      setPhotoScan({ active: false, message: result.imported > 0 ? result.message : result.notice, access: result.access });
-      if (result.imported > 0) {
-        setRefreshToken((token) => token + 1);
-        void sync(database, true);
-      }
-      return result;
-    } catch (error) {
-      setPhotoScan((current) => ({ ...current, active: false }));
-      throw error;
-    }
-  }
 
   /**
    * Stores a new session. Re-signing into the account already on this phone keeps its data and queued
@@ -241,9 +214,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    openDatabaseAsync("fitlogr.db")
+    openFitlogrDatabase()
       .then(async (database) => {
-        await migrate(database);
         const session = await readSession();
         let nextMode = await readMode(database);
         if (session.refreshToken && nextMode !== "account") {
@@ -268,7 +240,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           setSessionExpired(expired);
           if (expired) setSyncError("Your session ended. Sign in again to keep syncing. Everything on this phone is kept.");
         }
-        if (!cancelled && session.refreshToken) await sync(database, true);
+        if (!cancelled && session.refreshToken && AppState.currentState === "active") {
+          await runPass({ reason: "foreground", active: true });
+        }
       })
       .catch((error: unknown) => {
         console.error("Failed to open fitlogr database", error);
@@ -280,25 +254,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!db) return;
+    const unsubscribe = subscribeEngine((event) => {
+      if (event.type === "meal" || event.type === "state") {
+        setRefreshToken((token) => token + 1);
+        void refreshPending(db);
+        void readGoals(db).then(setGoals);
+        void readHealthConnection(db).then(setHealth);
+      }
+      if (event.type === "progress" && event.message) {
+        setPhotoScan((current) => ({ ...current, active: false, message: event.message }));
+      }
+    });
     const subscription = AppState.addEventListener("change", (state) => {
       if (state !== "active") return;
-      void sync(db, false);
-      void pickupRecentPhotos(db);
+      void runPass({ reason: "foreground", active: true });
     });
-    return () => subscription.remove();
+    return () => {
+      unsubscribe();
+      subscription.remove();
+    };
   }, [db]);
-
-  async function pickupRecentPhotos(database: SQLiteDatabase) {
-    if (isExpoGo()) return;
-    if ((await readMode(database)) !== "account") return;
-    if (!(await readSession()).refreshToken) return;
-    if ((await readSetting(database, "ai_photo_consent_version")) !== AI_PHOTO_CONSENT_VERSION) return;
-    // While access is missing or limited, re-check on every return to the app: the person may have
-    // just changed it in iOS Settings.
-    const waitingOnAccess = lastLibraryAccess !== null && lastLibraryAccess !== "full";
-    if (!waitingOnAccess && Date.now() - lastRecentScanAt < RECENT_SCAN_GAP_MS) return;
-    await runRecentScan(database, false);
-  }
 
   const value = useMemo<Store>(
     () => ({
@@ -494,9 +469,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         } catch {
           await writeSetting(db, "ai_photo_consent_pending", "1");
         }
-        // The server knows about the consent now, so the Log can run its first automatic scan right away.
-        lastRecentScanAt = 0;
         setRefreshToken((token) => token + 1);
+        if (AppState.currentState === "active") void runPass({ reason: "foreground", active: true });
       },
       addMealPhoto: async (uri, captured) => {
         if (!db || mode !== "account") return "Sign in with Google before analyzing a meal photo.";
@@ -525,13 +499,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             message: "Sign in with Google before importing history.",
           };
         }
-        const result = await scanMealPhotosFromPastDays(db, { days, onProgress, signal });
-        try {
-          await sync(db, true);
-        } finally {
-          setRefreshToken((token) => token + 1);
-        }
-        return result;
+        const result = await runPhotoPipeline(db, {
+          days,
+          budgetMs: Number.POSITIVE_INFINITY,
+          ask: true,
+          signal,
+          onProgress: (counts) =>
+            onProgress({
+              scanned: counts.checked,
+              skipped: 0,
+              meals: counts.meals,
+              nonMeals: Math.max(0, counts.analysed - counts.meals),
+              errors: counts.errors,
+            }),
+        });
+        setPhotoScan({ active: false, message: result.message, access: result.access });
+        setRefreshToken((token) => token + 1);
+        return {
+          status: result.access === "denied" || result.access === "undetermined" ? "permission_denied" : signal.aborted ? "cancelled" : "imported",
+          capped: result.stoppedForBudget,
+          scanned: result.counts.checked,
+          skipped: 0,
+          meals: result.counts.meals,
+          nonMeals: Math.max(0, result.counts.analysed - result.counts.meals),
+          errors: result.counts.errors,
+          message: result.message,
+        };
       },
       importHealthHistory: async (days) => {
         if (!db || mode !== "account") return { message: "Sign in with Google before importing Apple Health.", total: 0, workouts: 0 };
@@ -542,9 +535,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       scanMealPhotos: async (announceEmpty = false) => {
         if (!db || mode !== "account" || !photoConsent) return "";
         if (sessionExpired) return announceEmpty ? "Sign in again to keep importing meal photos." : "";
-        if (!announceEmpty && Date.now() - lastRecentScanAt < RECENT_SCAN_GAP_MS) return "";
-        const result = await runRecentScan(db, announceEmpty);
-        return result.status === "empty" && !announceEmpty ? "" : result.message;
+        setPhotoScan((current) => ({ ...current, active: true, message: null }));
+        const result = await runPass({ reason: "manual", active: AppState.currentState === "active" });
+        const message = result.photos?.message ?? "";
+        setPhotoScan({ active: false, message: message || null, access: result.photos?.access ?? null });
+        return !message || (!announceEmpty && (result.photos?.counts.meals ?? 0) === 0) ? "" : message;
       },
       logWeight: async (localDate, weightKg) => {
         if (!db) return;

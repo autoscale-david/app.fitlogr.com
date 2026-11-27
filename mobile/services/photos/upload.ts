@@ -18,6 +18,13 @@ export interface ImportResult {
   message: string;
   /** Set when photo analysis is rate limited: wait this long before sending another photo. */
   retryAfterSeconds?: number;
+  remotePhotoId?: string | null;
+  mealId?: string | null;
+  name?: string;
+  kcal?: number;
+  classification?: "meal" | "workout" | "ignore" | null;
+  confidence?: number | null;
+  estimate?: unknown;
 }
 
 /** Photos being sent right now, so two scans running at once never upload the same photo twice. */
@@ -30,13 +37,22 @@ export async function alreadyChecked(db: SQLiteDatabase, assetId: string): Promi
     "SELECT scan_status FROM local_media_assets WHERE local_asset_id = ?",
     assetId,
   );
-  return Boolean(seen && seen.scan_status !== "pending" && seen.scan_status !== "error");
+  // Queued photos still need analysis. Pending and error are retried too.
+  return Boolean(seen && seen.scan_status !== "pending" && seen.scan_status !== "error" && seen.scan_status !== "queued");
 }
 
 export async function importPreparedPhoto(
   db: SQLiteDatabase,
   image: PreparedMealImage,
-  input: { capturedAt: string; localDate: string; source: PhotoSource; assetId?: string; forceMeal?: boolean },
+  input: {
+    capturedAt: string;
+    localDate: string;
+    source: PhotoSource;
+    assetId?: string;
+    forceMeal?: boolean;
+    onDeviceVerdict?: string;
+    onDeviceLabels?: { id: string; confidence: number }[];
+  },
 ): Promise<ImportResult> {
   if ((await readSetting(db, "ai_photo_consent_version")) !== AI_PHOTO_CONSENT_VERSION) {
     return { kind: "consent", message: "Agree to photo analysis before sending a meal photo." };
@@ -80,6 +96,8 @@ export async function importPreparedPhoto(
       force_meal: input.forceMeal === true,
       // This app keeps the photo on the phone. Older builds omit the flag and still use the album.
       upload_to_google_photos: false,
+      ...(input.onDeviceVerdict ? { on_device_verdict: input.onDeviceVerdict } : {}),
+      ...(input.onDeviceLabels ? { on_device_labels: input.onDeviceLabels } : {}),
     };
     const form = new FormData();
     form.append("metadata", JSON.stringify(metadata));
@@ -104,12 +122,22 @@ export async function importPreparedPhoto(
         items: analyzed.meal.items.filter((item) => !item.deleted_at).map(toLocalItem),
       });
     }
-    await remember(db, assetId, image, input.capturedAt, analyzed.outcome, analyzed.photo.id);
+    await remember(db, assetId, image, input.capturedAt, analyzed.classification ?? analyzed.outcome, analyzed.photo.id);
+    const shared = {
+      remotePhotoId: analyzed.photo.id,
+      mealId: analyzed.meal?.id ?? null,
+      name: analyzed.meal?.name ?? analyzed.estimate?.items[0]?.name,
+      kcal: analyzed.estimate?.kcal ?? analyzed.meal?.calories_kcal,
+      classification: analyzed.classification ?? null,
+      confidence: analyzed.estimate?.confidence ?? null,
+      estimate: analyzed.estimate ?? null,
+    };
     if (analyzed.outcome === "not_meal") {
-      return { kind: "not_meal", message: "That doesn't look like a meal, so it wasn't added." };
+      const workout = analyzed.classification === "workout";
+      return { kind: "not_meal", message: workout ? "Workout photo recorded." : "That doesn't look like a meal, so it wasn't added.", ...shared };
     }
-    if (analyzed.outcome === "duplicate") return { kind: "duplicate", message: "That meal photo is already logged." };
-    return { kind: "meal", message: analyzed.meal ? `Logged ${analyzed.meal.name}.` : "Meal photo analyzed." };
+    if (analyzed.outcome === "duplicate") return { kind: "duplicate", message: "That meal photo is already logged.", ...shared };
+    return { kind: "meal", message: analyzed.meal ? `Logged ${analyzed.meal.name}.` : "Meal photo analyzed.", ...shared };
   } catch (error) {
     if (error instanceof OfflineError) {
       await remember(db, assetId, image, input.capturedAt, "pending", null);

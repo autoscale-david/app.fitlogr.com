@@ -73,7 +73,7 @@ export function MealPhoto({
 
     lookup(photoId).then((local) => {
       if (cancelled) return;
-      const onPhone = local?.fileUri ?? local?.libraryId ?? null;
+      const onPhone = local?.thumbUri ?? local?.fileUri ?? local?.libraryId ?? null;
       if (onPhone) {
         setPhoneCopy(true);
         setUrl(onPhone);

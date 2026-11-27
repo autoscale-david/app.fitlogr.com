@@ -1,4 +1,4 @@
-import type { SQLiteDatabase } from "expo-sqlite";
+import { openDatabaseAsync, type SQLiteDatabase } from "expo-sqlite";
 import {
   addCalendarDays,
   caloriePlanFromApi,
@@ -14,6 +14,17 @@ import {
 } from "@fitlogr/shared";
 import { LB_PER_KG } from "../theme";
 import { addDays, atLocalTime, calendarDay, localDateISO } from "./dates";
+
+let openingDatabase: Promise<SQLiteDatabase> | null = null;
+
+/** One shared connection so the engine and the screen use the same database. */
+export function openFitlogrDatabase(): Promise<SQLiteDatabase> {
+  openingDatabase ??= openDatabaseAsync("fitlogr.db").then(async (database) => {
+    await migrate(database);
+    return database;
+  });
+  return openingDatabase;
+}
 
 export interface Goals {
   unitSystem: UnitSystem;
@@ -204,6 +215,25 @@ export async function migrate(db: SQLiteDatabase): Promise<void> {
   `);
   // Kept so existing installs open. The iPhone app no longer queues album uploads.
   await addColumn(db, "ALTER TABLE local_media_assets ADD COLUMN google_pending INTEGER NOT NULL DEFAULT 0");
+  for (const statement of [
+    "ALTER TABLE local_media_assets ADD COLUMN capture_date TEXT",
+    "ALTER TABLE local_media_assets ADD COLUMN photo_source TEXT",
+    "ALTER TABLE local_media_assets ADD COLUMN verdict TEXT",
+    "ALTER TABLE local_media_assets ADD COLUMN labels_json TEXT",
+    "ALTER TABLE local_media_assets ADD COLUMN classifier_id TEXT",
+    "ALTER TABLE local_media_assets ADD COLUMN policy_version TEXT",
+    "ALTER TABLE local_media_assets ADD COLUMN classified_at TEXT",
+    "ALTER TABLE local_media_assets ADD COLUMN ai_classification TEXT",
+    "ALTER TABLE local_media_assets ADD COLUMN ai_confidence REAL",
+    "ALTER TABLE local_media_assets ADD COLUMN ai_estimate_json TEXT",
+    "ALTER TABLE local_media_assets ADD COLUMN ai_at TEXT",
+    "ALTER TABLE local_media_assets ADD COLUMN meal_id TEXT",
+    "ALTER TABLE local_media_assets ADD COLUMN thumb_uri TEXT",
+    "ALTER TABLE local_media_assets ADD COLUMN last_error TEXT",
+  ]) {
+    await addColumn(db, statement);
+  }
+  await db.execAsync("CREATE INDEX IF NOT EXISTS idx_local_media_capture_date ON local_media_assets(capture_date)");
   const seeded = await db.getFirstAsync<{ value: string }>(
     "SELECT value FROM settings WHERE key = ?",
     "seeded",
@@ -505,17 +535,18 @@ function numberOr(value: string | undefined, fallback: number): number {
 
 export type DataMode = "demo" | "account";
 
-/** A meal photo already on this phone: the compressed file, then the library asset. */
+/** A meal photo already on this phone: thumbnail, then the compressed file, then the library asset. */
 export async function localMealPhoto(
   db: SQLiteDatabase,
   remotePhotoId: string,
-): Promise<{ fileUri: string | null; libraryId: string | null }> {
-  const row = await db.getFirstAsync<{ uri: string | null; local_asset_id: string }>(
-    "SELECT uri, local_asset_id FROM local_media_assets WHERE remote_photo_id = ? ORDER BY updated_at DESC LIMIT 1",
+): Promise<{ thumbUri: string | null; fileUri: string | null; libraryId: string | null }> {
+  const row = await db.getFirstAsync<{ thumb_uri: string | null; uri: string | null; local_asset_id: string }>(
+    "SELECT thumb_uri, uri, local_asset_id FROM local_media_assets WHERE remote_photo_id = ? ORDER BY updated_at DESC LIMIT 1",
     remotePhotoId,
   );
-  if (!row) return { fileUri: null, libraryId: null };
+  if (!row) return { thumbUri: null, fileUri: null, libraryId: null };
   return {
+    thumbUri: row.thumb_uri,
     fileUri: row.uri,
     libraryId: row.local_asset_id.startsWith("ph://") ? row.local_asset_id : null,
   };
