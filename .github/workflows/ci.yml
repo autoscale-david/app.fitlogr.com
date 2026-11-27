@@ -18,4 +18,6 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - name: Validate D1 migrations in order
-        run: cat worker/migrations/*.sql | sqlite3 :memory:
+        # A block scalar: the trailing colon in ":memory:" is not valid in a plain YAML value.
+        run: |
+          cat worker/migrations/*.sql | sqlite3 :memory:
