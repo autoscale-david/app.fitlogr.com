@@ -21,6 +21,15 @@ export function estimateFromModelPayload(payload: unknown): CalorieEstimate {
   return estimateFromVision(MealVisionSchema.parse(payload));
 }
 
+export interface PublishedEstimate extends CalorieEstimate {
+  confidence: number;
+}
+
+/** Estimate plus the model's confidence, for the analyse response and the stored JSON. */
+export function publishedEstimate(analysis: MealVision): PublishedEstimate {
+  return { ...estimateFromVision(analysis), confidence: analysis.confidence };
+}
+
 export function estimateFromVision(analysis: MealVision): CalorieEstimate {
   if (analysis.classification === "workout") {
     const readout = analysis.burn_kcal;

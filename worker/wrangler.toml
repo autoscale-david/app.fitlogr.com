@@ -35,6 +35,8 @@ OPENROUTER_TEXT_MODEL = "google/gemini-2.5-flash-lite"
 OPENROUTER_TEXT_FALLBACK_MODELS = "openai/gpt-4o-mini"
 APP_URL = "https://fitlogr.com"
 API_BASE_URL = "https://fitlogr.com/api"
+VISION_BURST_LIMIT = "40"
+VISION_DAILY_LIMIT = "400"
 
 [[env.local.d1_databases]]
 binding = "DB"
@@ -54,6 +56,8 @@ OPENROUTER_TEXT_FALLBACK_MODELS = "openai/gpt-4o-mini"
 APP_URL = "https://fitlogr.com"
 API_BASE_URL = "https://fitlogr.com/api"
 ENVIRONMENT = "production"
+VISION_BURST_LIMIT = "40"
+VISION_DAILY_LIMIT = "400"
 
 [[routes]]
 pattern = "fitlogr.com"

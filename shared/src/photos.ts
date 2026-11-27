@@ -11,9 +11,9 @@ export const PHOTO_LIMITS = {
   maxBatch: 100,
   maxEdgePx: 1280,
   jpegQuality: 0.8,
-  /** Rolling 24 h cap on vision calls per user. Sized for a one-time history import, not only daily logging. */
-  dailyVision: 200,
-  burstVision: 30,
+  /** Rolling 24 h cap on vision calls per user. The worker may override this with VISION_DAILY_LIMIT. */
+  dailyVision: 400,
+  burstVision: 40,
   burstWindowMs: 5 * 60 * 1000,
   nearDuplicateDistance: 8,
   /** A perceptual match only counts as the same meal when the two photos were taken this close together. */
@@ -75,6 +75,12 @@ export const AnalyzePhotoMetadataSchema = z.object({
    * Absent keeps today's upload, so builds already on phones keep working.
    */
   upload_to_google_photos: z.boolean().optional(),
+  /** On-device filter result, stored only for photos that were sent for analysis. */
+  on_device_verdict: z.string().min(1).max(40).optional(),
+  on_device_labels: z
+    .array(z.object({ id: z.string().min(1).max(160), confidence: z.number().min(0).max(1) }))
+    .max(12)
+    .optional(),
 });
 export type AnalyzePhotoMetadata = z.infer<typeof AnalyzePhotoMetadataSchema>;
 
@@ -141,8 +147,20 @@ export const PhotoReferenceSchema = z.object({
 });
 export type PhotoReference = z.infer<typeof PhotoReferenceSchema>;
 
+export const PhotoEstimateSchema = z.object({
+  kind: z.enum(["meal", "workout", "ignore"]),
+  items: z.array(z.object({ name: z.string(), kcal: z.number() })).max(30),
+  kcal: z.number(),
+  reason: z.string(),
+  confidence: z.number().min(0).max(1),
+});
+export type PhotoEstimate = z.infer<typeof PhotoEstimateSchema>;
+
 export const AnalyzePhotoResponseSchema = z.object({
   outcome: z.enum(["meal", "not_meal", "duplicate"]),
+  /** Model classification. A workout still uses outcome "not_meal" so older builds ignore it. */
+  classification: z.enum(["meal", "workout", "ignore"]).optional(),
+  estimate: PhotoEstimateSchema.optional(),
   photo: PhotoReferenceSchema,
   meal: MealSchema.nullable(),
   /** The meal was saved but Google refused the album upload; the app should ask the person to reconnect. */

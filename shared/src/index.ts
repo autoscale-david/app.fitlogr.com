@@ -113,7 +113,8 @@ export type {
   PhotoUrlResponse,
   PhotoUrlStatus,
 } from "./photos";
-export { estimateFromModelPayload, estimateFromVision } from "./estimate";
+export { estimateFromModelPayload, estimateFromVision, publishedEstimate } from "./estimate";
+export type { PublishedEstimate } from "./estimate";
 export type { CalorieEstimate, CalorieEstimateItem, CalorieEstimateKind } from "./estimate";
 export { pngLuma } from "./png";
 export type { PngLuma } from "./png";
