@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Alert, Image, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { caloriePlanSummary } from "@fitlogr/shared";
@@ -75,6 +75,8 @@ export default function SettingsScreen() {
         />
       </View>
 
+      <AlertToggles />
+
       <View style={ui.card}>
         <Text style={ui.cardTitle}>Daily targets</Text>
         <NumberField label="Protein (g)" value={draft.proteinTarget} onChange={(proteinTarget) => save({ ...draft, proteinTarget })} />
@@ -87,6 +89,32 @@ export default function SettingsScreen() {
         <Text style={styles.copyright}>{`(C) ${new Date().getFullYear()} - ${APP_VERSION_LABEL}`}</Text>
       </View>
     </ScrollView>
+  );
+}
+
+function AlertToggles() {
+  const store = useStore();
+  const [meals, setMeals] = useState(true);
+  const [usedUp, setUsedUp] = useState(true);
+  useEffect(() => {
+    void store.readLocal("notify_meals").then((value) => setMeals(value !== "0"));
+    void store.readLocal("notify_used_up").then((value) => setUsedUp(value !== "0"));
+  }, [store]);
+  function toggle(key: "notify_meals" | "notify_used_up", current: boolean, set: (value: boolean) => void) {
+    const next = !current;
+    set(next);
+    void store.writeLocal(key, next ? "1" : "0");
+  }
+  return (
+    <View style={ui.card}>
+      <Text style={ui.cardTitle}>Alerts</Text>
+      <Pressable onPress={() => toggle("notify_meals", meals, setMeals)} accessibilityRole="button">
+        <Text style={ui.body}>{meals ? "Meal logged alerts are on" : "Meal logged alerts are off"}</Text>
+      </Pressable>
+      <Pressable onPress={() => toggle("notify_used_up", usedUp, setUsedUp)} accessibilityRole="button">
+        <Text style={ui.body}>{usedUp ? "Calories-used-up alert is on" : "Calories-used-up alert is off"}</Text>
+      </Pressable>
+    </View>
   );
 }
 

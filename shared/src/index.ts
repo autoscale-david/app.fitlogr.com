@@ -113,6 +113,8 @@ export type {
   PhotoUrlResponse,
   PhotoUrlStatus,
 } from "./photos";
+export { alertsForPass } from "./logAlerts";
+export type { AlertMeal, LogAlert } from "./logAlerts";
 export { PHOTO_TRIAGE_POLICY, sendsForAnalysis, triage } from "./photoTriage";
 export type { PhotoTriagePolicy, TriageLabel, TriageVerdict } from "./photoTriage";
 export { estimateFromModelPayload, estimateFromVision, publishedEstimate } from "./estimate";

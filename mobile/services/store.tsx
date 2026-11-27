@@ -34,7 +34,7 @@ import {
   type MealRecord,
   type WeekDayStatus,
 } from "./db";
-import { clearSession, readSession, saveSession } from "./session";
+import { clearSession, migrateKeychain, readSession, saveSession } from "./session";
 import { shareAccountExport } from "./exportAccount";
 import {
   capturedToday,
@@ -78,6 +78,8 @@ interface Store {
   /** Signed-in data is still on this phone, but the session ended; sign in again to resume syncing. */
   sessionExpired: boolean;
   photoScan: PhotoScanState;
+  calorieNotice: string | null;
+  dismissCalorieNotice: () => void;
   lastSyncedAt: string | null;
   loadDay: (date: string) => Promise<DayLog>;
   loadWeek: (from: string, to: string) => Promise<Record<string, WeekDayStatus>>;
@@ -125,6 +127,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [sessionExpired, setSessionExpired] = useState(false);
   const [photoScan, setPhotoScan] = useState<PhotoScanState>({ active: false, message: null, access: null });
+  const [calorieNotice, setCalorieNotice] = useState<string | null>(null);
 
   /**
    * Stores a new session. Re-signing into the account already on this phone keeps its data and queued
@@ -216,6 +219,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     openFitlogrDatabase()
       .then(async (database) => {
+        if (AppState.currentState === "active") await migrateKeychain();
         const session = await readSession();
         let nextMode = await readMode(database);
         if (session.refreshToken && nextMode !== "account") {
@@ -264,6 +268,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (event.type === "progress" && event.message) {
         setPhotoScan((current) => ({ ...current, active: false, message: event.message }));
       }
+      if (event.type === "alert") setCalorieNotice(event.body);
     });
     const subscription = AppState.addEventListener("change", (state) => {
       if (state !== "active") return;
@@ -289,6 +294,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       health,
       sessionExpired,
       photoScan,
+      calorieNotice,
+      dismissCalorieNotice: () => setCalorieNotice(null),
       lastSyncedAt,
       loadDay: (date) => {
         if (!db) throw new Error("Database is not open");
@@ -552,7 +559,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setRefreshToken((token) => token + 1);
       },
     }),
-    [account, db, goals, health, lastSyncedAt, mode, pending, photoConsent, photoScan, refreshToken, sessionExpired, syncError, syncing],
+    [account, calorieNotice, db, goals, health, lastSyncedAt, mode, pending, photoConsent, photoScan, refreshToken, sessionExpired, syncError, syncing],
   );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

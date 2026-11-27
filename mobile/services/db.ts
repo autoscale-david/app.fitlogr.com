@@ -234,6 +234,16 @@ export async function migrate(db: SQLiteDatabase): Promise<void> {
     await addColumn(db, statement);
   }
   await db.execAsync("CREATE INDEX IF NOT EXISTS idx_local_media_capture_date ON local_media_assets(capture_date)");
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS pass_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ran_at TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      duration_ms INTEGER NOT NULL,
+      counts_json TEXT,
+      error TEXT
+    );
+  `);
   const seeded = await db.getFirstAsync<{ value: string }>(
     "SELECT value FROM settings WHERE key = ?",
     "seeded",

@@ -45,6 +45,7 @@ const config: ExpoConfig = {
   plugins: [
     "expo-router",
     "expo-secure-store",
+    "expo-background-task",
     "expo-sqlite",
     "expo-web-browser",
     "expo-sharing",
@@ -71,7 +72,7 @@ const config: ExpoConfig = {
       {
         NSHealthShareUsageDescription: HEALTH_SHARE,
         NSHealthUpdateUsageDescription: HEALTH_UPDATE,
-        background: false,
+        background: true,
       },
     ],
     [

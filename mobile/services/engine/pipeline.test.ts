@@ -133,7 +133,7 @@ describe("photo pipeline", () => {
     expect(isFinalAudit(rows.get("bad-send")!)).toBe(false);
   });
 
-  it("stops when the time budget runs out and leaves the rest queued", async () => {
+  it("a simulated background pass respects the time budget and leaves the rest queued", async () => {
     const photos = [photo("one", 0), photo("two", 1), photo("three", 2)];
     const rows = new Map<string, PipelineRow>();
     let ticks = 0;
