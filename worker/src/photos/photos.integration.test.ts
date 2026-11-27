@@ -241,6 +241,39 @@ describe("meal photo analysis", () => {
     expect((await replay.json()).results[0].status).toBe("excluded");
   });
 
+  it("skips Google Photos when the phone opts out, and still uploads when the flag is absent", async () => {
+    const user = await signIn("optout");
+    await consent(user.access_token);
+    const optedOut = await analyze(user.access_token, jpeg(8), "00000000000000ff", { upload_to_google_photos: false });
+    expect(optedOut.status).toBe(201);
+    const saved = await optedOut.json();
+    expect(saved.outcome).toBe("meal");
+    expect(saved.photo.google_media_item_id).toBeNull();
+    expect(saved.photo.google_status).toBe("none");
+    expect(saved.google_reconnect_required).toBeUndefined();
+    expect(uploadCalls).toBe(0);
+    const album = await database.prepare("SELECT COUNT(*) AS n FROM user_google_photos WHERE user_id = ?").bind(user.userId).first<{ n: number }>();
+    expect(album?.n).toBe(0);
+
+    const legacy = await analyze(user.access_token, jpeg(9), "ffffffffffffffff");
+    expect(legacy.status).toBe(201);
+    expect((await legacy.json()).photo.google_status).toBe("uploaded");
+    expect(uploadCalls).toBe(1);
+  });
+
+  it("does not upload when the phone asks but the token has no Photos scope", async () => {
+    const user = await signIn("scoped");
+    await consent(user.access_token);
+    await database.prepare("UPDATE user_oauth_tokens SET scopes = ? WHERE user_id = ?").bind("openid email profile", user.userId).run();
+    const skipped = await analyze(user.access_token, jpeg(10), "aaaaaaaaaaaaaaaa", { upload_to_google_photos: true });
+    expect(skipped.status).toBe(201);
+    const body = await skipped.json();
+    expect(body.outcome).toBe("meal");
+    expect(body.photo.google_status).toBe("none");
+    expect(body.google_reconnect_required).toBeUndefined();
+    expect(uploadCalls).toBe(0);
+  });
+
   it("requires consent and enforces the daily analysis limit", async () => {
     const user = await signIn("limit");
     const blocked = await analyze(user.access_token, jpeg(7), "eeeeeeeeeeeeeeee");
@@ -309,8 +342,9 @@ async function consent(token: string) {
   expect(response.status).toBe(200);
 }
 
-async function analyze(token: string, image: Uint8Array, dhash: string) {
+async function analyze(token: string, image: Uint8Array, dhash: string, extra: Record<string, unknown> = {}) {
   const metadata = {
+    ...extra,
     content_sha256: await sha256HexBytes(image),
     perceptual_hash: dhash,
     captured_at: "2026-11-23T19:30:00.000Z",

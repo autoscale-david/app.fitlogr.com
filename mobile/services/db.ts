@@ -202,7 +202,7 @@ export async function migrate(db: SQLiteDatabase): Promise<void> {
       created_at TEXT NOT NULL
     );
   `);
-  // 1 when the meal was saved but its photo has not reached the Google Photos album yet.
+  // Kept so existing installs open. The iPhone app no longer queues album uploads.
   await addColumn(db, "ALTER TABLE local_media_assets ADD COLUMN google_pending INTEGER NOT NULL DEFAULT 0");
   const seeded = await db.getFirstAsync<{ value: string }>(
     "SELECT value FROM settings WHERE key = ?",
@@ -504,6 +504,22 @@ function numberOr(value: string | undefined, fallback: number): number {
 }
 
 export type DataMode = "demo" | "account";
+
+/** A meal photo already on this phone: the compressed file, then the library asset. */
+export async function localMealPhoto(
+  db: SQLiteDatabase,
+  remotePhotoId: string,
+): Promise<{ fileUri: string | null; libraryId: string | null }> {
+  const row = await db.getFirstAsync<{ uri: string | null; local_asset_id: string }>(
+    "SELECT uri, local_asset_id FROM local_media_assets WHERE remote_photo_id = ? ORDER BY updated_at DESC LIMIT 1",
+    remotePhotoId,
+  );
+  if (!row) return { fileUri: null, libraryId: null };
+  return {
+    fileUri: row.uri,
+    libraryId: row.local_asset_id.startsWith("ph://") ? row.local_asset_id : null,
+  };
+}
 
 export async function readSetting(db: SQLiteDatabase, key: string): Promise<string | null> {
   const row = await db.getFirstAsync<{ value: string }>("SELECT value FROM settings WHERE key = ?", key);

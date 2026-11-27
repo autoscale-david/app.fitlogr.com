@@ -69,6 +69,12 @@ export const AnalyzePhotoMetadataSchema = z.object({
   device_id: z.string().min(1).max(80).optional(),
   source: PhotoSourceSchema.optional(),
   force_meal: z.boolean().optional(),
+  /**
+   * When false, the meal is saved and the photo is not uploaded to Google Photos.
+   * When true, upload only if the stored token has a Photos scope.
+   * Absent keeps today's upload, so builds already on phones keep working.
+   */
+  upload_to_google_photos: z.boolean().optional(),
 });
 export type AnalyzePhotoMetadata = z.infer<typeof AnalyzePhotoMetadataSchema>;
 

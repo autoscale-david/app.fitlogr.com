@@ -19,6 +19,7 @@ import {
   type PhotoUrlResponse,
 } from "@fitlogr/shared";
 import { VisionFailed, analyzeMealVision, visionConfigFromEnv, type VisionAttempt } from "../ai/openrouter";
+import { getGoogleConnection } from "../db/accounts";
 import { getMeal } from "../db/meals";
 import { recomputeDailyIntake } from "../db/summaries";
 import type { Env } from "../env";
@@ -133,27 +134,29 @@ export async function analyzeUploadedPhoto(
   let albumId: string | null = null;
   let googleStatus: GooglePhotoStatus = "none";
   let reconnect = false;
-  try {
-    const uploaded = await uploadMealPhoto(
-      db,
-      env,
-      userId,
-      deps.fetch,
-      now,
-      file.bytes,
-      `${mealName} — ${totals.calories_kcal} kcal (fitlogr estimate)`,
-      `fitlogr-${photoId}.jpg`,
-    );
-    mediaItemId = uploaded.mediaItemId;
-    albumId = uploaded.albumId;
-    googleStatus = "uploaded";
-  } catch (error) {
-    if (error instanceof ApiError && error.code === "GOOGLE_QUOTA_EXCEEDED") googleStatus = "quota_exceeded";
-    else if (error instanceof ApiError && error.code === GOOGLE_RECONNECT) {
-      googleStatus = "failed";
-      reconnect = true;
-    } else if (error instanceof ApiError && error.code === "GOOGLE_UPSTREAM_ERROR") googleStatus = "failed";
-    else throw error;
+  if (await shouldUploadAlbum(db, userId, metadata.upload_to_google_photos)) {
+    try {
+      const uploaded = await uploadMealPhoto(
+        db,
+        env,
+        userId,
+        deps.fetch,
+        now,
+        file.bytes,
+        `${mealName} — ${totals.calories_kcal} kcal (fitlogr estimate)`,
+        `fitlogr-${photoId}.jpg`,
+      );
+      mediaItemId = uploaded.mediaItemId;
+      albumId = uploaded.albumId;
+      googleStatus = "uploaded";
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "GOOGLE_QUOTA_EXCEEDED") googleStatus = "quota_exceeded";
+      else if (error instanceof ApiError && error.code === GOOGLE_RECONNECT) {
+        googleStatus = "failed";
+        reconnect = true;
+      } else if (error instanceof ApiError && error.code === "GOOGLE_UPSTREAM_ERROR") googleStatus = "failed";
+      else throw error;
+    }
   }
 
   const notes = [analysis.notes, atwaterWarning(items)].filter((note): note is string => Boolean(note)).join(" ").slice(0, 500);
@@ -333,6 +336,17 @@ export async function excludePhoto(db: D1Database, userId: string, photoId: stri
     await recomputeDailyIntake(db, userId, meal.local_date, meal.timezone, stamp);
   }
   return { photo_id: photoId, status: "excluded", meal_id: meal?.id ?? null };
+}
+
+/**
+ * Absent keeps today's album upload. True uploads only when the stored token has a Photos scope.
+ * False never calls Google Photos.
+ */
+async function shouldUploadAlbum(db: D1Database, userId: string, flag: boolean | undefined): Promise<boolean> {
+  if (flag === false) return false;
+  if (flag !== true) return true;
+  const connection = await getGoogleConnection(db, userId);
+  return connection.status === "active" && connection.scopes.some((scope) => scope.includes("photoslibrary"));
 }
 
 async function duplicateResult(

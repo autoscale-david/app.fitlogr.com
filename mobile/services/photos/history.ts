@@ -25,7 +25,7 @@ export interface HistoryScanResult extends HistoryProgress {
 }
 
 const EXPO_GO_MESSAGE =
-  "Full photo library scan runs in the native iOS preview build. Google Photos Picker and the manual photo picker work in Expo Go right now.";
+  "Scanning the whole photo library runs in the fitlogr iPhone app. You can still pick a photo in Expo Go.";
 
 export async function scanMealPhotosFromPastDays(
   db: SQLiteDatabase,
@@ -53,7 +53,7 @@ export async function scanMealPhotosFromPastDays(
       ...progress,
       status: "permission_denied",
       capped: false,
-      message: "Photo library access is off. You can still pick photos or use Google Photos.",
+      message: "Photo library access is off. You can still pick a photo.",
     };
   }
 

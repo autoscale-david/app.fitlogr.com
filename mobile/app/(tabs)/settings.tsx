@@ -3,7 +3,7 @@ import { Alert, Image, ScrollView, StyleSheet, Text, TextInput, View } from "rea
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { caloriePlanSummary } from "@fitlogr/shared";
-import { formatSyncedAt, GoogleReconnectBanner } from "../../components/AccountBanners";
+import { formatSyncedAt, SessionExpiredBanner } from "../../components/AccountBanners";
 import { Segmented } from "../../components/planControls";
 import { initials, SummaryRow, ui } from "../../components/settingsUi";
 import { localDateISO } from "../../services/dates";
@@ -38,17 +38,16 @@ export default function SettingsScreen() {
     >
       <Text style={styles.title}>Settings</Text>
 
-      <GoogleReconnectBanner
-        visible={store.googleReconnectRequired}
-        sessionExpired={store.sessionExpired}
+      <SessionExpiredBanner
+        visible={store.sessionExpired}
         busy={reconnecting}
-        onReconnect={() => {
+        onSignIn={() => {
           setReconnecting(true);
           store
-            .reconnectGoogle()
+            .signIn()
             .catch((error: unknown) => {
               if (error instanceof AuthCancelled) return;
-              Alert.alert("Reconnect Google", error instanceof Error ? error.message : "Reconnect failed");
+              Alert.alert("Sign in", error instanceof Error ? error.message : "Sign-in failed");
             })
             .finally(() => setReconnecting(false));
         }}

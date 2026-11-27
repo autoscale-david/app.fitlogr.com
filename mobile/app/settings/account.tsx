@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ActivityIndicator, Alert, Pressable, Text, View } from "react-native";
-import { GoogleReconnectBanner } from "../../components/AccountBanners";
+import { SessionExpiredBanner } from "../../components/AccountBanners";
 import { DetailScreen, ui } from "../../components/settingsUi";
 import { AuthCancelled, useStore } from "../../services/store";
 
@@ -11,17 +11,16 @@ export default function AccountScreen() {
 
   return (
     <DetailScreen title="Account">
-      <GoogleReconnectBanner
-        visible={store.googleReconnectRequired}
-        sessionExpired={store.sessionExpired}
+      <SessionExpiredBanner
+        visible={store.sessionExpired}
         busy={reconnecting}
-        onReconnect={() => {
+        onSignIn={() => {
           setReconnecting(true);
           store
-            .reconnectGoogle()
+            .signIn()
             .catch((error: unknown) => {
               if (error instanceof AuthCancelled) return;
-              Alert.alert("Reconnect Google", error instanceof Error ? error.message : "Reconnect failed");
+              Alert.alert("Sign in", error instanceof Error ? error.message : "Sign-in failed");
             })
             .finally(() => setReconnecting(false));
         }}

@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import { AppState } from "react-native";
 import { openDatabaseAsync, type SQLiteDatabase } from "expo-sqlite";
 import { AI_PHOTO_CONSENT_VERSION, type DailyInsight, type TrendsResponse } from "@fitlogr/shared";
-import { api, ApiError, SessionExpired } from "./api";
+import { api, SessionExpired } from "./api";
 import { getHealthProvider, readHealthConnection, syncAppleHealth, syncHealthHistory, type HealthConnection } from "./health";
 import { AuthCancelled, signInWithGoogle } from "./auth";
 import {
@@ -11,6 +11,7 @@ import {
   listWeights,
   loadDay,
   loadWeekStatus,
+  localMealPhoto,
   loggedDates,
   migrate,
   pendingChanges,
@@ -39,7 +40,6 @@ import {
   capturedToday,
   importPreparedPhoto,
   prepareMealImage,
-  retryAlbumUploads,
   retryPendingPhotos,
   scanMealPhotosFromPastDays,
   scanRecentPhotos,
@@ -77,7 +77,6 @@ interface Store {
   syncError: string | null;
   photoConsent: boolean;
   health: HealthConnection | null;
-  googleReconnectRequired: boolean;
   /** Signed-in data is still on this phone, but the session ended; sign in again to resume syncing. */
   sessionExpired: boolean;
   photoScan: PhotoScanState;
@@ -89,7 +88,7 @@ interface Store {
   listWeights: (from: string, to: string) => Promise<{ localDate: string; weightKg: number }[]>;
   loadInsight: (date: string) => Promise<DailyInsight | null>;
   loadTrends: (days: 7 | 14 | 30) => Promise<TrendsResponse | null>;
-  reconnectGoogle: () => Promise<void>;
+  localMealPhoto: (photoId: string) => Promise<{ fileUri: string | null; libraryId: string | null } | null>;
   exportAccount: () => Promise<void>;
   deleteAccount: () => Promise<void>;
   loggedDates: () => Promise<string[]>;
@@ -107,7 +106,6 @@ interface Store {
   addMealPhoto: (uri: string, captured?: { capturedAt: string; localDate: string }) => Promise<string>;
   /** Returns "" when nothing new turned up, unless `announceEmpty` asks for that message too. */
   scanMealPhotos: (announceEmpty?: boolean) => Promise<string>;
-  grantPickerAccess: () => Promise<void>;
   scanHistory: (days: number, onProgress: (progress: HistoryProgress) => void, signal: AbortSignal) => Promise<HistoryScanResult>;
   importHealthHistory: (days: number) => Promise<{ message: string; total: number; workouts: number }>;
 }
@@ -129,7 +127,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [photoConsent, setPhotoConsent] = useState(false);
   const [health, setHealth] = useState<HealthConnection | null>(null);
-  const [googleReconnectRequired, setGoogleReconnectRequired] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [sessionExpired, setSessionExpired] = useState(false);
   const [photoScan, setPhotoScan] = useState<PhotoScanState>({ active: false, message: null, access: null });
@@ -172,10 +169,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     }
     await writeAccount(database, session.user.email, session.user.display_name);
-    await writeSetting(database, "google_status", "active");
     setMode("account");
     setAccount({ email: session.user.email, displayName: session.user.display_name });
-    setGoogleReconnectRequired(false);
     setSessionExpired(false);
     setSyncError(null);
     setGoals(await readGoals(database));
@@ -210,12 +205,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (error instanceof SessionExpired) throw error;
         healthError = error instanceof Error ? error.message : "Apple Health sync failed";
       }
-      try {
-        await retryAlbumUploads(database);
-      } catch (error) {
-        if (error instanceof SessionExpired) throw error;
-        // Offline or Google still failing: the photos stay queued for the next sync.
-      }
       setGoals(await readGoals(database));
       setHealth(await readHealthConnection(database));
       setSessionExpired(false);
@@ -224,23 +213,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const stamp = new Date().toISOString();
       await writeSetting(database, "last_synced_at", stamp);
       setLastSyncedAt(stamp);
-      try {
-        const me = await api.me();
-        const reconnect = me.google.status === "revoked" || me.google.status === "error";
-        await writeSetting(database, "google_status", me.google.status);
-        setGoogleReconnectRequired(reconnect);
-      } catch (error) {
-        if (error instanceof ApiError && error.code === "google_reconnect_required") {
-          await writeSetting(database, "google_status", "revoked");
-          setGoogleReconnectRequired(true);
-        }
-      }
       setRefreshToken((token) => token + 1);
     } catch (error) {
-      if (error instanceof ApiError && error.code === "google_reconnect_required") {
-        await writeSetting(database, "google_status", "revoked");
-        setGoogleReconnectRequired(true);
-      }
       if (error instanceof SessionExpired) {
         // Keep the log and any unsynced changes on the phone. They sync after the person signs in again.
         await clearSession();
@@ -290,9 +264,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           setPending(await pendingChanges(database));
           setHealth(await readHealthConnection(database));
           const syncedAt = await readSetting(database, "last_synced_at");
-          const googleStatus = await readSetting(database, "google_status");
           setLastSyncedAt(syncedAt || null);
-          setGoogleReconnectRequired(googleStatus === "revoked" || googleStatus === "error");
           setSessionExpired(expired);
           if (expired) setSyncError("Your session ended. Sign in again to keep syncing. Everything on this phone is kept.");
         }
@@ -340,7 +312,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       syncError,
       photoConsent,
       health,
-      googleReconnectRequired,
       sessionExpired,
       photoScan,
       lastSyncedAt,
@@ -375,11 +346,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const body = await api.send<DailyInsight>("GET", `/insights/${date}`);
           await writeSetting(db, "insight_cache", JSON.stringify(body));
           return body;
-        } catch (error) {
-          if (error instanceof ApiError && error.code === "google_reconnect_required") {
-            await writeSetting(db, "google_status", "revoked");
-            setGoogleReconnectRequired(true);
-          }
+        } catch {
           const raw = await readSetting(db, "insight_cache");
           if (!raw) return null;
           try {
@@ -395,22 +362,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (mode !== "account") return null;
         try {
           return await api.send<TrendsResponse>("GET", `/review/trends?days=${days}`);
-        } catch (error) {
-          if (error instanceof ApiError && error.code === "google_reconnect_required") {
-            setGoogleReconnectRequired(true);
-          }
+        } catch {
           return null;
         }
       },
-      grantPickerAccess: async () => {
-        if (!db) return;
-        await adoptSession(db, await signInWithGoogle({ includePickerScope: true }));
-        setRefreshToken((token) => token + 1);
-      },
-      reconnectGoogle: async () => {
-        if (!db) return;
-        await adoptSession(db, await signInWithGoogle());
-        await sync(db, true);
+      localMealPhoto: (photoId) => {
+        if (!db) return Promise.resolve(null);
+        return localMealPhoto(db, photoId);
       },
       exportAccount: async () => {
         if (mode !== "account") throw new Error("Sign in to export your fitlogr data");
@@ -422,12 +380,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         await api.send("DELETE", "/account", { confirm: true });
         await clearSession();
         await enterDemoMode(db);
-        await writeSetting(db, "google_status", "");
         await writeSetting(db, "last_synced_at", "");
         await writeSetting(db, "insight_cache", "");
         setMode("demo");
         setAccount(null);
-        setGoogleReconnectRequired(false);
         setSessionExpired(false);
         setLastSyncedAt(null);
         setSyncError(null);
@@ -466,11 +422,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         await clearSession();
         await enterDemoMode(db);
-        await writeSetting(db, "google_status", "");
         await writeSetting(db, "last_synced_at", "");
         setMode("demo");
         setAccount(null);
-        setGoogleReconnectRequired(false);
         setSessionExpired(false);
         setLastSyncedAt(null);
         setSyncError(null);
@@ -549,11 +503,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const prepared = await prepareMealImage(uri);
         const when = captured ?? capturedToday();
         const result = await importPreparedPhoto(db, prepared, { ...when, source: "manual", forceMeal: true });
-        if (result.reconnect) {
-          setSyncError(result.message);
-          await writeSetting(db, "google_status", "revoked");
-          setGoogleReconnectRequired(true);
-        }
         // The meal is already in the local log. Refresh before sync so a picker blur cannot skip the update.
         setRefreshToken((token) => token + 1);
         try {
@@ -608,7 +557,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setRefreshToken((token) => token + 1);
       },
     }),
-    [account, db, goals, googleReconnectRequired, health, lastSyncedAt, mode, pending, photoConsent, photoScan, refreshToken, sessionExpired, syncError, syncing],
+    [account, db, goals, health, lastSyncedAt, mode, pending, photoConsent, photoScan, refreshToken, sessionExpired, syncError, syncing],
   );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

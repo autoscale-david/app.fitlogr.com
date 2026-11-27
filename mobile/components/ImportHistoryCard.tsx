@@ -1,12 +1,9 @@
 import { useCallback, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { router, useFocusEffect } from "expo-router";
 import { getMediaLibraryPermissionsAsync, requestMediaLibraryPermissionsAsync } from "expo-image-picker";
-import { PickerScopeRequired, type HistoryProgress } from "../services/photos";
-import { importFromGooglePhotos } from "../services/photos/picker";
-import { rateLimitMessage } from "../services/photos/upload";
-import { api } from "../services/api";
-import { AuthCancelled, useStore } from "../services/store";
+import { type HistoryProgress } from "../services/photos";
+import { useStore } from "../services/store";
 import { isExpoGo } from "../services/expoGo";
 import { ui } from "./settingsUi";
 import { colors } from "../theme";
@@ -18,12 +15,11 @@ const RANGES = [
 ] as const;
 
 const APPLE_PHOTOS_SYNCED = "apple_photos_synced_at";
-const GOOGLE_PHOTOS_SYNCED = "google_photos_synced_at";
 const NATIVE_APP = "Needs the fitlogr iPhone app.";
 const LIMITED_ACCESS = "Limited access: only selected photos are visible. Tap to allow all photos in Settings.";
 const NATIVE_IMPORT = "Importing Apple Health and scanning the whole photo library need the fitlogr iPhone app.";
 
-type Busy = "health" | "health-connect" | "apple-photos" | "google-photos" | "apple-sync" | "google-sync" | null;
+type Busy = "health" | "health-connect" | "apple-photos" | "apple-sync" | null;
 
 interface ImportCounts {
   photos: number;
@@ -49,31 +45,13 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
   /** iOS "Limited Access": connected, but new photos are invisible to the automatic scan. */
   const [applePhotosLimited, setApplePhotosLimited] = useState(false);
   const [applePhotosSynced, setApplePhotosSynced] = useState<string | null>(null);
-  const [googlePhotos, setGooglePhotos] = useState(false);
-  const [googlePhotosSynced, setGooglePhotosSynced] = useState<string | null>(null);
 
   const refreshConnections = useCallback(async () => {
     const current = storeRef.current;
-    const [appleStamp, googleStamp] = await Promise.all([
-      current.readLocal(APPLE_PHOTOS_SYNCED),
-      current.readLocal(GOOGLE_PHOTOS_SYNCED),
-    ]);
-    setApplePhotosSynced(appleStamp);
-    setGooglePhotosSynced(googleStamp);
+    setApplePhotosSynced(await current.readLocal(APPLE_PHOTOS_SYNCED));
     const library = await photoLibraryAccess();
     setApplePhotos(library !== "none");
     setApplePhotosLimited(library === "limited");
-    if (current.mode !== "account") {
-      setGooglePhotos(false);
-      return;
-    }
-    try {
-      const me = await api.me();
-      const scopes = me.google.status === "active" ? me.google.scopes : [];
-      setGooglePhotos(scopes.some((scope) => scope.includes("photospicker")));
-    } catch {
-      setGooglePhotos(false);
-    }
   }, []);
 
   useFocusEffect(
@@ -135,34 +113,6 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
     }
   }
 
-  async function connectGooglePhotos() {
-    if (busy) return;
-    if (googlePhotos) {
-      setBusy("google-sync");
-      try {
-        await store.sync(true);
-        await refreshConnections();
-      } catch (error) {
-        setNote(error instanceof Error ? error.message : "Google Photos could not sync.");
-      } finally {
-        setBusy(null);
-      }
-      return;
-    }
-    setBusy("google-sync");
-    setNote(null);
-    try {
-      await store.grantPickerAccess();
-      setGooglePhotos(true);
-    } catch (error) {
-      if (error instanceof AuthCancelled) return;
-      setNote(error instanceof Error ? error.message : "Google Photos could not connect.");
-    } finally {
-      setBusy(null);
-      void refreshConnections();
-    }
-  }
-
   async function importApplePhotos() {
     if (!signedIn) {
       setNote("Sign in with Google before importing history.");
@@ -206,55 +156,6 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
     }
   }
 
-  async function importGoogle() {
-    if (!signedIn) {
-      setNote("Sign in with Google before picking photos.");
-      return;
-    }
-    setBusy("google-photos");
-    setNote(null);
-    try {
-      const summary = await importFromGooglePhotos((waiting) =>
-        setNote(waiting ? `Waiting ${formatWait(waiting)} for the photo analysis limit…` : null),
-      );
-      setCounts({
-        photos: summary.meals_imported,
-        total: summary.total_picked,
-        meals: summary.meals_imported,
-        workouts: 0,
-      });
-      if (summary.meals_imported > 0) await stamp(GOOGLE_PHOTOS_SYNCED, setGooglePhotosSynced);
-      setGooglePhotos(true);
-      try {
-        await store.sync(true);
-      } catch {
-        // The meals are already on the account. The next sync will finish pulling them.
-      }
-      const imported = `Imported ${summary.meals_imported} meal${summary.meals_imported === 1 ? "" : "s"} from Google Photos.`;
-      setNote(
-        summary.retry_after_seconds
-          ? `${imported} ${rateLimitMessage(summary.retry_after_seconds)} Pick the remaining photos again then.`
-          : summary.total_picked === 0
-            ? "No Google Photos were selected."
-            : imported,
-      );
-    } catch (error) {
-      if (error instanceof PickerScopeRequired) {
-        Alert.alert("Google Photos", error.message, [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Reconnect Google",
-            onPress: () => {
-              void connectGooglePhotos();
-            },
-          },
-        ]);
-      } else setNote(error instanceof Error ? error.message : "Google Photos import failed.");
-    } finally {
-      setBusy(null);
-    }
-  }
-
   const healthConnected = store.health?.connected === true;
   const healthDetail = expoGo ? NATIVE_APP : healthConnected ? connectedLine(store.health?.lastSyncedAt ?? null) : healthProblem(store.health?.message);
   const locked = busy !== null;
@@ -276,12 +177,6 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
           detail={applePhotosLimited ? LIMITED_ACCESS : applePhotos ? connectedLine(applePhotosSynced) : null}
           busy={busy === "apple-sync"}
           onPress={() => void connectApplePhotos()}
-        />
-        <SetupRow
-          title="Connect Google Photos"
-          detail={googlePhotos ? connectedLine(googlePhotosSynced) : null}
-          busy={busy === "google-sync"}
-          onPress={() => void connectGooglePhotos()}
         />
       </View>
 
@@ -334,10 +229,6 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
               {busy === "apple-photos" ? <ActivityIndicator color={colors.text} /> : <Text style={ui.secondaryText}>Import Apple Photos</Text>}
             </Pressable>
             {expoGo ? <Text style={ui.meta}>{NATIVE_IMPORT}</Text> : null}
-            <Pressable style={ui.secondary} disabled={locked} onPress={() => void importGoogle()} accessibilityRole="button">
-              {busy === "google-photos" ? <ActivityIndicator color={colors.text} /> : <Text style={ui.secondaryText}>Pick from Google Photos</Text>}
-            </Pressable>
-            <Text style={ui.meta}>Google Photos only shares photos you pick. It cannot list your library or limit a session to these months.</Text>
             {note ? <Text style={ui.body}>{note}</Text> : null}
             <Text style={ui.body}>Photos imported: {counts.photos}</Text>
             <Text style={ui.body}>

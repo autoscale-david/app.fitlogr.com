@@ -2,7 +2,7 @@ import type { ExpoConfig } from "expo/config";
 
 const EAS_PROJECT_ID = "1964593c-a6a0-49e5-a35b-240cf2bf254e";
 const PHOTO_LIBRARY =
-  "fitlogr looks through photos from the days you choose to find meals and estimate calories. A photo is compressed and sent only after you agree.";
+  "fitlogr looks through photos on this iPhone to find meals. Only a photo that looks like food is compressed and sent for a calorie estimate, and only after you agree. Photos stay on this phone.";
 const CAMERA = "fitlogr uses the camera so you can photograph a meal and estimate its calories.";
 const HEALTH_SHARE =
   "fitlogr reads your weight, workouts, calories burned, steps, and heart rate from Apple Health to fill in your daily log.";

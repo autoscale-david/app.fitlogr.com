@@ -67,7 +67,7 @@ export default function MyDataScreen() {
           <View style={styles.modalCard}>
             <Text style={ui.cardTitle}>Delete your fitlogr account?</Text>
             <Text style={ui.body}>
-              This permanently deletes your fitlogr profile, meals, health records, and settings. Your Google Photos library, including the fitlogr album and meal photos, will not be deleted.
+              This permanently deletes your fitlogr profile, meals, health records, and settings. Photos in your iPhone library are not deleted.
             </Text>
             <Pressable
               style={ui.danger}

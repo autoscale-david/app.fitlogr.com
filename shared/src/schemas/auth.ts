@@ -21,6 +21,11 @@ export const AuthStartRequestSchema = z.object({
   device: DeviceInfoSchema.optional(),
   timezone: z.string().min(1).max(80).optional(),
   include_picker_scope: z.boolean().optional(),
+  /**
+   * When false, sign-in asks only for openid, email, and profile.
+   * Absent keeps today's Photos scopes, so builds already on phones keep working.
+   */
+  include_photos_scopes: z.boolean().optional(),
 });
 export type AuthStartRequest = z.infer<typeof AuthStartRequestSchema>;
 
