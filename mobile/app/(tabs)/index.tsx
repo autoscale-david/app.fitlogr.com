@@ -55,8 +55,7 @@ export default function LogScreen() {
     const current = storeRef.current;
     if (!current.ready) return;
     let cancelled = false;
-    // Runs even while the photo picker has this screen unfocused, so a finished pick is not dropped.
-    void current.scanMealPhotos();
+    // Do not start a library scan here. That scan bumps refresh and cancels this read before the picked meal can paint.
     Promise.all([current.loadDay(selected), current.loadWeek(weekStart, addDays(weekStart, 6))]).then(([nextDay, nextWeek]) => {
       if (!cancelled) {
         setDay(nextDay);

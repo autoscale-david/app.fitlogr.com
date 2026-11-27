@@ -10,12 +10,22 @@ import {
   PhotoUrlResponseSchema,
   atwaterWarning,
   dHashFromLuma,
+  explicitPickReopens,
   hammingDistance,
   isConfirmedMeal,
   localCaptureFromExif,
   matchHash,
   totalsFromVisionItems,
 } from "./photos";
+
+describe("explicit photo pick", () => {
+  it("reopens a scan that said the photo was not a meal", () => {
+    expect(explicitPickReopens("non_meal", true)).toBe(true);
+    expect(explicitPickReopens("near_duplicate", true)).toBe(true);
+    expect(explicitPickReopens("duplicate", true)).toBe(false);
+    expect(explicitPickReopens("non_meal", false)).toBe(false);
+  });
+});
 
 describe("photo capture day", () => {
   it("uses the EXIF local day, not UTC", () => {

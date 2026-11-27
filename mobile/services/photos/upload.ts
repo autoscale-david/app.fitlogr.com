@@ -2,6 +2,7 @@ import type { SQLiteDatabase } from "expo-sqlite";
 import { File } from "expo-file-system";
 import {
   AI_PHOTO_CONSENT_VERSION,
+  explicitPickReopens,
   type AnalyzePhotoResponse,
   type CheckHashesResponse,
   type PhotoReference,
@@ -38,13 +39,14 @@ export async function alreadyChecked(db: SQLiteDatabase, assetId: string): Promi
 export async function importPreparedPhoto(
   db: SQLiteDatabase,
   image: PreparedMealImage,
-  input: { capturedAt: string; localDate: string; source: PhotoSource; assetId?: string },
+  input: { capturedAt: string; localDate: string; source: PhotoSource; assetId?: string; forceMeal?: boolean },
 ): Promise<ImportResult> {
   if ((await readSetting(db, "ai_photo_consent_version")) !== AI_PHOTO_CONSENT_VERSION) {
     return { kind: "consent", message: "Agree to photo analysis before sending a meal photo.", reconnect: false };
   }
   const assetId = input.assetId ?? image.sha256;
-  if (await alreadyChecked(db, assetId)) {
+  // A deliberate pick overrides an earlier "not a meal" mark for this file.
+  if (!input.forceMeal && (await alreadyChecked(db, assetId))) {
     return { kind: "skipped", message: "That photo was already checked.", reconnect: false };
   }
 
@@ -60,12 +62,15 @@ export async function importPreparedPhoto(
       ],
     });
     const match = hashes.results[0];
-    if (match && match.status !== "new") {
+    if (match && match.status !== "new" && !explicitPickReopens(match.status, input.forceMeal === true)) {
       await remember(db, assetId, image, input.capturedAt, match.status, match.photo_id);
       if (match.status === "excluded" || match.status === "non_meal") {
         return { kind: "skipped", message: "That photo was already skipped.", reconnect: false };
       }
-      return { kind: "duplicate", message: "That meal photo is already logged.", reconnect: false };
+      // The meal may exist only on the server. Ask analyze to return it so it can be written here.
+      if (!input.forceMeal) {
+        return { kind: "duplicate", message: "That meal photo is already logged.", reconnect: false };
+      }
     }
 
     const metadata = {
@@ -75,6 +80,7 @@ export async function importPreparedPhoto(
       local_date: input.localDate,
       timezone: deviceTimeZone(),
       source: input.source,
+      force_meal: input.forceMeal === true,
     };
     const form = new FormData();
     form.append("metadata", JSON.stringify(metadata));

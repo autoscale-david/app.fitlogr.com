@@ -2,6 +2,7 @@ import {
   AnalyzePhotoMetadataSchema,
   PHOTO_LIMITS,
   atwaterWarning,
+  explicitPickReopens,
   isConfirmedMeal,
   matchHash,
   totalsFromVisionItems,
@@ -75,7 +76,8 @@ export async function analyzeUploadedPhoto(
   const now = deps.now();
   const known = await loadKnown(db, userId, [metadata.content_sha256]);
   const match = matchHash(metadata, known);
-  if (match.status !== "new" && match.photo_id) {
+  // A photo the person picked in the Log is logged even when an automatic scan already rejected it.
+  if (match.status !== "new" && match.photo_id && !explicitPickReopens(match.status, metadata.force_meal === true)) {
     return duplicateResult(db, userId, metadata, match.photo_id, match.status, now);
   }
 

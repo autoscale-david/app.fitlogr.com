@@ -81,6 +81,7 @@ export {
   PhotoUrlResponseSchema,
   atwaterWarning,
   dHashFromLuma,
+  explicitPickReopens,
   hammingDistance,
   isConfirmedMeal,
   localCaptureFromExif,

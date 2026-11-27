@@ -548,7 +548,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (!db || mode !== "account") return "Sign in with Google before analyzing a meal photo.";
         const prepared = await prepareMealImage(uri);
         const when = captured ?? capturedToday();
-        const result = await importPreparedPhoto(db, prepared, { ...when, source: "manual" });
+        const result = await importPreparedPhoto(db, prepared, { ...when, source: "manual", forceMeal: true });
         if (result.reconnect) {
           setSyncError(result.message);
           await writeSetting(db, "google_status", "revoked");

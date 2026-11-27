@@ -323,6 +323,16 @@ export function atwaterWarning(items: readonly MealVisionItem[]): string | null 
  * usable hash, only counts as the same meal when both photos were taken close together: the same
  * bowl photographed on two different mornings is two meals.
  */
+/**
+ * A photo chosen in the Log picker is a meal the person wants logged. An earlier automatic scan
+ * that called it not a meal, or a near match, must not drop that pick. An exact copy of a meal
+ * already logged stays a duplicate so the existing meal is shown instead of analyzed again.
+ */
+export function explicitPickReopens(matchStatus: string | undefined, forceMeal: boolean): boolean {
+  if (!forceMeal) return false;
+  return matchStatus === "non_meal" || matchStatus === "near_duplicate";
+}
+
 export function matchHash(item: CheckHashItem, known: readonly KnownPhotoHash[]): CheckHashResult {
   const exact = known.find((photo) => photo.content_sha256 === item.content_sha256);
   if (exact) return toHashResult(item.content_sha256, exact, "exact");
