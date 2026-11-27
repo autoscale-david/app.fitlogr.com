@@ -118,6 +118,49 @@ describe("photo contracts", () => {
     expect(ignored.burn_kcal).toBeNull();
     expect(ignored.reason).toBeNull();
     expect(isConfirmedMeal(ignored)).toBe(false);
+
+    // Idle exercise console with 0 kcal burn and zero-calorie water both normalize to ignore.
+    const idleConsole = MealVisionSchema.parse({
+      classification: "workout",
+      is_meal: false,
+      confidence: 0.9,
+      meal_name: null,
+      suggested_meal_type: null,
+      notes: null,
+      reason: "Main menu with no calories shown.",
+      burn_kcal: 0,
+      items: [],
+    });
+    expect(idleConsole.classification).toBe("ignore");
+    expect(idleConsole.burn_kcal).toBe(0);
+
+    const plainWater = MealVisionSchema.parse({
+      classification: "meal",
+      is_meal: true,
+      confidence: 0.9,
+      meal_name: "Glass of water",
+      suggested_meal_type: "snack",
+      notes: null,
+      reason: "Plain water.",
+      burn_kcal: null,
+      items: [{ name: "Water", quantity: 250, unit: "ml", estimated_grams: 250, calories_kcal: 0, protein_g: 0, carbs_g: 0, fat_g: 0, confidence: 0.9 }],
+    });
+    expect(plainWater.classification).toBe("ignore");
+    expect(plainWater.items).toEqual([]);
+
+    // Gram-unit quantities over 100 (e.g. 150 g salmon) are accepted instead of failing schema validation.
+    const gramMeal = MealVisionSchema.parse({
+      classification: "meal",
+      is_meal: true,
+      confidence: 0.92,
+      meal_name: "Grilled salmon",
+      suggested_meal_type: "dinner",
+      notes: null,
+      reason: "Salmon fillet.",
+      burn_kcal: null,
+      items: [{ name: "Salmon", quantity: 180, unit: "g", estimated_grams: 180, calories_kcal: 360, protein_g: 36, carbs_g: 0, fat_g: 22, confidence: 0.9 }],
+    });
+    expect(gramMeal.items[0]?.quantity).toBe(180);
   });
 
   it("rejects a meal below the confidence floor unless the person forced it", () => {

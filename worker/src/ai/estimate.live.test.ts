@@ -8,11 +8,11 @@ import { describe, expect, it } from "vitest";
 import { modelJsonFromCompletion, visionCompletionInit, visionConfigFromEnv, type VisionConfig } from "./openrouter";
 
 const fixtures = fileURLToPath(new URL("../../../shared/src/estimate/fixtures/", import.meta.url));
-const images = [
-  "01-workout-vision-console.png",
-  "02-meal-kenzi-latte-pastry.png",
-  "03-meal-banana-crepes.png",
-  "04-ignore-fire-pit.png",
+const cases: Array<{ image: string; expectedKind: "meal" | "workout" | "ignore"; expectedExactKcal?: number }> = [
+  { image: "01-workout-vision-console.png", expectedKind: "workout", expectedExactKcal: 153 },
+  { image: "02-meal-kenzi-latte-pastry.png", expectedKind: "meal" },
+  { image: "03-meal-banana-crepes.png", expectedKind: "meal" },
+  { image: "04-ignore-fire-pit.png", expectedKind: "ignore", expectedExactKcal: 0 },
 ];
 
 describe("openrouter vision smoke", () => {
@@ -28,10 +28,16 @@ describe("openrouter vision smoke", () => {
       APP_URL: process.env.APP_URL,
     });
     const failures: string[] = [];
-    for (const image of images) {
+    for (const { image, expectedKind, expectedExactKcal } of cases) {
       try {
         const json = await readModel(config, pngToJpeg(readFileSync(join(fixtures, image))));
-        estimateFromModelPayload(json);
+        const estimate = estimateFromModelPayload(json);
+        if (estimate.kind !== expectedKind) {
+          throw new Error(`expected kind=${expectedKind}, got ${estimate.kind}`);
+        }
+        if (expectedExactKcal !== undefined && Math.round(estimate.kcal) !== expectedExactKcal) {
+          throw new Error(`expected kcal=${expectedExactKcal}, got ${estimate.kcal}`);
+        }
         writeFileSync(join(fixtures, image.replace(/\.png$/, ".live.json")), `${JSON.stringify(json, null, 2)}\n`);
       } catch (error) {
         const message = error instanceof Error ? error.message : "vision smoke failed";

@@ -1,11 +1,14 @@
 {
+  "scene_check": "The image shows an outdoor patio at night with a fire pit burning in the foreground, string lights, patio furniture, and a building in the background. There is no food, beverage, or workout equipment visible.",
+  "console_windows": [],
+  "portion_notes": null,
   "classification": "ignore",
   "is_meal": false,
   "confidence": 1,
   "meal_name": null,
   "suggested_meal_type": null,
   "notes": null,
-  "reason": "The photo shows an outdoor seating area with a fire pit at night, not food or a workout.",
-  "burn_kcal": null,
+  "reason": "The photo depicts an outdoor patio and fire pit scene with no food, beverages, or workout consoles.",
+  "burn_kcal": 0,
   "items": []
 }
