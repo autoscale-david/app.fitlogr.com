@@ -1,0 +1,70 @@
+{
+  "scene_check": "The image shows a plate of crepes garnished with banana slices, powdered sugar, whipped cream, and syrup, ready to be eaten.",
+  "console_windows": [],
+  "portion_notes": "Standard paper plate approximately 23 cm in diameter. Contains about 2 large folded crepes (~150g), sliced bananas (~60g), whipped cream (~30g), maple syrup or caramel (~30g), and powdered sugar dusting (~10g).",
+  "classification": "meal",
+  "is_meal": true,
+  "confidence": 0.99,
+  "meal_name": "Banana Crepes with Whipped Cream and Syrup",
+  "suggested_meal_type": "breakfast",
+  "notes": "Sweet crepe dish with fruit, cream, and syrup.",
+  "reason": "The photo shows a prepared meal of crepes and toppings on a plate.",
+  "burn_kcal": null,
+  "items": [
+    {
+      "name": "Crepes",
+      "quantity": 1.5,
+      "unit": "serving",
+      "estimated_grams": 150,
+      "protein_g": 6,
+      "carbs_g": 35,
+      "fat_g": 8,
+      "calories_kcal": 240,
+      "confidence": 0.9
+    },
+    {
+      "name": "Sliced bananas",
+      "quantity": 0.5,
+      "unit": "cup",
+      "estimated_grams": 60,
+      "protein_g": 1,
+      "carbs_g": 14,
+      "fat_g": 0,
+      "calories_kcal": 53,
+      "confidence": 0.95
+    },
+    {
+      "name": "Whipped cream",
+      "quantity": 2,
+      "unit": "tablespoon",
+      "estimated_grams": 30,
+      "protein_g": 1,
+      "carbs_g": 2,
+      "fat_g": 7,
+      "calories_kcal": 75,
+      "confidence": 0.9
+    },
+    {
+      "name": "Syrup",
+      "quantity": 2,
+      "unit": "tablespoon",
+      "estimated_grams": 30,
+      "protein_g": 0,
+      "carbs_g": 20,
+      "fat_g": 0,
+      "calories_kcal": 80,
+      "confidence": 0.9
+    },
+    {
+      "name": "Powdered sugar",
+      "quantity": 1,
+      "unit": "tablespoon",
+      "estimated_grams": 8,
+      "protein_g": 0,
+      "carbs_g": 8,
+      "fat_g": 0,
+      "calories_kcal": 31,
+      "confidence": 0.85
+    }
+  ]
+}

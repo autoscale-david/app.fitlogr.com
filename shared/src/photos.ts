@@ -74,7 +74,7 @@ export type AnalyzePhotoMetadata = z.infer<typeof AnalyzePhotoMetadataSchema>;
 
 const VisionItemObjectSchema = z.object({
   name: z.string().min(1).max(100),
-  quantity: z.number().positive().max(100),
+  quantity: z.number().positive().max(1000),
   unit: z.string().min(1).max(30),
   estimated_grams: z.number().positive().max(5000).nullable(),
   calories_kcal: z.number().min(0).max(5000),
@@ -84,24 +84,30 @@ const VisionItemObjectSchema = z.object({
   confidence: z.number().min(0).max(1),
 });
 
-export const MealVisionItemSchema = z.preprocess(normalizeVisionItem, VisionItemObjectSchema);
+export const MealVisionItemSchema = z.preprocess((item) => normalizeVisionItem(item), VisionItemObjectSchema);
 export type MealVisionItem = z.infer<typeof VisionItemObjectSchema>;
 
 const VisionObjectSchema = z
   .object({
-    classification: z.enum(["meal", "not_meal"]),
+    classification: z.enum(["meal", "workout", "ignore"]),
     is_meal: z.boolean(),
     confidence: z.number().min(0).max(1),
     meal_name: z.string().min(1).max(120).nullable(),
     suggested_meal_type: MealTypeSchema.nullable(),
     notes: z.string().max(300).nullable(),
+    reason: z.string().max(300).nullable(),
+    burn_kcal: z.number().min(0).max(20000).nullable(),
     items: z.array(MealVisionItemSchema).max(30),
   })
   .refine((value) => value.is_meal === (value.classification === "meal"), {
     message: "classification does not match is_meal",
   });
 
-/** OpenRouter vision payload. Totals are intentionally absent; the server sums items. */
+/**
+ * OpenRouter vision payload.
+ * Meal totals are summed from items. `burn_kcal` is the machine readout for a workout.
+ * Older `not_meal` payloads normalize to `ignore`.
+ */
 export const MealVisionSchema = z.preprocess(normalizeVision, VisionObjectSchema);
 export type MealVision = z.infer<typeof VisionObjectSchema>;
 
@@ -389,30 +395,131 @@ function toHashResult(contentSha256: string, photo: KnownPhotoHash, kind: "exact
 function normalizeVision(input: unknown): unknown {
   if (!input || typeof input !== "object") return input;
   const record = { ...(input as Record<string, unknown>) };
-  if (record.classification === undefined && typeof record.is_meal === "boolean") {
-    record.classification = record.is_meal ? "meal" : "not_meal";
+  if (record.classification === "not_meal" || record.classification === "non_meal" || record.classification === "none") {
+    record.classification = "ignore";
   }
-  if (record.is_meal === undefined && (record.classification === "meal" || record.classification === "not_meal")) {
+  if (record.classification === undefined && typeof record.is_meal === "boolean") {
+    record.classification = record.is_meal ? "meal" : "ignore";
+  }
+  if (record.is_meal === undefined && typeof record.classification === "string") {
     record.is_meal = record.classification === "meal";
   }
+  const topConfidence = finiteNumber(record.confidence);
+  if (topConfidence !== null) record.confidence = Math.max(0, Math.min(1, topConfidence));
+
   if (record.meal_name === undefined && typeof record.mealName === "string") record.meal_name = record.mealName;
-  if (record.meal_name === "") record.meal_name = null;
-  if (record.suggested_meal_type === undefined) record.suggested_meal_type = null;
-  if (record.notes === undefined) record.notes = null;
-  if (Array.isArray(record.items)) record.items = record.items.map((item) => normalizeVisionItem(item));
+  if (typeof record.meal_name === "string") {
+    const trimmed = record.meal_name.trim().slice(0, 120);
+    record.meal_name = trimmed === "" ? null : trimmed;
+  } else if (record.meal_name === undefined) {
+    record.meal_name = null;
+  }
+
+  if (record.suggested_meal_type === undefined || record.suggested_meal_type === "") record.suggested_meal_type = null;
+  if (typeof record.notes === "string") {
+    const trimmed = record.notes.trim().slice(0, 300);
+    record.notes = trimmed === "" ? null : trimmed;
+  } else if (record.notes === undefined) {
+    record.notes = null;
+  }
+
+  if (typeof record.reason !== "string" || record.reason.trim() === "") record.reason = null;
+  else record.reason = record.reason.trim().slice(0, 300);
+
+  const parsedBurn = finiteNumber(record.burn_kcal);
+  if (parsedBurn !== null) record.burn_kcal = Math.max(0, parsedBurn);
+  else if (record.burn_kcal === undefined || record.burn_kcal === null || record.burn_kcal === "") record.burn_kcal = null;
+
+  const fallbackConfidence = typeof record.confidence === "number" ? record.confidence : 0.7;
+  if (Array.isArray(record.items)) {
+    record.items = record.items.map((item) => normalizeVisionItem(item, fallbackConfidence));
+  } else if (record.items === undefined || record.items === null) {
+    record.items = [];
+  }
+
+  // An exercise console showing no active energy burned (e.g. idle menu or lifetime distance) is not a workout burn.
+  if (record.classification === "workout") {
+    const burn = typeof record.burn_kcal === "number" ? record.burn_kcal : 0;
+    const itemKcal = sumNormalizedItemKcal(record.items);
+    if (burn <= 0 && itemKcal <= 0) {
+      record.classification = "ignore";
+      record.is_meal = false;
+      record.burn_kcal = 0;
+      record.items = [];
+    }
+  }
+
+  // Zero-calorie items only (e.g. plain water or ice) are not a loggable meal.
+  if (record.classification === "meal" && Array.isArray(record.items) && record.items.length > 0) {
+    if (sumNormalizedItemKcal(record.items) <= 0) {
+      record.classification = "ignore";
+      record.is_meal = false;
+      record.burn_kcal = 0;
+      record.items = [];
+    }
+  }
   return record;
 }
 
-function normalizeVisionItem(input: unknown): unknown {
+function sumNormalizedItemKcal(items: unknown): number {
+  if (!Array.isArray(items)) return 0;
+  return items.reduce((sum, item) => {
+    const kcal = item && typeof item === "object" ? finiteNumber((item as Record<string, unknown>).calories_kcal) : null;
+    return sum + (kcal ?? 0);
+  }, 0);
+}
+
+function normalizeVisionItem(input: unknown, fallbackConfidence = 0.7): unknown {
   if (!input || typeof input !== "object") return input;
   const record = { ...(input as Record<string, unknown>) };
-  if (record.estimated_grams === undefined && typeof record.grams === "number") record.estimated_grams = record.grams;
-  if (record.estimated_grams === undefined) record.estimated_grams = null;
-  if (record.calories_kcal === undefined && typeof record.calories === "number") record.calories_kcal = record.calories;
-  if (record.protein_g === undefined && typeof record.protein === "number") record.protein_g = record.protein;
-  if (record.carbs_g === undefined && typeof record.carbs === "number") record.carbs_g = record.carbs;
-  if (record.fat_g === undefined && typeof record.fat === "number") record.fat_g = record.fat;
-  if (record.unit === undefined) record.unit = "serving";
-  if (record.quantity === undefined) record.quantity = 1;
+
+  if (typeof record.name === "string") record.name = record.name.trim().slice(0, 100);
+  if (typeof record.unit === "string") {
+    const trimmed = record.unit.trim().slice(0, 30);
+    record.unit = trimmed || "serving";
+  } else if (record.unit === undefined || record.unit === null) {
+    record.unit = "serving";
+  }
+
+  if (record.estimated_grams === undefined && record.grams !== undefined) record.estimated_grams = record.grams;
+  const grams = finiteNumber(record.estimated_grams);
+  if (grams !== null) record.estimated_grams = grams > 0 ? Math.min(5000, grams) : null;
+  else if (record.estimated_grams === undefined || record.estimated_grams === "") record.estimated_grams = null;
+
+  const qty = finiteNumber(record.quantity);
+  if (qty === null || qty <= 0) {
+    record.quantity = 1;
+  } else if (qty > 1000) {
+    if (record.estimated_grams === null && /^(g|gram|grams|ml)$/i.test(String(record.unit))) {
+      record.estimated_grams = Math.min(5000, qty);
+    }
+    record.quantity = 1;
+    record.unit = "serving";
+  } else {
+    record.quantity = qty;
+  }
+
+  if (record.calories_kcal === undefined && record.calories !== undefined) record.calories_kcal = record.calories;
+  if (record.protein_g === undefined && record.protein !== undefined) record.protein_g = record.protein;
+  if (record.carbs_g === undefined && record.carbs !== undefined) record.carbs_g = record.carbs;
+  if (record.fat_g === undefined && record.fat !== undefined) record.fat_g = record.fat;
+
+  for (const field of ["calories_kcal", "protein_g", "carbs_g", "fat_g"] as const) {
+    const num = finiteNumber(record[field]);
+    if (num !== null) record[field] = Math.max(0, num);
+  }
+
+  const conf = finiteNumber(record.confidence);
+  record.confidence = conf !== null ? Math.max(0, Math.min(1, conf)) : fallbackConfidence;
+
   return record;
+}
+
+function finiteNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value.trim());
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
 }

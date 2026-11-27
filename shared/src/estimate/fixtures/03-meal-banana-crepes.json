@@ -1,0 +1,68 @@
+{
+  "assumption": "Visual portion estimate, not a lab measurement. One plate of folded thin crepes (3 crepes, about 135 g, 324 kcal), 1.25 medium bananas in slices (about 150 g, 134 kcal), about 1/3 cup sweetened whipped cream (25 g, 88 kcal), a light powdered-sugar dusting (2 tsp, 32 kcal), and about 2 tbsp maple syrup pooled on the plate (104 kcal). Together 682 kcal.",
+  "classification": "meal",
+  "is_meal": true,
+  "confidence": 0.65,
+  "meal_name": "Banana crepes",
+  "suggested_meal_type": "breakfast",
+  "notes": null,
+  "reason": "Banana crepes with whipped cream, powdered sugar, and syrup.",
+  "burn_kcal": null,
+  "items": [
+    {
+      "name": "Folded crepes",
+      "quantity": 3,
+      "unit": "crepe",
+      "estimated_grams": 135,
+      "calories_kcal": 324,
+      "protein_g": 12,
+      "carbs_g": 42,
+      "fat_g": 12,
+      "confidence": 0.45
+    },
+    {
+      "name": "Banana slices",
+      "quantity": 1.25,
+      "unit": "banana",
+      "estimated_grams": 150,
+      "calories_kcal": 134,
+      "protein_g": 1.6,
+      "carbs_g": 34,
+      "fat_g": 0.4,
+      "confidence": 0.55
+    },
+    {
+      "name": "Whipped cream",
+      "quantity": 0.33,
+      "unit": "cup",
+      "estimated_grams": 25,
+      "calories_kcal": 88,
+      "protein_g": 1,
+      "carbs_g": 3,
+      "fat_g": 8,
+      "confidence": 0.4
+    },
+    {
+      "name": "Powdered sugar",
+      "quantity": 2,
+      "unit": "tsp",
+      "estimated_grams": 8,
+      "calories_kcal": 32,
+      "protein_g": 0,
+      "carbs_g": 8,
+      "fat_g": 0,
+      "confidence": 0.4
+    },
+    {
+      "name": "Maple syrup",
+      "quantity": 2,
+      "unit": "tbsp",
+      "estimated_grams": 40,
+      "calories_kcal": 104,
+      "protein_g": 0,
+      "carbs_g": 26,
+      "fat_g": 0,
+      "confidence": 0.4
+    }
+  ]
+}
