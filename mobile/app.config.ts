@@ -46,6 +46,7 @@ const config: ExpoConfig = {
     "expo-router",
     "expo-secure-store",
     "expo-background-task",
+    "expo-image",
     "expo-sqlite",
     "expo-web-browser",
     "expo-sharing",

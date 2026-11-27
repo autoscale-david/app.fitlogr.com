@@ -50,15 +50,26 @@ private func requestImage(_ asset: PHAsset, allowNetwork: Bool) async -> UIImage
     options.deliveryMode = .highQualityFormat
     options.resizeMode = .fast
     options.isSynchronous = false
+    var resumed = false
+    func finish(_ image: UIImage?) {
+      if resumed { return }
+      resumed = true
+      continuation.resume(returning: image)
+    }
     PHImageManager.default().requestImage(
       for: asset,
       targetSize: CGSize(width: 448, height: 448),
       contentMode: .aspectFit,
       options: options
     ) { image, info in
+      let cancelled = (info?[PHImageCancelledKey] as? Bool) ?? false
+      if cancelled {
+        finish(nil)
+        return
+      }
       let degraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
       if degraded { return }
-      continuation.resume(returning: image)
+      finish(image)
     }
   }
 }

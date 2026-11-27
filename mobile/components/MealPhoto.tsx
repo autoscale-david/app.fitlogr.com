@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Image, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
+import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
 import type { PhotoUrlResponse } from "@fitlogr/shared";
 import { OfflineError, api } from "../services/api";
@@ -94,6 +95,7 @@ export function MealPhoto({
           <Image
             source={{ uri: url }}
             style={styles.image}
+            contentFit="cover"
             onError={() => {
               if (phoneCopy && photoId) {
                 setPhoneCopy(false);

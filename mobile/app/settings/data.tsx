@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ActivityIndicator, Alert, Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { router } from "expo-router";
 import { SyncStatusBanner } from "../../components/AccountBanners";
 import { ImportHistoryCard } from "../../components/ImportHistoryCard";
 import { DetailScreen, ui } from "../../components/settingsUi";
@@ -23,6 +24,14 @@ export default function MyDataScreen() {
         error={store.syncError}
         onRetry={() => void store.sync(true)}
       />
+      <Pressable style={ui.card} onPress={() => router.push("/settings/photos")}>
+        <Text style={ui.cardTitle}>Photo log</Text>
+        <Text style={ui.body}>Every photo fitlogr checked, by day.</Text>
+      </Pressable>
+      <Pressable style={ui.card} onPress={() => router.push("/setup")}>
+        <Text style={ui.cardTitle}>Finish setup</Text>
+        <Text style={ui.body}>Photos, Apple Health, alerts, and how far back to look.</Text>
+      </Pressable>
       <ImportHistoryCard signedIn={signedIn} />
 
       <View style={ui.card}>

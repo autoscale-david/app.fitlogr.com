@@ -9,7 +9,6 @@ import { ui } from "./settingsUi";
 import { colors } from "../theme";
 
 const RANGES = [
-  { label: "1 month", days: 30 },
   { label: "3 months", days: 90 },
   { label: "12 months", days: 365 },
 ] as const;
@@ -35,7 +34,7 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
   const storeRef = useRef(store);
   storeRef.current = store;
   const expoGo = isExpoGo();
-  const [days, setDays] = useState<30 | 90 | 365>(30);
+  const [days, setDays] = useState<90 | 365>(90);
   const [busy, setBusy] = useState<Busy>(null);
   const [progress, setProgress] = useState<HistoryProgress | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -113,52 +112,8 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
     }
   }
 
-  async function importApplePhotos() {
-    if (!signedIn) {
-      setNote("Sign in with Google before importing history.");
-      return;
-    }
-    const controller = new AbortController();
-    setCancel(controller);
-    setBusy("apple-photos");
-    setProgress({ scanned: 0, skipped: 0, meals: 0, nonMeals: 0, errors: 0 });
-    setNote(null);
-    try {
-      const result = await store.scanHistory(days, setProgress, controller.signal);
-      setCounts({ photos: result.meals, total: result.scanned, meals: result.meals, workouts: 0 });
-      setNote(result.message);
-      if (result.meals > 0) await stamp(APPLE_PHOTOS_SYNCED, setApplePhotosSynced);
-      setApplePhotos(true);
-    } catch (error) {
-      setNote(error instanceof Error ? error.message : "Import failed.");
-    } finally {
-      setBusy(null);
-      setCancel(null);
-      setProgress(null);
-    }
-  }
-
-  async function importHealth() {
-    if (!signedIn) {
-      setNote("Sign in with Google before importing history.");
-      return;
-    }
-    setBusy("health");
-    setNote(null);
-    try {
-      const result = await store.importHealthHistory(days);
-      setCounts({ photos: 0, total: result.total, meals: 0, workouts: result.workouts });
-      setNote(result.message);
-    } catch (error) {
-      setNote(error instanceof Error ? error.message : "Import failed.");
-    } finally {
-      setBusy(null);
-    }
-  }
-
   const healthConnected = store.health?.connected === true;
   const healthDetail = expoGo ? NATIVE_APP : healthConnected ? connectedLine(store.health?.lastSyncedAt ?? null) : healthProblem(store.health?.message);
-  const locked = busy !== null;
 
   return (
     <>
@@ -196,7 +151,20 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
                 <Pressable
                   key={range.days}
                   style={[styles.preset, days === range.days && styles.presetOn]}
-                  onPress={() => setDays(range.days)}
+                  onPress={() => {
+                    setDays(range.days);
+                    if (!signedIn) return;
+                    const controller = new AbortController();
+                    setCancel(controller);
+                    setBusy("apple-photos");
+                    void store.scanHistory(range.days, setProgress, controller.signal).then((result) => {
+                      setCounts({ photos: result.meals, total: result.scanned, meals: result.meals, workouts: 0 });
+                      setNote(result.message);
+                      setBusy(null);
+                      setCancel(null);
+                      setProgress(null);
+                    });
+                  }}
                   accessibilityRole="button"
                   accessibilityLabel={range.label}
                   accessibilityState={{ selected: days === range.days }}
@@ -205,40 +173,18 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
                 </Pressable>
               ))}
             </View>
-            <Text style={ui.meta}>These months scan Apple Health and the iPhone photo library.</Text>
+            <Text style={ui.meta}>Apple Photos and Apple Health import on their own for this window.</Text>
+            {store.photoScan.message ? <Text style={ui.body}>{store.photoScan.message}</Text> : null}
             {progress && busy === "apple-photos" ? (
               <Text style={ui.body}>
                 Scanned {progress.scanned}. Meals {progress.meals}. Skipped {progress.skipped}.
-                {progress.waitingSeconds ? ` Waiting ${formatWait(progress.waitingSeconds)} for the photo analysis limit.` : ""}
               </Text>
             ) : null}
-            <Pressable
-              style={[ui.secondary, expoGo && styles.disabled]}
-              disabled={locked || expoGo}
-              onPress={() => void importHealth()}
-              accessibilityRole="button"
-            >
-              {busy === "health" ? <ActivityIndicator color={colors.text} /> : <Text style={ui.secondaryText}>Import Apple Health</Text>}
-            </Pressable>
-            <Pressable
-              style={[ui.secondary, expoGo && styles.disabled]}
-              disabled={locked || expoGo}
-              onPress={() => void importApplePhotos()}
-              accessibilityRole="button"
-            >
-              {busy === "apple-photos" ? <ActivityIndicator color={colors.text} /> : <Text style={ui.secondaryText}>Import Apple Photos</Text>}
-            </Pressable>
             {expoGo ? <Text style={ui.meta}>{NATIVE_IMPORT}</Text> : null}
             {note ? <Text style={ui.body}>{note}</Text> : null}
-            <Text style={ui.body}>Photos imported: {counts.photos}</Text>
             <Text style={ui.body}>
-              Total: {counts.total}, Meals: {counts.meals}, Workouts: {counts.workouts}
+              Photos {counts.photos} · Health records {counts.total} · Meals {counts.meals}
             </Text>
-            {cancel ? (
-              <Pressable style={ui.secondary} onPress={() => cancel.abort()} accessibilityRole="button">
-                <Text style={ui.secondaryText}>Cancel</Text>
-              </Pressable>
-            ) : null}
           </>
         )}
       </View>
