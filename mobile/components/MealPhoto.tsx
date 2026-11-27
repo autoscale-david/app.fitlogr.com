@@ -41,7 +41,8 @@ export function MealPhoto({
   lookup.current = store.localMealPhoto;
   const [sources, setSources] = useState<string[]>([]);
   const [index, setIndex] = useState(0);
-  const [triedRemote, setTriedRemote] = useState(false);
+  // A ref, not state: marking it must not re-run (and so cancel) the effect that is fetching.
+  const triedRemote = useRef(false);
   const [note, setNote] = useState<string | null>(null);
 
   useEffect(() => {
@@ -49,7 +50,7 @@ export function MealPhoto({
     let cancelled = false;
     setSources([]);
     setIndex(0);
-    setTriedRemote(false);
+    triedRemote.current = false;
     setNote(null);
     void lookup
       .current(photoId)
@@ -67,11 +68,11 @@ export function MealPhoto({
 
   // Out of copies on the phone: ask the server once.
   useEffect(() => {
-    if (!photoId || triedRemote) return;
-    if (index !== -1 && index < sources.length) return;
-    if (index !== -1 && sources.length === 0) return;
+    if (!photoId || triedRemote.current) return;
+    const exhausted = index === -1 || (sources.length > 0 && index >= sources.length);
+    if (!exhausted) return;
+    triedRemote.current = true;
     let cancelled = false;
-    setTriedRemote(true);
     remoteUrl(photoId)
       .then((url) => {
         if (cancelled) return;
@@ -86,7 +87,9 @@ export function MealPhoto({
     return () => {
       cancelled = true;
     };
-  }, [photoId, index, sources, triedRemote]);
+    // Re-run only when the photo changes or the phone's copies run out, never because of its own result.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [photoId, index === -1 || (sources.length > 0 && index >= sources.length)]);
 
   const url = index >= 0 && index < sources.length ? sources[index] : null;
 

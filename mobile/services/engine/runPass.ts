@@ -1,3 +1,4 @@
+import { AppState } from "react-native";
 import { AI_PHOTO_CONSENT_VERSION, alertsForPass, effectiveSnapshot } from "@fitlogr/shared";
 import { SessionExpired } from "../api";
 import { localDateISO } from "../dates";
@@ -52,25 +53,34 @@ function emit(event: EngineEvent): void {
 }
 
 let inflight: { promise: Promise<PassResult>; long: boolean } | null = null;
-let queued: Promise<PassResult> | null = null;
+let queued: { promise: Promise<PassResult>; request: PassRequest } | null = null;
+let resumeTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * One pass at a time. A call made while a pass is running joins it, unless it asks for more than
  * that pass does: a foreground, setup, or manual request behind a short background pass gets its
  * own pass right after. Without that, the 20-second pass iOS triggers at launch would swallow the
- * full pass the open app needs.
+ * full pass the open app needs. The follow-up uses the most recent request's options.
  */
 export function runPass(request: PassRequest): Promise<PassResult> {
   if (!inflight) return start(request);
   const wantsMore = (isLong(request.reason) && !inflight.long) || request.reason === "setup" || request.reason === "manual";
   if (!wantsMore) return inflight.promise;
-  queued ??= inflight.promise
-    .catch(() => undefined)
-    .then(() => {
-      queued = null;
-      return start(request);
-    });
-  return queued;
+  if (queued) {
+    queued.request = request;
+    return queued.promise;
+  }
+  const entry: { promise: Promise<PassResult>; request: PassRequest } = {
+    request,
+    promise: inflight.promise
+      .catch(() => undefined)
+      .then(() => {
+        queued = null;
+        return start(entry.request);
+      }),
+  };
+  queued = entry;
+  return entry.promise;
 }
 
 function start(request: PassRequest): Promise<PassResult> {
@@ -83,6 +93,18 @@ function start(request: PassRequest): Promise<PassResult> {
   });
   inflight = { promise, long };
   return promise;
+}
+
+/** After a rate limit, continue by itself once the limit resets, as long as the app is still open. */
+function scheduleResume(resumeAtMs: number | null): void {
+  if (resumeTimer) clearTimeout(resumeTimer);
+  resumeTimer = null;
+  if (!resumeAtMs) return;
+  const delay = Math.min(Math.max(resumeAtMs - Date.now(), 0) + 2000, 6 * 60 * 60 * 1000);
+  resumeTimer = setTimeout(() => {
+    resumeTimer = null;
+    if (AppState.currentState === "active") void runPass({ reason: "foreground", active: true });
+  }, delay);
 }
 
 interface DayBefore {
@@ -107,7 +129,8 @@ async function publishAlerts(
   const eatenBefore = before.localDate === today ? before.eatenKcal : Math.max(0, day.eatenKcal - loggedToday);
   const { alerts, usedUpDate } = alertsForPass({
     now: new Date(),
-    foreground: request.active !== false && isLong(request.reason),
+    // Read now, not when the pass began: the app may have gone to the background since.
+    foreground: AppState.currentState === "active",
     meals: photos.logged.map((meal) => ({
       name: meal.name,
       kcal: meal.kcal,
@@ -139,6 +162,8 @@ async function ensureHealthHistory(db: Awaited<ReturnType<typeof openFitlogrData
 function isLong(reason: PassReason): boolean {
   return reason === "foreground" || reason === "setup" || reason === "manual";
 }
+
+const EMPTY_COUNTS: PipelineCounts = { checked: 0, lookLikeFood: 0, analysed: 0, waiting: 0, errors: 0, meals: 0 };
 
 function sessionEnded(): PassResult {
   emit({ type: "session-expired" });
@@ -186,18 +211,28 @@ async function execute(request: PassRequest & { budgetMs: number }): Promise<Pas
       days: request.historyDays,
       budgetMs: request.budgetMs,
       ask: active && (request.reason === "setup" || request.reason === "manual"),
+      stopWhenInactive: active && isLong(request.reason),
       signal: request.signal,
       onProgress: (counts) => emit({ type: "progress", counts, message: pipelineMessage(counts), running: true }),
       onMeal: () => emit({ type: "state" }),
     });
     for (const meal of photos.logged) emit({ type: "meal", meal });
-    await publishAlerts(db, request, photos, before);
-    emit({ type: "progress", counts: photos.counts, message: photos.message, running: false });
+    try {
+      await publishAlerts(db, request, photos, before);
+    } catch {
+      // A notification that could not be posted must not fail the pass that logged the meal.
+    }
+    if (active && isLong(request.reason)) scheduleResume(photos.counts.waiting > 0 ? photos.resumeAtMs : null);
   } catch (caught) {
-    if (caught instanceof SessionExpired) return sessionEnded();
+    if (caught instanceof SessionExpired) {
+      emit({ type: "progress", counts: EMPTY_COUNTS, message: "", running: false });
+      return sessionEnded();
+    }
     // The library or Health data can be unreadable while the phone is locked.
     error = caught instanceof Error ? caught.message : "This pass could not read the phone";
   }
+  // Always sent, so a "Checking your photos" line never outlives the pass.
+  emit({ type: "progress", counts: photos?.counts ?? EMPTY_COUNTS, message: photos?.message ?? "", running: false });
   // "(background)" in the log is how to tell that iOS really woke the app with the screen off.
   const reason = active ? request.reason : `${request.reason} (background)`;
   await recordPass(db, { reason, durationMs: Date.now() - started, counts: photos?.counts ?? null, error });

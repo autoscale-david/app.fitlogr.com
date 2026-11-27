@@ -44,9 +44,10 @@ export default function SetupScreen() {
     return () => subscription.remove();
   }, [refresh]);
 
-  function next() {
+  /** Moves on from one specific step. A late callback from an earlier step then cannot skip the current one. */
+  function leave(from: number) {
     setNote(null);
-    setStep((current) => Math.min(STEPS.length - 1, current + 1));
+    setStep((current) => (current === from ? Math.min(STEPS.length - 1, from + 1) : current));
   }
 
   async function finish() {
@@ -73,7 +74,7 @@ export default function SetupScreen() {
               setBusy(true);
               store
                 .signIn()
-                .then(next)
+                .then(() => leave(0))
                 .catch((error: unknown) => {
                   if (error instanceof AuthCancelled) return;
                   setNote(error instanceof Error ? error.message : "Sign-in failed");
@@ -83,7 +84,7 @@ export default function SetupScreen() {
           >
             {busy ? <ActivityIndicator color="#062214" /> : <Text style={ui.primaryText}>Sign in with Google</Text>}
           </Pressable>
-          <Pressable style={ui.secondary} onPress={next}>
+          <Pressable style={ui.secondary} disabled={busy} onPress={() => leave(0)}>
             <Text style={ui.secondaryText}>Look around first</Text>
           </Pressable>
         </>
@@ -102,7 +103,7 @@ export default function SetupScreen() {
               <Text style={ui.primaryText}>Agree to photo analysis</Text>
             </Pressable>
           ) : photos === "full" ? (
-            <Pressable style={ui.primary} onPress={next}>
+            <Pressable style={ui.primary} onPress={() => leave(1)}>
               <Text style={ui.primaryText}>Continue</Text>
             </Pressable>
           ) : (
@@ -112,7 +113,7 @@ export default function SetupScreen() {
                 void libraryAccess(true)
                   .then((access) => {
                     setPhotos(access);
-                    if (access === "full") next();
+                    if (access === "full") leave(1);
                     else if (access === "limited" || access === "denied") void Linking.openSettings();
                   })
                   .catch(() => setNote("Photo access needs the fitlogr iPhone app."));
@@ -121,7 +122,7 @@ export default function SetupScreen() {
               <Text style={ui.primaryText}>{photos === "limited" || photos === "denied" ? "Open Settings" : "Allow all photos"}</Text>
             </Pressable>
           )}
-          <Pressable style={ui.secondary} onPress={next}>
+          <Pressable style={ui.secondary} onPress={() => leave(1)}>
             <Text style={ui.secondaryText}>Skip for now</Text>
           </Pressable>
         </>
@@ -136,14 +137,14 @@ export default function SetupScreen() {
               setBusy(true);
               store
                 .syncHealth()
-                .then(next)
+                .then(() => leave(2))
                 .catch((error: unknown) => setNote(error instanceof Error ? error.message : "Apple Health could not connect"))
                 .finally(() => setBusy(false));
             }}
           >
-            <Text style={ui.primaryText}>Connect Apple Health</Text>
+            {busy ? <ActivityIndicator color="#062214" /> : <Text style={ui.primaryText}>Connect Apple Health</Text>}
           </Pressable>
-          <Pressable style={ui.secondary} onPress={next}>
+          <Pressable style={ui.secondary} disabled={busy} onPress={() => leave(2)}>
             <Text style={ui.secondaryText}>Skip for now</Text>
           </Pressable>
         </>
@@ -154,12 +155,12 @@ export default function SetupScreen() {
           <Pressable
             style={ui.primary}
             onPress={() => {
-              void ensureNotificationPermission().finally(next);
+              void ensureNotificationPermission().finally(() => leave(3));
             }}
           >
             <Text style={ui.primaryText}>Allow alerts</Text>
           </Pressable>
-          <Pressable style={ui.secondary} onPress={next}>
+          <Pressable style={ui.secondary} onPress={() => leave(3)}>
             <Text style={ui.secondaryText}>Skip for now</Text>
           </Pressable>
         </>
@@ -175,7 +176,7 @@ export default function SetupScreen() {
               <Text style={styles.choiceText}>12 months</Text>
             </Pressable>
           </View>
-          <Pressable style={ui.primary} onPress={next}>
+          <Pressable style={ui.primary} onPress={() => leave(4)}>
             <Text style={ui.primaryText}>Continue</Text>
           </Pressable>
         </>

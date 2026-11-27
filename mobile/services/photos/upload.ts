@@ -18,6 +18,8 @@ export interface ImportResult {
   message: string;
   /** Set when photo analysis is rate limited: wait this long before sending another photo. */
   retryAfterSeconds?: number;
+  /** For `error`: the server rejected this photo itself, so sending it again cannot work. */
+  permanent?: boolean;
   /** Why a photo was skipped without analysis. `in_flight` means another pass is sending it right now. */
   skipReason?: "in_flight" | "already_checked" | "server_excluded" | "server_non_meal";
   remotePhotoId?: string | null;
@@ -172,7 +174,9 @@ export async function importPreparedPhoto(
     }
     await remember(db, assetId, image, input.capturedAt, "error", null);
     const message = error instanceof ApiError ? error.message : "The photo could not be analyzed.";
-    return { kind: "error", message };
+    // 400, 413, 415 and 422 are about this photo. Everything else (5xx, a bad reply) may pass.
+    const permanent = error instanceof ApiError && [400, 413, 415, 422].includes(error.status);
+    return { kind: "error", message, permanent };
   } finally {
     inFlight.delete(assetId);
   }

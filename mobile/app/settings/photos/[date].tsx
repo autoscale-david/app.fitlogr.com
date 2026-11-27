@@ -70,7 +70,7 @@ export default function PhotoDayScreen() {
       ))}
       {open ? (
         <View style={ui.card}>
-          <PhotoThumb row={open} large />
+          <PhotoThumb key={open.id} row={open} large />
           <Text style={ui.body}>{open.labels.map((label) => `${label.id} ${Math.round(label.confidence * 100)}%`).join(" · ") || "No labels"}</Text>
           {open.estimate?.reason ? <Text style={ui.body}>{open.estimate.reason}</Text> : null}
           {open.estimate?.items?.length ? (
@@ -80,6 +80,8 @@ export default function PhotoDayScreen() {
             Classified {open.classifiedAt ?? "—"} · analysed {open.aiAt ?? "—"}
           </Text>
           {open.error ? <Text style={ui.error}>{open.error}</Text> : null}
+          {/* A logged meal has nothing to re-analyse; sending it again could log it twice. */}
+          {open.aiState === "meal" ? null : (
           <Pressable
             style={ui.secondary}
             disabled={working}
@@ -115,6 +117,7 @@ export default function PhotoDayScreen() {
           >
             <Text style={ui.secondaryText}>{working ? "Analysing…" : "Analyse anyway"}</Text>
           </Pressable>
+          )}
           <Pressable
             style={ui.secondary}
             disabled={working}

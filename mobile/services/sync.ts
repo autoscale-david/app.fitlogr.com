@@ -75,11 +75,22 @@ export interface SyncOutcome {
   rejected: number;
 }
 
-export async function syncAccount(db: SQLiteDatabase, force: boolean): Promise<SyncOutcome> {
-  await pushPhotoConsent(db);
-  const rejected = await drainOutbox(db, force);
-  await pullChanges(db);
-  return { rejected };
+let syncing: Promise<SyncOutcome> | null = null;
+
+/**
+ * One at a time. The screen and the background engine both sync; two drains running together
+ * would send the same queued changes twice. A second caller waits for the one in progress.
+ */
+export function syncAccount(db: SQLiteDatabase, force: boolean): Promise<SyncOutcome> {
+  syncing ??= (async () => {
+    await pushPhotoConsent(db);
+    const rejected = await drainOutbox(db, force);
+    await pullChanges(db);
+    return { rejected };
+  })().finally(() => {
+    syncing = null;
+  });
+  return syncing;
 }
 
 async function pushPhotoConsent(db: SQLiteDatabase): Promise<void> {

@@ -12,16 +12,16 @@ public class PhotoClassifierModule: Module {
     Name("PhotoClassifier")
 
     // One bad asset is an error entry. The rest of the batch still returns.
-    AsyncFunction("classifyAssets") { (assetIds: [String], maxLabels: Int, minConfidence: Double) async -> [[String: Any]] in
+    AsyncFunction("classifyAssets") { (assetIds: [String], maxLabels: Int, minConfidence: Double, cpuOnly: Bool) async -> [[String: Any]] in
       var results: [[String: Any]] = []
       for assetId in assetIds {
-        results.append(await classifyAsset(assetId, maxLabels: maxLabels, minConfidence: Float(minConfidence)))
+        results.append(await classifyAsset(assetId, maxLabels: maxLabels, minConfidence: Float(minConfidence), cpuOnly: cpuOnly))
       }
       return results
     }
 
-    AsyncFunction("classifyFile") { (uri: String, maxLabels: Int, minConfidence: Double) async -> [String: Any] in
-      return classifyImage(loadFile(uri), assetId: uri, maxLabels: maxLabels, minConfidence: Float(minConfidence))
+    AsyncFunction("classifyFile") { (uri: String, maxLabels: Int, minConfidence: Double, cpuOnly: Bool) async -> [String: Any] in
+      return classifyImage(loadFile(uri), assetId: uri, maxLabels: maxLabels, minConfidence: Float(minConfidence), cpuOnly: cpuOnly)
     }
 
     Function("supportedLabels") { () -> [String] in
@@ -72,7 +72,7 @@ private final class ResumeOnce: @unchecked Sendable {
   }
 }
 
-private func classifyAsset(_ assetId: String, maxLabels: Int, minConfidence: Float) async -> [String: Any] {
+private func classifyAsset(_ assetId: String, maxLabels: Int, minConfidence: Float, cpuOnly: Bool) async -> [String: Any] {
   let localId = assetId.hasPrefix("ph://") ? String(assetId.dropFirst(5)) : assetId
   let fetched = PHAsset.fetchAssets(withLocalIdentifiers: [localId], options: nil)
   guard let asset = fetched.firstObject else {
@@ -83,7 +83,7 @@ private func classifyAsset(_ assetId: String, maxLabels: Int, minConfidence: Flo
   if image == nil {
     image = await requestImage(asset, allowNetwork: true)
   }
-  return classifyImage(image, assetId: assetId, maxLabels: maxLabels, minConfidence: minConfidence)
+  return classifyImage(image, assetId: assetId, maxLabels: maxLabels, minConfidence: minConfidence, cpuOnly: cpuOnly)
 }
 
 private func requestImage(_ asset: PHAsset, allowNetwork: Bool) async -> UIImage? {
@@ -119,12 +119,17 @@ private func loadFile(_ uri: String) -> UIImage? {
   return UIImage(contentsOfFile: uri)
 }
 
-private func classifyImage(_ image: UIImage?, assetId: String, maxLabels: Int, minConfidence: Float) -> [String: Any] {
+private func classifyImage(_ image: UIImage?, assetId: String, maxLabels: Int, minConfidence: Float, cpuOnly: Bool) -> [String: Any] {
   guard let image = image, let cgImage = image.cgImage else {
     return ["assetId": assetId, "error": "Photo could not be read"]
   }
   return autoreleasepool { () -> [String: Any] in
     let request = VNClassifyImageRequest()
+    // iOS does not let a backgrounded app use the GPU. Deprecated, but it is the setting that
+    // exists on every iOS version this app supports.
+    if cpuOnly {
+      request.usesCPUOnly = true
+    }
     let handler = VNImageRequestHandler(cgImage: cgImage, orientation: cgOrientation(image.imageOrientation), options: [:])
     do {
       try handler.perform([request])

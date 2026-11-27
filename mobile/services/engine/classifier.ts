@@ -1,3 +1,4 @@
+import { AppState } from "react-native";
 import { PHOTO_TRIAGE_POLICY, sendsForAnalysis, triage, type TriageLabel } from "@fitlogr/shared";
 import nativeModule, { type PhotoClassifierNative } from "../../modules/photo-classifier";
 import type { PipelineLabel } from "./pipeline";
@@ -22,6 +23,11 @@ const CLASSIFY_TIMEOUT_MS = 20_000;
 
 const native: PhotoClassifierNative | null = nativeModule ?? null;
 
+/** iOS does not let a backgrounded app use the GPU, so Vision is told to stay on the CPU there. */
+function cpuOnly(): boolean {
+  return AppState.currentState !== "active";
+}
+
 /** Apple Vision when the native module is in the binary. Otherwise automatic scanning is off. */
 export function getClassifier(): PhotoClassifier {
   if (!native) {
@@ -42,7 +48,7 @@ export function getClassifier(): PhotoClassifier {
     available: true,
     async classifyAsset(assetId) {
       try {
-        const [first] = await withTimeout(native.classifyAssets([assetId], MAX_LABELS, MIN_CONFIDENCE));
+        const [first] = await withTimeout(native.classifyAssets([assetId], MAX_LABELS, MIN_CONFIDENCE, cpuOnly()));
         if (!first) return { error: "Classifier returned nothing" };
         if (first.error) return { error: first.error };
         return { labels: first.labels ?? [] };
@@ -52,7 +58,7 @@ export function getClassifier(): PhotoClassifier {
     },
     async classifyFile(uri) {
       try {
-        const result = await withTimeout(native.classifyFile(uri, MAX_LABELS, MIN_CONFIDENCE));
+        const result = await withTimeout(native.classifyFile(uri, MAX_LABELS, MIN_CONFIDENCE, cpuOnly()));
         if (result.error) return { error: result.error };
         return { labels: result.labels ?? [] };
       } catch (error) {

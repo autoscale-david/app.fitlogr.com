@@ -2,7 +2,8 @@ import { localDateISO } from "../dates";
 
 /**
  * What the audit row is waiting on. `not_sent` is final: the photo never leaves the phone.
- * `error` is retried on the next pass; `failed` gave up after repeated errors and is final.
+ * `error` is retried later with a growing wait; `failed` means the server rejected the photo itself
+ * and is final.
  */
 export type AiState = "not_sent" | "queued" | "meal" | "workout" | "ignore" | "duplicate" | "excluded" | "error" | "failed";
 
@@ -54,6 +55,11 @@ export interface AnalyzeOutcome {
   classification?: string | null;
   confidence?: number | null;
   estimate?: unknown;
+  /**
+   * For `error`: the server rejected this photo itself (too large, not a JPEG, bad metadata), so
+   * sending it again cannot work. Anything else (an outage, a model hiccup) is retried later.
+   */
+  permanent?: boolean;
 }
 
 export interface LoggedMeal {
@@ -111,10 +117,27 @@ export interface PipelineInput {
   onProgress?: (counts: PipelineCounts) => void;
   /** Photos captured this recently are classified and analysed before older ones are even classified. */
   freshMs?: number;
-  /** Analysis errors on one photo before it is left alone. Each failed try still uses the server's quota. */
-  maxAnalysisAttempts?: number;
-  /** Unreadable tries (for example a photo still downloading from iCloud) before it is left alone. */
-  maxReadAttempts?: number;
+  /** Checked between photos. True ends the pass early and leaves the rest for the next one. */
+  shouldStop?: () => boolean;
+  /** An error the caller must see (an expired session). It ends the pass instead of marking the photo. */
+  isFatal?: (error: unknown) => boolean;
+}
+
+/**
+ * How long to leave a photo alone after its nth failed analysis. A failure is never final on its own:
+ * during an outage every queued photo fails, and none of them should be written off for it.
+ */
+const RETRY_AFTER_MS = [5 * 60_000, 30 * 60_000, 2 * 3_600_000, 6 * 3_600_000, 24 * 3_600_000];
+/** Two failures in a row mean the service is down, not the photos. Stop and try again next pass. */
+const MAX_CONSECUTIVE_ERRORS = 2;
+
+export function retryDue(row: Pick<PipelineRow, "attempts" | "analysedAt">, nowMs: number): boolean {
+  const attempts = row.attempts ?? 0;
+  if (attempts === 0 || !row.analysedAt) return true;
+  const last = Date.parse(row.analysedAt);
+  if (!Number.isFinite(last)) return true;
+  const wait = RETRY_AFTER_MS[Math.min(attempts, RETRY_AFTER_MS.length) - 1] ?? 0;
+  return nowMs >= last + wait;
 }
 
 const DEFAULT_FRESH_MS = 36 * 60 * 60 * 1000;
@@ -131,10 +154,9 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
   const started = clock();
   const elapsed = () => clock() - started;
   const stamp = () => new Date(input.nowMs + elapsed()).toISOString();
-  const maxAnalysis = input.maxAnalysisAttempts ?? 3;
-  const maxRead = input.maxReadAttempts ?? 6;
   const logged: LoggedMeal[] = [];
-  const run = { checked: 0, analysed: 0, errors: 0, stoppedForBudget: false, hitLimit: false, paused: false };
+  const run = { checked: 0, analysed: 0, errors: 0, stoppedForBudget: false, hitLimit: false, paused: false, errorStreak: 0 };
+  const mustStop = () => run.stoppedForBudget || overBudget(started, input.budgetMs, clock()) || input.shouldStop?.() === true;
   let resumeAtMs = input.resumeAtMs;
   const canSend = resumeAtMs === null || resumeAtMs <= input.nowMs;
 
@@ -156,7 +178,7 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
 
   async function classify(batch: PipelinePhoto[]): Promise<void> {
     for (const photo of batch) {
-      if (run.stoppedForBudget || overBudget(started, input.budgetMs, clock())) {
+      if (mustStop()) {
         run.stoppedForBudget = true;
         return;
       }
@@ -164,9 +186,9 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
       const existing = input.rows.get(photo.id);
       if (existing && isFinalAudit(existing)) continue;
       if (existing?.aiState === "queued") continue;
-      // An analysis error keeps its labels: queue it again instead of classifying again.
+      // An analysis error keeps its labels: queue it again when its wait is over, without classifying again.
       if (existing?.aiState === "error" && existing.verdict && existing.verdict !== "unreadable") {
-        await save({ ...existing, aiState: "queued" });
+        if (retryDue(existing, input.nowMs + elapsed())) await save({ ...existing, aiState: "queued" });
         continue;
       }
 
@@ -179,20 +201,14 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
       try {
         classified = await input.classify(photo);
       } catch (error) {
+        if (input.isFatal?.(error)) throw error;
         classified = { error: error instanceof Error ? error.message : "Could not read the photo" };
       }
       if ("error" in classified) {
+        // Reading is local and free, so an unreadable photo (still in iCloud, phone locked) is simply
+        // tried again on every pass. It is never written off.
         run.errors += 1;
-        const attempts = (existing?.attempts ?? 0) + 1;
-        await save(
-          baseRow(photo, input, toLocalDate, {
-            verdict: "unreadable",
-            aiState: attempts >= maxRead ? "failed" : "error",
-            error: classified.error,
-            attempts,
-            classifiedAt: stamp(),
-          }),
-        );
+        await save(baseRow(photo, input, toLocalDate, { verdict: "unreadable", aiState: "error", error: classified.error, classifiedAt: stamp() }));
         continue;
       }
 
@@ -202,6 +218,8 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
           verdict: decision.verdict,
           labels: classified.labels,
           aiState: decision.send ? "queued" : "not_sent",
+          attempts: 0,
+          analysedAt: null,
           classifiedAt: stamp(),
         }),
       );
@@ -213,7 +231,7 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
     if (!canSend || run.hitLimit || run.paused || run.stoppedForBudget) return;
     const queue = [...input.rows.values()].filter((row) => row.aiState === "queued").sort((a, b) => b.capturedAtMs - a.capturedAtMs);
     for (const row of queue) {
-      if (overBudget(started, input.budgetMs, clock())) {
+      if (mustStop()) {
         run.stoppedForBudget = true;
         return;
       }
@@ -222,6 +240,7 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
       try {
         outcome = await input.analyze(photo, row);
       } catch (error) {
+        if (input.isFatal?.(error)) throw error;
         outcome = { kind: "error", message: error instanceof Error ? error.message : "The photo could not be analyzed" };
       }
       if (outcome.kind === "skip") continue;
@@ -239,16 +258,21 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
       run.analysed += 1;
       if (outcome.kind === "error") {
         run.errors += 1;
-        const attempts = (row.attempts ?? 0) + 1;
+        run.errorStreak += 1;
         await save({
           ...row,
-          aiState: attempts >= maxAnalysis ? "failed" : "error",
-          attempts,
+          aiState: outcome.permanent ? "failed" : "error",
+          attempts: (row.attempts ?? 0) + 1,
           error: outcome.message ?? "The photo could not be analyzed",
           analysedAt: stamp(),
         });
+        if (run.errorStreak >= MAX_CONSECUTIVE_ERRORS) {
+          run.paused = true;
+          return;
+        }
         continue;
       }
+      run.errorStreak = 0;
       const next: PipelineRow = {
         ...row,
         aiState: outcome.kind,

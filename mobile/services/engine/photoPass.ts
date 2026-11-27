@@ -1,8 +1,10 @@
 import type { SQLiteDatabase } from "expo-sqlite";
+import { AppState } from "react-native";
+import { SessionExpired } from "../api";
 import { localDateISO } from "../dates";
 import { readSetting, writeSetting } from "../db";
 import { libraryAccess, prepareLibraryPhoto, walkLibraryPhotos, type LibraryAccess } from "../photos/library";
-import { importPreparedPhoto, type ImportResult } from "../photos/upload";
+import { importPreparedPhoto, rateLimitMessage, type ImportResult } from "../photos/upload";
 import { loadAuditMap, saveAuditRow } from "./audit";
 import { CLASSIFIER_POLICY_VERSION, decideLabels, getClassifier } from "./classifier";
 import { runPipeline, type AnalyzeOutcome, type PipelineCounts, type PipelinePhoto, type PipelineResult } from "./pipeline";
@@ -23,6 +25,11 @@ export async function runPhotoPipeline(
     days?: number;
     budgetMs: number;
     ask: boolean;
+    /**
+     * For a pass started with the app open: end it when the app leaves the foreground. Otherwise iOS
+     * freezes it mid-run and every later background wake would join that stale, unlimited pass.
+     */
+    stopWhenInactive?: boolean;
     signal?: AbortSignal;
     onProgress?: (counts: PipelineCounts) => void;
     onMeal?: () => void;
@@ -75,11 +82,15 @@ export async function runPhotoPipeline(
     // Saved row by row: iOS can suspend the app mid-pass, and the next pass must pick up where this one stopped.
     persist: (row) => saveAuditRow(db, row, thumbs.get(row.id) ?? null),
     onProgress: options.onProgress,
+    shouldStop: () => options.signal?.aborted === true || (options.stopWhenInactive === true && AppState.currentState !== "active"),
+    isFatal: (error) => error instanceof SessionExpired,
   });
   if (result.resumeAtMs) await writeSetting(db, RESUME_AT_KEY, String(result.resumeAtMs));
   else await writeSetting(db, RESUME_AT_KEY, "");
   options.onProgress?.(result.counts);
-  return { ...result, access, message: pipelineMessage(result.counts) };
+  const waitSeconds = result.resumeAtMs ? Math.max(1, Math.ceil((result.resumeAtMs - Date.now()) / 1000)) : 0;
+  const message = waitSeconds > 0 && result.counts.waiting > 0 ? `${pipelineMessage(result.counts)}. ${rateLimitMessage(waitSeconds)}` : pipelineMessage(result.counts);
+  return { ...result, access, message };
 }
 
 export function pipelineMessage(counts: PipelineCounts): string {
@@ -113,7 +124,13 @@ async function analyzePhoto(
   onMeal?: () => void,
 ): Promise<AnalyzeOutcome> {
   if (signal?.aborted) return { kind: "paused" };
-  const prepared = await prepareLibraryPhoto(photo.id);
+  let prepared;
+  try {
+    prepared = await prepareLibraryPhoto(photo.id);
+  } catch (error) {
+    // Nothing was sent: the photo may still be in iCloud, or the phone is locked. Tried again later.
+    return { kind: "error", message: error instanceof Error ? error.message : "The photo could not be loaded" };
+  }
   const result = await importPreparedPhoto(db, prepared, {
     capturedAt: new Date(photo.capturedAtMs).toISOString(),
     localDate: row.captureDate || localDateISO(new Date(photo.capturedAtMs)),
@@ -134,7 +151,7 @@ async function analyzePhoto(
 export function outcomeFromImport(result: ImportResult): AnalyzeOutcome {
   if (result.kind === "rate_limited") return { kind: "rate_limited", retryAfterSeconds: result.retryAfterSeconds, message: result.message };
   if (result.kind === "offline" || result.kind === "consent") return { kind: "paused", message: result.message };
-  if (result.kind === "error") return { kind: "error", message: result.message };
+  if (result.kind === "error") return { kind: "error", message: result.message, permanent: result.permanent };
   if (result.kind === "skipped") {
     // Another pass is sending this photo, or already recorded it: leave the row as it is.
     if (result.skipReason === "in_flight" || result.skipReason === "already_checked") return { kind: "skip" };
@@ -151,6 +168,8 @@ export function outcomeFromImport(result: ImportResult): AnalyzeOutcome {
       confidence: result.confidence,
     };
   }
+  // A photo the person insisted on is logged as a meal whatever the model called it, so check that first.
+  if (result.kind === "meal") return mealOutcome(result);
   if (result.classification === "workout") {
     return { kind: "workout", remotePhotoId: result.remotePhotoId, classification: "workout", confidence: result.confidence, estimate: result.estimate, message: result.message };
   }
@@ -158,13 +177,17 @@ export function outcomeFromImport(result: ImportResult): AnalyzeOutcome {
     // The model can call a photo a meal and still not log it (low confidence, no items). Keep its word for it.
     return { kind: "ignore", remotePhotoId: result.remotePhotoId, classification: result.classification ?? "ignore", confidence: result.confidence, estimate: result.estimate, message: result.message };
   }
+  return mealOutcome(result);
+}
+
+function mealOutcome(result: ImportResult): AnalyzeOutcome {
   return {
     kind: "meal",
     name: result.name,
     kcal: result.kcal,
     mealId: result.mealId,
     remotePhotoId: result.remotePhotoId,
-    classification: "meal",
+    classification: result.classification ?? "meal",
     confidence: result.confidence,
     estimate: result.estimate,
     message: result.message,
@@ -206,7 +229,7 @@ export async function recordImport(
       classifierId: existing?.classifierId ?? classifier.id,
       policyVersion: existing?.policyVersion ?? CLASSIFIER_POLICY_VERSION,
       classifiedAt: existing?.classifiedAt ?? (input.labels ? now : null),
-      aiState: outcome.kind === "error" ? "error" : outcome.kind,
+      aiState: outcome.kind === "error" ? (outcome.permanent ? "failed" : "error") : outcome.kind,
       classification: outcome.classification ?? existing?.classification ?? null,
       confidence: outcome.confidence ?? existing?.confidence ?? null,
       estimate: outcome.estimate ?? existing?.estimate ?? null,

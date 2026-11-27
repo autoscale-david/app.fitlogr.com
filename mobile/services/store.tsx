@@ -550,7 +550,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // Through the engine, so it can never run alongside another pass over the same photos.
         await writeSetting(db, "photo_history_days", String(days));
         setPhotoScan((current) => ({ ...current, active: true }));
-        const pass = await runPass({ reason: "manual", active: true, historyDays: days, signal });
+        let pass: Awaited<ReturnType<typeof runPass>>;
+        try {
+          pass = await runPass({ reason: "manual", active: true, historyDays: days, signal });
+        } catch (error) {
+          setPhotoScan((current) => ({ ...current, active: false }));
+          throw error;
+        }
         const result = pass.photos;
         setRefreshToken((token) => token + 1);
         if (!result) {
@@ -590,7 +596,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (!db || mode !== "account" || !photoConsent) return "";
         if (sessionExpired) return announceEmpty ? "Sign in again to keep importing meal photos." : "";
         setPhotoScan((current) => ({ ...current, active: true, message: null }));
-        const result = await runPass({ reason: "manual", active: AppState.currentState === "active" });
+        let result: Awaited<ReturnType<typeof runPass>>;
+        try {
+          result = await runPass({ reason: "manual", active: AppState.currentState === "active" });
+        } catch (error) {
+          setPhotoScan((current) => ({ ...current, active: false }));
+          throw error;
+        }
         const message = result.photos?.message ?? "";
         setPhotoScan({ active: false, message: message || null, access: result.photos?.access ?? null });
         return !message || (!announceEmpty && (result.photos?.counts.meals ?? 0) === 0) ? "" : message;

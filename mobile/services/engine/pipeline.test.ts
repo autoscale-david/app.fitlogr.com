@@ -192,32 +192,105 @@ describe("photo pipeline bookkeeping", () => {
     expect(rows.get("a")?.analysedAt).toEqual(expect.any(String));
   });
 
-  it("stops retrying a photo that keeps failing, and never re-classifies it for an analysis error", async () => {
-    const photos = [photo("bad", 0)];
+  it("an outage does not write off the queue: two failures stop the pass, and nothing becomes final", async () => {
+    const photos = [photo("a", 0), photo("b", 1), photo("c", 2), photo("d", 3), photo("e", 4)];
     const rows = new Map<string, PipelineRow>();
-    let classified = 0;
     let sent = 0;
-    const once = () =>
+    const outage = () =>
       runPipeline({
         ...base(photos, rows),
-        classify: async () => {
-          classified += 1;
-          return { labels: [{ id: "food", confidence: 1 }] };
-        },
         analyze: async () => {
           sent += 1;
           return { kind: "error", message: "Meal analysis failed" };
         },
       });
-    await once();
+    await outage();
+    await outage();
+    await outage();
+    // Each pass gave up after two failures in a row, and the wait kept the same photos from being re-sent.
+    expect(sent).toBeLessThanOrEqual(6);
+    expect([...rows.values()].some((row) => row.aiState === "failed")).toBe(false);
+    expect([...rows.values()].every((row) => !isFinalAudit(row))).toBe(true);
+
+    const recovered = await runPipeline({
+      ...base(photos, rows),
+      nowMs: base(photos, rows).nowMs + 3 * 24 * 60 * 60 * 1000,
+      analyze: async (item) => ({ kind: "meal", name: item.id, kcal: 1 }),
+    });
+    expect(recovered.counts.waiting).toBe(0);
+    expect([...rows.values()].every((row) => row.aiState === "meal")).toBe(true);
+  });
+
+  it("waits before re-sending a photo that failed, and never re-classifies it", async () => {
+    const photos = [photo("bad", 0), photo("good", 1)];
+    const rows = new Map<string, PipelineRow>();
+    let classified = 0;
+    const sent: string[] = [];
+    const pass = (nowMs: number) =>
+      runPipeline({
+        ...base(photos, rows),
+        nowMs,
+        classify: async () => {
+          classified += 1;
+          return { labels: [{ id: "food", confidence: 1 }] };
+        },
+        analyze: async (item) => {
+          sent.push(item.id);
+          return item.id === "bad" ? { kind: "error", message: "Meal analysis failed" } : { kind: "meal", name: "Good", kcal: 1 };
+        },
+      });
+    const start = base(photos, rows).nowMs;
+    await pass(start);
     expect(rows.get("bad")).toMatchObject({ aiState: "error", attempts: 1 });
-    await once();
-    await once();
-    expect(rows.get("bad")).toMatchObject({ aiState: "failed", attempts: 3 });
-    await once();
-    expect(sent).toBe(3);
-    expect(classified).toBe(1);
-    expect(isFinalAudit(rows.get("bad")!)).toBe(true);
+    await pass(start + 60_000);
+    expect(sent).toEqual(["bad", "good"]);
+    await pass(start + 6 * 60_000);
+    expect(sent).toEqual(["bad", "good", "bad"]);
+    expect(rows.get("bad")).toMatchObject({ aiState: "error", attempts: 2 });
+    expect(classified).toBe(2);
+  });
+
+  it("gives up at once when the server rejects the photo itself", async () => {
+    const photos = [photo("huge", 0)];
+    const rows = new Map<string, PipelineRow>();
+    await runPipeline({
+      ...base(photos, rows),
+      analyze: async () => ({ kind: "error", message: "Photo must be 2 MB or smaller", permanent: true }),
+    });
+    expect(rows.get("huge")?.aiState).toBe("failed");
+    expect(isFinalAudit(rows.get("huge")!)).toBe(true);
+  });
+
+  it("lets an expired session end the pass instead of marking photos", async () => {
+    class Expired extends Error {}
+    const photos = [photo("a", 0), photo("b", 1)];
+    const rows = new Map<string, PipelineRow>();
+    await expect(
+      runPipeline({
+        ...base(photos, rows),
+        isFatal: (error) => error instanceof Expired,
+        analyze: async () => {
+          throw new Expired();
+        },
+      }),
+    ).rejects.toBeInstanceOf(Expired);
+    expect(rows.get("a")?.aiState).toBe("queued");
+  });
+
+  it("ends early when asked to stop, leaving the rest for the next pass", async () => {
+    const photos = [photo("a", 0), photo("b", 1), photo("c", 2)];
+    const rows = new Map<string, PipelineRow>();
+    let stop = false;
+    const result = await runPipeline({
+      ...base(photos, rows),
+      shouldStop: () => stop,
+      analyze: async (item) => {
+        stop = true; // the app went to the background while this one was being sent
+        return { kind: "meal", name: item.id, kcal: 1 };
+      },
+    });
+    expect(result.stoppedForBudget).toBe(true);
+    expect(result.counts.meals).toBe(1);
   });
 
   it("leaves a photo queued when another pass is already sending it", async () => {
