@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, T
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { formatKcal, type DailyInsight, type TrendPoint } from "@fitlogr/shared";
-import { GoogleReconnectBanner, SyncStatusBanner } from "../../components/AccountBanners";
+import { SessionExpiredBanner, SyncStatusBanner } from "../../components/AccountBanners";
 import { MealCard, WorkoutCard } from "../../components/LogCard";
 import { MacroBars } from "../../components/MacroBars";
 import { addDays, formatReviewDate, localDateISO } from "../../services/dates";
@@ -110,14 +110,13 @@ export default function ReviewScreen() {
         {store.mode === "account" ? "Tonight's balance from your synced log." : "Sample evening review on this phone."}
       </Text>
 
-      <GoogleReconnectBanner
-        visible={store.googleReconnectRequired}
-        sessionExpired={store.sessionExpired}
+      <SessionExpiredBanner
+        visible={store.sessionExpired}
         busy={reconnecting}
-        onReconnect={() => {
+        onSignIn={() => {
           setReconnecting(true);
           store
-            .reconnectGoogle()
+            .signIn()
             .catch((error: unknown) => {
               if (error instanceof AuthCancelled) return;
             })

@@ -62,6 +62,7 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
         nonce,
         codeChallenge: await sha256Base64Url(pkceVerifier),
         includePickerScope: body.include_picker_scope === true,
+        includePhotosScopes: body.include_photos_scopes,
       }),
       expires_at: expiresAt,
     });

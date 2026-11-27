@@ -1,0 +1,1192 @@
+{
+  "version": 1,
+  "description": "FitLogr AI photo calorie estimator benchmark covering meals (Google Research Nutrition5k lab-weighed dishes), cardio workout consoles (CC-licensed Flickr displays), hard-negative ignores (CC-licensed Wikimedia Commons & Flickr), and David's 4 original repository fixtures.",
+  "policy_notes": [
+    "Split isolation: Nutrition5k dev meals come exclusively from official rgb_train and test meals exclusively from official rgb_test (zero plate overlap). Workout consoles and hard-negative ignores are stratified across dev and held-out test with zero image reuse.",
+    "Zero-calorie plain drinks: plain water and plain black coffee without milk, cream, sugar, or accompanying food are labeled ignore (0 kcal).",
+    "Idle/non-calorie exercise consoles: powered-off consoles, quick-start/menu screens without active calorie readouts, lifetime distance summaries without calories, and gym equipment without readable displays are labeled ignore.",
+    "David's 2 meal fixtures (02-meal-kenzi-latte-pastry, 03-meal-banana-crepes) carry human visual_reference estimates rather than lab weights; all 26 dev/test meals are lab-weighed Nutrition5k ground truth with full macros."
+  ],
+  "cases": [
+    {
+      "id": "fixture-workout-01-vision-console",
+      "split": "fixtures",
+      "subcategory": "cardio_console_decimal_distance_trap",
+      "description": "Vision Fitness red LED cardio console: top row 1.16 DISTANCE, 0 HEART RATE, 66 WATTS; bottom row 35 Incline/RPM, 153 Calories, 8:25 Time, 5 Resistance.",
+      "expected": {
+        "kind": "workout",
+        "kcal": 153,
+        "ground_truth_type": "exact_readout"
+      },
+      "source": {
+        "dataset": "fitlogr-fixtures",
+        "local_path": "shared/src/estimate/fixtures/01-workout-vision-console.png",
+        "license": "Repository fixture",
+        "attribution": "FitLogr (David)",
+        "sha256": "6e70d5af10a4611a8c8382a82aed921d04729d5d0fb23545a5e52b28608c9513"
+      }
+    },
+    {
+      "id": "fixture-meal-02-kenzi-latte-pastry",
+      "split": "fixtures",
+      "subcategory": "coffee_and_pastry",
+      "description": "12 fl oz Kenzi latte in paper cup and round berry cream cheese danish on a dark table.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 606,
+        "ground_truth_type": "visual_reference",
+        "macros": { "protein_g": 17, "carbs_g": 62, "fat_g": 31 },
+        "ingredients_note": "12 fl oz whole-milk latte (~158 kcal) + berry cream cheese danish (~448 kcal)"
+      },
+      "source": {
+        "dataset": "fitlogr-fixtures",
+        "local_path": "shared/src/estimate/fixtures/02-meal-kenzi-latte-pastry.png",
+        "license": "Repository fixture",
+        "attribution": "FitLogr (David)",
+        "sha256": "ec1fa94278ab9bccbd197546b56a566b1948aa67d631749eef30e825dd5b5be6"
+      }
+    },
+    {
+      "id": "fixture-meal-03-banana-crepes",
+      "split": "fixtures",
+      "subcategory": "sweet_breakfast",
+      "description": "Three folded crepes with banana slices, whipped cream, powdered sugar, and maple syrup.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 682,
+        "ground_truth_type": "visual_reference",
+        "macros": { "protein_g": 11, "carbs_g": 114, "fat_g": 21 },
+        "ingredients_note": "3 folded crepes (~324), banana slices (~134), whipped cream (~88), powdered sugar (~32), maple syrup (~104)"
+      },
+      "source": {
+        "dataset": "fitlogr-fixtures",
+        "local_path": "shared/src/estimate/fixtures/03-meal-banana-crepes.png",
+        "license": "Repository fixture",
+        "attribution": "FitLogr (David)",
+        "sha256": "cb65183e4a74afe8308820e2b8482ab95f4dc65dd85064a61a88b66466a82291"
+      }
+    },
+    {
+      "id": "fixture-ignore-04-fire-pit",
+      "split": "fixtures",
+      "subcategory": "outdoor_scene",
+      "description": "Outdoor patio fire pit at night with chairs; no food and no exercise readout.",
+      "expected": {
+        "kind": "ignore",
+        "kcal": 0,
+        "ground_truth_type": "non_target"
+      },
+      "source": {
+        "dataset": "fitlogr-fixtures",
+        "local_path": "shared/src/estimate/fixtures/04-ignore-fire-pit.png",
+        "license": "Repository fixture",
+        "attribution": "FitLogr (David)",
+        "sha256": "fe74b28f0b1062e5d317f5d44d8ddfa2052f8c3db1b68bae894c48b90e3e2316"
+      }
+    },
+    {
+      "id": "dev-meal-01-waffles-syrup",
+      "split": "dev",
+      "subcategory": "sweet_breakfast",
+      "description": "Nutrition5k dish_1563552016: Belgian waffle pieces with glossy maple syrup.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 493.6,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 174,
+        "macros": { "protein_g": 10.7, "carbs_g": 70.0, "fat_g": 19.5 },
+        "ingredients_note": "waffles(136g,395kcal), syrup(38g,99kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_train)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1563552016/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "8ba3f1f4f8326ba7325eac8ac59c221bdaf84faae365c7d65aec7d846b902bde"
+      }
+    },
+    {
+      "id": "dev-meal-02-breakfast-eggs-bacon",
+      "split": "dev",
+      "subcategory": "savory_breakfast",
+      "description": "Nutrition5k dish_1566316612: scrambled eggs, hash browns, bacon, cooked greens, roasted eggplant, olive oil.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 665.2,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 367,
+        "macros": { "protein_g": 27.5, "carbs_g": 24.2, "fat_g": 51.5 },
+        "ingredients_note": "scrambled eggs(180g,266kcal), hash browns(48g,156kcal), olive oil(13g,115kcal), bacon(19g,103kcal), eggplant(55g,14kcal), bell peppers(16g,6kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_train)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1566316612/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "5fe69873bc9f8bf132412b98ef841aa96f1670dc26551497ab9b368a4491e738"
+      }
+    },
+    {
+      "id": "dev-meal-03-salmon-brown-rice",
+      "split": "dev",
+      "subcategory": "protein_and_grain",
+      "description": "Nutrition5k dish_1563480476: large grilled salmon fillet with brown rice and greens.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 517.9,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 332,
+        "macros": { "protein_g": 60.1, "carbs_g": 15.2, "fat_g": 21.6 },
+        "ingredients_note": "salmon(241g,429kcal), brown rice(48g,53kcal), olive oil(2g,16kcal), garlic(7g,11kcal), spinach(12g,3kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_train)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1563480476/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "68128302ba65c6ce49e224271ad0625284dae4b745e4c545d21f2a523fcc8324"
+      }
+    },
+    {
+      "id": "dev-meal-04-fried-rice-chicken",
+      "split": "dev",
+      "subcategory": "mixed_plated_meal",
+      "description": "Nutrition5k dish_1561492204: yellow fried rice, glazed chicken, sauteed spinach, olive oil.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 488.6,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 334,
+        "macros": { "protein_g": 37.2, "carbs_g": 49.1, "fat_g": 15.7 },
+        "ingredients_note": "fried rice(128g,202kcal), chicken(93g,153kcal), olive oil(9g,80kcal), millet(23g,28kcal), spinach(32g,7kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_train)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1561492204/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "5255a0ed8c1d8cc629b00e48a3c287bdc938515e77c4aa638b5281fced74d393"
+      }
+    },
+    {
+      "id": "dev-meal-05-cheese-pizza",
+      "split": "dev",
+      "subcategory": "pizza_snack",
+      "description": "Nutrition5k dish_1566419510: three small rectangular squares of cheese pizza.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 273.9,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 103,
+        "macros": { "protein_g": 11.5, "carbs_g": 34.5, "fat_g": 9.7 },
+        "ingredients_note": "cheese pizza(103g,274kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_train)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1566419510/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "f509df5ef5245f1601ef462a0a2aa4cd26fb2df07ca136db44abc4cb4179ff7d"
+      }
+    },
+    {
+      "id": "dev-meal-06-chicken-oiled-salad",
+      "split": "dev",
+      "subcategory": "salad_with_oil",
+      "description": "Nutrition5k dish_1560453174: roasted chicken drumstick, green beans, spinach salad with 13g olive oil and blueberries.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 329.7,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 256,
+        "macros": { "protein_g": 32.1, "carbs_g": 10.5, "fat_g": 18.1 },
+        "ingredients_note": "chicken(91g,149kcal), olive oil(13g,115kcal), spinach(72g,17kcal), almonds(3g,16kcal), green beans(33g,10kcal), blueberries(14g,8kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_train)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1560453174/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "b248daf7171b7936fdaacfd024a318cc16eb7b06562eb1cb5ed72be28eeb402d"
+      }
+    },
+    {
+      "id": "dev-meal-07-salmon-brussels-mayo",
+      "split": "dev",
+      "subcategory": "high_fat_dressing_plate",
+      "description": "Nutrition5k dish_1559933834: salmon, roasted brussels sprouts, lentils, salad dressed with mayo and olive oil.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 775.0,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 458,
+        "macros": { "protein_g": 54.5, "carbs_g": 22.7, "fat_g": 51.8 },
+        "ingredients_note": "salmon(187g,333kcal), mayonnaise(30g,204kcal), olive oil(12g,109kcal), brussels sprouts(109g,47kcal), lentils(37g,43kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_train)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1559933834/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "9dd70c7d7d9f3c4340306c2a3ce5d29c41b0129c83659351e709c9a5825954e8"
+      }
+    },
+    {
+      "id": "dev-meal-08-chicken-broccoli-squash",
+      "split": "dev",
+      "subcategory": "lean_protein_veg",
+      "description": "Nutrition5k dish_1563216717: breaded/roasted chicken breast, steamed broccoli, squash, honeydew melon.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 246.0,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 332,
+        "macros": { "protein_g": 33.1, "carbs_g": 16.3, "fat_g": 5.6 },
+        "ingredients_note": "chicken breast(90g,148kcal), broccoli(129g,45kcal), squash(63g,13kcal), honeydew(30g,11kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_train)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1563216717/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "20da11d911e9710ac037c2ffbf846ea3199660da457838b9033e9d4f8a3bf035"
+      }
+    },
+    {
+      "id": "dev-meal-09-almonds-melon-tomatoes",
+      "split": "dev",
+      "subcategory": "calorie_dense_snack_plate",
+      "description": "Nutrition5k dish_1558724031: large mound of whole almonds (51g), cantaloupe, cherry tomatoes, raw cauliflower.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 358.7,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 303,
+        "macros": { "protein_g": 14.1, "carbs_g": 25.8, "fat_g": 25.8 },
+        "ingredients_note": "almonds(51g,295kcal), cantaloupe(93g,32kcal), cherry tomatoes(107g,19kcal), cauliflower(52g,13kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_train)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1558724031/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "7c71e6a641a560c8989cd562e809a5d54f70aae7daa188a5e9b121881deb7111"
+      }
+    },
+    {
+      "id": "dev-meal-10-mixed-pizza-chicken-rice",
+      "split": "dev",
+      "subcategory": "multi_item_plate",
+      "description": "Nutrition5k dish_1562875320: two chicken drumsticks, pizza squares, country rice pilaf, caesar salad, green beans.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 603.9,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 377,
+        "macros": { "protein_g": 47.6, "carbs_g": 61.7, "fat_g": 21.9 },
+        "ingredients_note": "pizza(98g,261kcal), chicken(101g,166kcal), country rice(71g,108kcal), olive oil(3g,25kcal), caesar salad(49g,22kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_train)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1562875320/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "2085fd2620fc48710de38badd190ef552460153fb86aec1c4f62de87a8c94352"
+      }
+    },
+    {
+      "id": "dev-meal-11-bagel-eggs-strawberries",
+      "split": "dev",
+      "subcategory": "breakfast_plate",
+      "description": "Nutrition5k dish_1559235815: half bagel with cream cheese, scrambled eggs, sliced strawberries.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 352.4,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 268,
+        "macros": { "protein_g": 19.6, "carbs_g": 31.3, "fat_g": 16.3 },
+        "ingredients_note": "eggs(111g,173kcal), bagels(43g,108kcal), cream cheese(11g,38kcal), strawberries(103g,34kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_train)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1559235815/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "cd0ffcbeb83b6809138ac0377dc4b097408190b06e3f554e85f5e12ebab3b809"
+      }
+    },
+    {
+      "id": "dev-meal-12-roast-chicken-pork-pasta",
+      "split": "dev",
+      "subcategory": "high_cal_plate",
+      "description": "Nutrition5k dish_1564082462: large roast chicken pieces, sliced pork, pesto pasta, caesar salad.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 905.4,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 609,
+        "macros": { "protein_g": 108.8, "carbs_g": 40.5, "fat_g": 32.1 },
+        "ingredients_note": "chicken(275g,454kcal), pork(51g,122kcal), pasta(67g,88kcal), pesto(11g,60kcal), olive oil(6g,49kcal), caesar salad(93g,41kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_train)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1564082462/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "4f55aa9c53b48866450949409369ff7f8927c0d7d98d1c533fab5dc9d77c3d48"
+      }
+    },
+    {
+      "id": "dev-meal-13-fruit-plate",
+      "split": "dev",
+      "subcategory": "low_cal_fruit",
+      "description": "Nutrition5k dish_1563468269: cubed watermelon, pineapple chunks, blackberries, raspberries.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 129.0,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 302,
+        "macros": { "protein_g": 1.8, "carbs_g": 32.8, "fat_g": 0.6 },
+        "ingredients_note": "pineapple(107g,54kcal), watermelon(132g,40kcal), berries(63g,36kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_train)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1563468269/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "00cad2491a87619168a36b3cf025656b163d6fafb6b7b935410ea0754377bb93"
+      }
+    },
+    {
+      "id": "dev-workout-01-concept2-pm5",
+      "split": "dev",
+      "subcategory": "cardio_console_cal_per_hr_trap",
+      "description": "Concept2 PM5 rower LCD: 313 Cal total alongside 653 Cal/hr rate trap, 3 split Cal, 30:26 time, 5852 m.",
+      "expected": {
+        "kind": "workout",
+        "kcal": 313,
+        "ground_truth_type": "exact_readout"
+      },
+      "source": {
+        "dataset": "Flickr CC",
+        "url": "https://live.staticflickr.com/65535/52167335818_b6b97ff617_b.jpg",
+        "page_url": "https://www.flickr.com/photos/startrowing/52167335818/",
+        "license": "CC BY 2.0",
+        "attribution": "sam.startrowing (startrowing.com)",
+        "sha256": "c34f19393cffea5abf5925207a172dcdacdebb501416eec19feec0447beaeaaf"
+      }
+    },
+    {
+      "id": "dev-workout-02-lifefitness-summary",
+      "split": "dev",
+      "subcategory": "cardio_console_cal_per_hr_trap",
+      "description": "Life Fitness touchscreen Workout Summary: Calories Burned 102 alongside 712 Cal/HR, 09:14 time, 0.60 mi, 114 HR.",
+      "expected": {
+        "kind": "workout",
+        "kcal": 102,
+        "ground_truth_type": "exact_readout"
+      },
+      "source": {
+        "dataset": "Flickr CC",
+        "url": "https://live.staticflickr.com/8249/8514435201_bf3e0f2dff_b.jpg",
+        "page_url": "https://www.flickr.com/photos/allaboutgeorge/8514435201/",
+        "license": "CC BY-ND 2.0",
+        "attribution": "allaboutgeorge",
+        "sha256": "d46909aac97f84bfdb239c688962612c9f85c8d3c00df5c8604226781a37c2d9"
+      }
+    },
+    {
+      "id": "dev-workout-03-lifefitness-elliptical",
+      "split": "dev",
+      "subcategory": "cardio_console_red_led",
+      "description": "Life Fitness red LED elliptical console: 10.24 Distance, 778 Calories, 70:00 Time.",
+      "expected": {
+        "kind": "workout",
+        "kcal": 778,
+        "ground_truth_type": "exact_readout"
+      },
+      "source": {
+        "dataset": "Flickr CC",
+        "url": "https://live.staticflickr.com/686/20444179118_bfa10a2ec2_b.jpg",
+        "page_url": "https://www.flickr.com/photos/themillers91705/20444179118/",
+        "license": "CC BY-NC-ND 2.0",
+        "attribution": "themillers91705",
+        "sha256": "4bdf12c5b53288fdb24c87ddb6a4b47a3d4ea1de1bf27b58fd1a93d377a98663"
+      }
+    },
+    {
+      "id": "dev-workout-04-matrix-stairclimber",
+      "split": "dev",
+      "subcategory": "cardio_console_dual_label_led",
+      "description": "Matrix green LED stairclimber console: bottom indicator lit on CALORIES 478, 91 SPM, 150 WATTS.",
+      "expected": {
+        "kind": "workout",
+        "kcal": 478,
+        "ground_truth_type": "exact_readout"
+      },
+      "source": {
+        "dataset": "Flickr CC",
+        "url": "https://live.staticflickr.com/2540/4182432178_aec8b98a87_b.jpg",
+        "page_url": "https://www.flickr.com/photos/phrenologist/4182432178/",
+        "license": "CC BY-NC 2.0",
+        "attribution": "phrenologist",
+        "sha256": "15f763dd4165be36cfcfed31af3b9c86b512d6db23e1a932195d8431fb57cd7e"
+      }
+    },
+    {
+      "id": "dev-workout-05-nautilus-treadclimber",
+      "split": "dev",
+      "subcategory": "cardio_console_blue_lcd",
+      "description": "Nautilus TreadClimber TC916 blue backlit LCD: CALORIES 218.0, 1.40 KM, 4.3 KM/H, 144 HR.",
+      "expected": {
+        "kind": "workout",
+        "kcal": 218,
+        "ground_truth_type": "exact_readout"
+      },
+      "source": {
+        "dataset": "Flickr CC",
+        "url": "https://live.staticflickr.com/3256/3176443372_c9d6cb38b0_b.jpg",
+        "page_url": "https://www.flickr.com/photos/plasticsnow/3176443372/",
+        "license": "CC BY-NC 2.0",
+        "attribution": "plasticsnow",
+        "sha256": "b27f9592c3150ef0bbb745b1a21288c0cce7de6a3c37a2aeaeea297a0dd5f067"
+      }
+    },
+    {
+      "id": "dev-workout-06-lifefitness-discover-se",
+      "split": "dev",
+      "subcategory": "cardio_console_touchscreen_busy_bg",
+      "description": "Life Fitness Discover SE touchscreen with bright gym background: 263 Calories, 2.35 Distance, 22:01 Time Elapsed, 17:59 Time Remain.",
+      "expected": {
+        "kind": "workout",
+        "kcal": 263,
+        "ground_truth_type": "exact_readout"
+      },
+      "source": {
+        "dataset": "Flickr CC",
+        "url": "https://live.staticflickr.com/65535/54701051002_8da98957ce_b.jpg",
+        "page_url": "https://www.flickr.com/photos/jagrap/54701051002/",
+        "license": "CC BY-NC 4.0",
+        "attribution": "jagrap",
+        "sha256": "d209f6c9e08754d7619f9aa25359b2cff4385f9e59ab6d881b0c8581e04444bf"
+      }
+    },
+    {
+      "id": "dev-ignore-01-car-dashboard",
+      "split": "dev",
+      "subcategory": "numeric_display_non_workout",
+      "description": "1989 Buick Electra digital LED car dashboard showing 0 MPH and odometer 112079.",
+      "expected": {
+        "kind": "ignore",
+        "kcal": 0,
+        "ground_truth_type": "non_target"
+      },
+      "source": {
+        "dataset": "Wikimedia Commons",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c1/Buick_Electra_1989_digital_cockpit.JPG/1280px-Buick_Electra_1989_digital_cockpit.JPG",
+        "page_url": "https://commons.wikimedia.org/wiki/File:Buick_Electra_1989_digital_cockpit.JPG",
+        "license": "CC BY-SA 3.0",
+        "attribution": "Jacek Rużyczka",
+        "sha256": "e9d7fdfce66b2aa83516c616499735215309cf3287bdf55b5b66f666cc78953a"
+      }
+    },
+    {
+      "id": "dev-ignore-02-finished-plate",
+      "split": "dev",
+      "subcategory": "empty_or_finished_plate",
+      "description": "Empty white plate after finishing a meal, with orange sauce smudges and cutlery.",
+      "expected": {
+        "kind": "ignore",
+        "kcal": 0,
+        "ground_truth_type": "non_target"
+      },
+      "source": {
+        "dataset": "Wikimedia Commons",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9d/Liat_Portal_for_Foodie_Disorder_-_Empty_plate_after_meal_consumption_with_sauce_residue_and_utensils.jpg/1280px-Liat_Portal_for_Foodie_Disorder_-_Empty_plate_after_meal_consumption_with_sauce_residue_and_utensils.jpg",
+        "page_url": "https://commons.wikimedia.org/wiki/File:Liat_Portal_for_Foodie_Disorder_-_Empty_plate_after_meal_consumption_with_sauce_residue_and_utensils.jpg",
+        "license": "CC BY-SA 4.0",
+        "attribution": "HaJunkiyada",
+        "sha256": "913c657368a8097adb5fbba41220d52889f6f00dc0d86b2b1d206f06739276ae"
+      }
+    },
+    {
+      "id": "dev-ignore-03-restaurant-menu",
+      "split": "dev",
+      "subcategory": "menu_or_text",
+      "description": "Chalkboard restaurant menu listing dishes and prices; no actual food.",
+      "expected": {
+        "kind": "ignore",
+        "kcal": 0,
+        "ground_truth_type": "non_target"
+      },
+      "source": {
+        "dataset": "Wikimedia Commons",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/19/Kulmbach_Zunftstube_Speisekarte_Jan_2015.JPG/1280px-Kulmbach_Zunftstube_Speisekarte_Jan_2015.JPG",
+        "page_url": "https://commons.wikimedia.org/wiki/File:Kulmbach_Zunftstube_Speisekarte_Jan_2015.JPG",
+        "license": "CC BY 3.0",
+        "attribution": "Benreis",
+        "sha256": "7ce467e2317d07af3b44a8a33fd00c2658888636ae283300cdfb8b545f5672b9"
+      }
+    },
+    {
+      "id": "dev-ignore-04-grocery-noodles",
+      "split": "dev",
+      "subcategory": "unopened_grocery_shelf",
+      "description": "Supermarket shelf stocked with unopened instant noodle packages and boxes.",
+      "expected": {
+        "kind": "ignore",
+        "kcal": 0,
+        "ground_truth_type": "non_target"
+      },
+      "source": {
+        "dataset": "Wikimedia Commons",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/16/Boxes_of_instant_noodles_on_a_supermarket_shelf%2C_with_the_words_%22First_In_First_Out_-_Retain_Freshness%22_written_on_them.jpg/1280px-Boxes_of_instant_noodles_on_a_supermarket_shelf%2C_with_the_words_%22First_In_First_Out_-_Retain_Freshness%22_written_on_them.jpg",
+        "page_url": "https://commons.wikimedia.org/wiki/File:Boxes_of_instant_noodles_on_a_supermarket_shelf,_with_the_words_%22First_In_First_Out_-_Retain_Freshness%22_written_on_them.jpg",
+        "license": "CC BY-SA 4.0",
+        "attribution": "Arsene",
+        "sha256": "cbf46731ddf6238e8b8a2e99f4108929dc4f3896ac9fb61ccb753fbb8182999b"
+      }
+    },
+    {
+      "id": "dev-ignore-05-pm3-main-menu",
+      "split": "dev",
+      "subcategory": "idle_cardio_console",
+      "description": "Concept2 PM3 rower monitor on Main Menu (Just Row / Select Workout / Games); no calories shown.",
+      "expected": {
+        "kind": "ignore",
+        "kcal": 0,
+        "ground_truth_type": "non_target"
+      },
+      "source": {
+        "dataset": "Flickr CC",
+        "url": "https://live.staticflickr.com/65535/52167335878_871b8812dc_b.jpg",
+        "page_url": "https://www.flickr.com/photos/startrowing/52167335878/",
+        "license": "CC BY 2.0",
+        "attribution": "sam.startrowing (startrowing.com)",
+        "sha256": "02412a295954918540b3e272c4a07ab9579f423a636444858eecb7df373ce19b"
+      }
+    },
+    {
+      "id": "dev-ignore-06-water-glass",
+      "split": "dev",
+      "subcategory": "zero_cal_plain_drink",
+      "description": "Glass of plain water sitting on an empty plate (0 kcal drink; should be ignored).",
+      "expected": {
+        "kind": "ignore",
+        "kcal": 0,
+        "ground_truth_type": "non_target"
+      },
+      "source": {
+        "dataset": "Wikimedia Commons",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e5/Fasting_4-Fasting-a-glass-of-water-on-an-empty-plate.jpg/1280px-Fasting_4-Fasting-a-glass-of-water-on-an-empty-plate.jpg",
+        "page_url": "https://commons.wikimedia.org/wiki/File:Fasting_4-Fasting-a-glass-of-water-on-an-empty-plate.jpg",
+        "license": "CC BY-SA 3.0",
+        "attribution": "Dr Jean Fortunet",
+        "sha256": "732cf557bfc55f473e386b8fb51271f9ba7d18a388fd969867607a6463077be0"
+      }
+    },
+    {
+      "id": "dev-ignore-07-gym-dumbbells",
+      "split": "dev",
+      "subcategory": "gym_equipment_no_screen",
+      "description": "Gym barbells and dumbbells on floor; no workout calorie display.",
+      "expected": {
+        "kind": "ignore",
+        "kcal": 0,
+        "ground_truth_type": "non_target"
+      },
+      "source": {
+        "dataset": "Wikimedia Commons",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/17/Dumbbells_in_a_local_Gym.jpg/1280px-Dumbbells_in_a_local_Gym.jpg",
+        "page_url": "https://commons.wikimedia.org/wiki/File:Dumbbells_in_a_local_Gym.jpg",
+        "license": "CC BY-SA 4.0",
+        "attribution": "Alvinategyeka",
+        "sha256": "eca938b7fc90c5c6a72847966c1c96e5cfe4d2b287de860db9fb57625d563806"
+      }
+    },
+    {
+      "id": "dev-ignore-08-restaurant-receipt",
+      "split": "dev",
+      "subcategory": "receipt",
+      "description": "Paper restaurant payment receipt; no food photo.",
+      "expected": {
+        "kind": "ignore",
+        "kcal": 0,
+        "ground_truth_type": "non_target"
+      },
+      "source": {
+        "dataset": "Wikimedia Commons",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/1e/Restaurant_%27t_Stadhuys_receipt%2C_Winschoten_%282020%29_01.jpg/1280px-Restaurant_%27t_Stadhuys_receipt%2C_Winschoten_%282020%29_01.jpg",
+        "page_url": "https://commons.wikimedia.org/wiki/File:Restaurant_%27t_Stadhuys_receipt,_Winschoten_(2020)_01.jpg",
+        "license": "CC BY-SA 4.0",
+        "attribution": "Donald Trung Quoc Don",
+        "sha256": "bf0d0cbcd887c3ea9643f4ff3431fa20b7f4f73d4497ce432bd00ac04ca11a81"
+      }
+    },
+    {
+      "id": "test-meal-01-single-apple",
+      "split": "test",
+      "subcategory": "single_fruit_snack",
+      "description": "Nutrition5k dish_1558639440: single whole red apple (116g) on a white square plate.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 60.3,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 116,
+        "macros": { "protein_g": 0.3, "carbs_g": 16.2, "fat_g": 0.2 },
+        "ingredients_note": "apple(116g,60kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_test)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1558639440/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "254c46904b7205a39add74dd80f291b358a85350702a2707b5d365e7c8ea6dd4"
+      }
+    },
+    {
+      "id": "test-meal-02-cottage-cheese-melon",
+      "split": "test",
+      "subcategory": "dairy_fruit_bowl",
+      "description": "Nutrition5k dish_1561741090: bowl of cottage cheese topped with cantaloupe chunks.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 161.5,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 221,
+        "macros": { "protein_g": 15.5, "carbs_g": 11.5, "fat_g": 6.0 },
+        "ingredients_note": "cottage cheese(135g,132kcal), cantaloupe(86g,29kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_test)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1561741090/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "d856cb12c9c22565598b0e68a324dac22ad1baffba6fe5ac3a794008e3404ed5"
+      }
+    },
+    {
+      "id": "test-meal-03-chickpea-oiled-salad",
+      "split": "test",
+      "subcategory": "salad_with_oil",
+      "description": "Nutrition5k dish_1564689108: arugula/spinach salad with chickpeas, pear, blueberries, and 14g olive oil.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 203.7,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 159,
+        "macros": { "protein_g": 4.9, "carbs_g": 13.2, "fat_g": 15.9 },
+        "ingredients_note": "olive oil(14g,124kcal), chickpeas(21g,34kcal), arugula(52g,13kcal), spinach(36g,8kcal), pears(10g,6kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_test)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1564689108/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "e07f9f4e8bb07e9561c3fcd1719a18c0efbc8e0b1a642484390323670e39d179"
+      }
+    },
+    {
+      "id": "test-meal-04-chicken-broccoli-bowl",
+      "split": "test",
+      "subcategory": "lean_protein_bowl",
+      "description": "Nutrition5k dish_1565811025: bowl of diced grilled chicken breast, broccoli florets, and baby spinach.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 361.1,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 277,
+        "macros": { "protein_g": 65.4, "carbs_g": 4.4, "fat_g": 7.7 },
+        "ingredients_note": "chicken(205g,338kcal), broccoli(52g,18kcal), spinach(20g,5kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_test)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1565811025/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "ec975411d0ce85db3c23c9a232332c9ada26cdfeea042a145d19e8ae2456ed1c"
+      }
+    },
+    {
+      "id": "test-meal-05-pizza-pasta-pesto",
+      "split": "test",
+      "subcategory": "vegetarian_italian",
+      "description": "Nutrition5k dish_1561578865: cheese pizza pieces, penne pasta with pesto, broccoli, cherry tomatoes, arugula.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 417.2,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 246,
+        "macros": { "protein_g": 16.7, "carbs_g": 49.7, "fat_g": 17.3 },
+        "ingredients_note": "cheese pizza(111g,295kcal), pasta(24g,31kcal), olive oil(3g,30kcal), broccoli(68g,24kcal), pesto(4g,21kcal), arugula(24g,6kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_test)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1561578865/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "116508964c2284761256bc9435622c027c92bafc4067ae05d2bd473f41eff732"
+      }
+    },
+    {
+      "id": "test-meal-06-eggs-potatoes-fruit",
+      "split": "test",
+      "subcategory": "breakfast_plate",
+      "description": "Nutrition5k dish_1562691032: scrambled eggs, roasted potatoes, broccoli, strawberries, pineapple, blueberries.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 419.7,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 415,
+        "macros": { "protein_g": 17.9, "carbs_g": 39.1, "fat_g": 22.0 },
+        "ingredients_note": "scrambled eggs(147g,218kcal), roasted potatoes(66g,93kcal), berries(85g,48kcal), pineapple(80g,40kcal), broccoli(36g,13kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_test)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1562691032/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "3db9f973fb79d36d060a9c218bd83d3f91c9ab7f55dda87f6ec21faf34f91970"
+      }
+    },
+    {
+      "id": "test-meal-07-roast-beef-greens",
+      "split": "test",
+      "subcategory": "meat_and_greens",
+      "description": "Nutrition5k dish_1565118729: sliced roast beef (152g) with sauteed kale and chard.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 435.5,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 248,
+        "macros": { "protein_g": 41.9, "carbs_g": 9.0, "fat_g": 24.3 },
+        "ingredients_note": "beef(152g,380kcal), millet(20g,24kcal), kale(25g,12kcal), olive oil(1g,9kcal), chard(25g,5kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_test)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1565118729/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "bf71f0942c7ab58d7a644ddda184d649ee8c2867267dafe01bb41094164f0f78"
+      }
+    },
+    {
+      "id": "test-meal-08-pepperoni-pizza-brownie",
+      "split": "test",
+      "subcategory": "pizza_and_dessert",
+      "description": "Nutrition5k dish_1560203424: one square slice of pepperoni pizza and one chocolate brownie square.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 451.8,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 138,
+        "macros": { "protein_g": 14.6, "carbs_g": 50.2, "fat_g": 22.3 },
+        "ingredients_note": "pepperoni pizza(104g,293kcal), brownies(34g,158kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_test)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1560203424/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "a81a20c3bf05b86e0b8253a0575d5b57403caf2b7b1a27e7d03c6786a2fffa7f"
+      }
+    },
+    {
+      "id": "test-meal-09-bagel-eggwhites-chia",
+      "split": "test",
+      "subcategory": "multi_item_breakfast",
+      "description": "Nutrition5k dish_1563551194: half bagel with cream cheese, egg whites, sweet potato cubes, chia yogurt with banana.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 471.6,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 400,
+        "macros": { "protein_g": 27.8, "carbs_g": 57.7, "fat_g": 14.0 },
+        "ingredients_note": "bagels(58g,144kcal), sweet potato(95g,72kcal), chia seeds(14g,68kcal), egg whites(101g,53kcal), cream cheese(14g,50kcal), greek yogurt(56g,33kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_test)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1563551194/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "389f3916d204fbc6708b84e255c11f7d998c4ac27e7ff46b0ae5e77351c51f8f"
+      }
+    },
+    {
+      "id": "test-meal-10-pork-quinoa-arugula",
+      "split": "test",
+      "subcategory": "mixed_plated_meal",
+      "description": "Nutrition5k dish_1564428181: roasted pork, quinoa grain pilaf, arugula salad with olive oil.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 510.1,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 320,
+        "macros": { "protein_g": 34.3, "carbs_g": 21.0, "fat_g": 32.3 },
+        "ingredients_note": "pork(108g,258kcal), olive oil(11g,100kcal), quinoa(55g,65kcal), mayonnaise(3g,20kcal), arugula(77g,19kcal), pecans(3g,18kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_test)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1564428181/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "20e391495371f02c95aaa9b66c9884ded63e2618f7152cbe3a43b5b912c3a4bb"
+      }
+    },
+    {
+      "id": "test-meal-11-tuna-friedrice-avocado",
+      "split": "test",
+      "subcategory": "high_cal_mixed_plate",
+      "description": "Nutrition5k dish_1568401302: large scoop of tuna salad, fried rice, roasted squash, shredded carrots, avocado slices.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 716.5,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 561,
+        "macros": { "protein_g": 44.7, "carbs_g": 69.9, "fat_g": 28.9 },
+        "ingredients_note": "tuna salad(228g,426kcal), fried rice(118g,186kcal), avocado(25g,40kcal), carrot(75g,31kcal), squash(113g,23kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_test)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1568401302/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "e2c923886f266844d393dd3bb1f018e842551b04631b64c38d8d2019c45476df"
+      }
+    },
+    {
+      "id": "test-meal-12-hawaiian-pizza-chicken",
+      "split": "test",
+      "subcategory": "high_cal_pizza_plate",
+      "description": "Nutrition5k dish_1566328805: four pieces of Hawaiian pizza, diced chicken breast, pineapple, cherry tomatoes.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 927.8,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 488,
+        "macros": { "protein_g": 78.0, "carbs_g": 85.1, "fat_g": 28.7 },
+        "ingredients_note": "pizza(233g,620kcal), chicken(167g,276kcal), pineapple(52g,26kcal), cherry tomatoes(36g,6kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_test)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1566328805/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "e8a65e64e76e0bfa08a1630a929ce259702beda1dcf99a5e5a178773a9502e31"
+      }
+    },
+    {
+      "id": "test-meal-13-beef-creamy-penne",
+      "split": "test",
+      "subcategory": "high_cal_pasta_and_meat",
+      "description": "Nutrition5k dish_1563478751: generous serving of braised beef chunks with creamy penne pasta and spinach.",
+      "expected": {
+        "kind": "meal",
+        "kcal": 950.4,
+        "ground_truth_type": "lab_weighed",
+        "mass_g": 545,
+        "macros": { "protein_g": 74.8, "carbs_g": 54.1, "fat_g": 45.3 },
+        "ingredients_note": "beef(239g,597kcal), pasta(191g,252kcal), cream(10g,32kcal), sour cream(10g,19kcal), olive oil(2g,16kcal)"
+      },
+      "source": {
+        "dataset": "Nutrition5k (rgb_test)",
+        "url": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/imagery/realsense_overhead/dish_1563478751/rgb.png",
+        "page_url": "https://github.com/google-research-datasets/Nutrition5k",
+        "license": "CC BY 4.0",
+        "attribution": "Google Research Nutrition5k",
+        "sha256": "0366e274bbd7c135a371b27c36a83f0819b472f15680fb3daa63867ba3608138"
+      }
+    },
+    {
+      "id": "test-workout-01-precor-efx-tv",
+      "split": "test",
+      "subcategory": "cardio_console_green_led_tv_bg",
+      "description": "Precor EFX 556i elliptical below an overhead TV: green LED readout shows 296 CALORIES and 127 HEART RATE.",
+      "expected": {
+        "kind": "workout",
+        "kcal": 296,
+        "ground_truth_type": "exact_readout"
+      },
+      "source": {
+        "dataset": "Flickr CC",
+        "url": "https://live.staticflickr.com/7001/6541343565_3c696d5a15_b.jpg",
+        "page_url": "https://www.flickr.com/photos/apalapala/6541343565/",
+        "license": "CC BY-NC-SA 2.0",
+        "attribution": "apalapala",
+        "sha256": "d4aa0e89ad69351b0c4a1febffd2c6490712b77790452f8fe508b13910975525"
+      }
+    },
+    {
+      "id": "test-workout-02-technogym-bike",
+      "split": "test",
+      "subcategory": "cardio_console_touchscreen_watts_trap",
+      "description": "Technogym stationary bike touchscreen: 63 kcal CALORIES alongside 71 watt POWER, 136 bpm, 2.43 km, 45 rpm, 10:13 TIME.",
+      "expected": {
+        "kind": "workout",
+        "kcal": 63,
+        "ground_truth_type": "exact_readout"
+      },
+      "source": {
+        "dataset": "Flickr CC",
+        "url": "https://live.staticflickr.com/3455/3176470514_29f7358aca_b.jpg",
+        "page_url": "https://www.flickr.com/photos/plasticsnow/3176470514/",
+        "license": "CC BY-NC 2.0",
+        "attribution": "plasticsnow",
+        "sha256": "d2e5686b93e40f79ab88a4e133e2b1bb6b426fd216fea2a7cdd115ff1855deb3"
+      }
+    },
+    {
+      "id": "test-workout-03-lifefitness-blurry",
+      "split": "test",
+      "subcategory": "cardio_console_motion_blur_led",
+      "description": "Slightly motion-blurred Life Fitness cross-trainer red LEDs: 29:57 Time, 33 RPM, 253 Calories (lit dot), 125 Heart Rate (lit dot).",
+      "expected": {
+        "kind": "workout",
+        "kcal": 253,
+        "ground_truth_type": "exact_readout"
+      },
+      "source": {
+        "dataset": "Flickr CC",
+        "url": "https://live.staticflickr.com/3115/3175579603_2a95dd5df8_b.jpg",
+        "page_url": "https://www.flickr.com/photos/plasticsnow/3175579603/",
+        "license": "CC BY-NC 2.0",
+        "attribution": "plasticsnow",
+        "sha256": "dcf06333ecf7c66a502cacf1f790bf4990bad66e025542f648436b76bd1438b1"
+      }
+    },
+    {
+      "id": "test-workout-04-stairmaster-dotmatrix",
+      "split": "test",
+      "subcategory": "cardio_console_dot_matrix",
+      "description": "StairMaster Climbing Systems red dot-matrix display reading CALORIES 433.",
+      "expected": {
+        "kind": "workout",
+        "kcal": 433,
+        "ground_truth_type": "exact_readout"
+      },
+      "source": {
+        "dataset": "Flickr CC",
+        "url": "https://live.staticflickr.com/2697/4193992718_951f08cfec_b.jpg",
+        "page_url": "https://www.flickr.com/photos/phrenologist/4193992718/",
+        "license": "CC BY-NC 2.0",
+        "attribution": "phrenologist",
+        "sha256": "fd412f9f8d375c4234b5df9a9bffc82290b12d8e882f79de2db301d8a9c5d372"
+      }
+    },
+    {
+      "id": "test-workout-05-matrix-4digit",
+      "split": "test",
+      "subcategory": "cardio_console_four_digit_led",
+      "description": "Matrix green LED stairclimber console showing 4-digit 1005 CALORIES, 78 SPM, 121 WATTS.",
+      "expected": {
+        "kind": "workout",
+        "kcal": 1005,
+        "ground_truth_type": "exact_readout"
+      },
+      "source": {
+        "dataset": "Flickr CC",
+        "url": "https://live.staticflickr.com/2679/4357541111_073bca5454_b.jpg",
+        "page_url": "https://www.flickr.com/photos/phrenologist/4357541111/",
+        "license": "CC BY-NC 2.0",
+        "attribution": "phrenologist",
+        "sha256": "af8feca3a8cc12a78e79179d953259e998e359bb544d87bb057d2b8d206ff349"
+      }
+    },
+    {
+      "id": "test-workout-06-lifefitness-lowcal-topbar",
+      "split": "test",
+      "subcategory": "cardio_console_small_topbar",
+      "description": "Life Fitness Discover SE All Workouts screen with compact top status bar showing 17 Calories, 0.10 Distance, 1:43 Time Elapsed.",
+      "expected": {
+        "kind": "workout",
+        "kcal": 17,
+        "ground_truth_type": "exact_readout"
+      },
+      "source": {
+        "dataset": "Flickr CC",
+        "url": "https://live.staticflickr.com/65535/54701052167_596b49489f_b.jpg",
+        "page_url": "https://www.flickr.com/photos/jagrap/54701052167/",
+        "license": "CC BY-NC 4.0",
+        "attribution": "jagrap",
+        "sha256": "3c9e2c567c349402bdcb8e6fa7698466ba98e8329acc4b0b5237504d1d88f5ac"
+      }
+    },
+    {
+      "id": "test-ignore-01-moto-speedometer",
+      "split": "test",
+      "subcategory": "numeric_display_non_workout",
+      "description": "Blue backlit motorcycle digital speedometer showing 162.6 km and 0 km/h (looks like a cardio console).",
+      "expected": {
+        "kind": "ignore",
+        "kcal": 0,
+        "ground_truth_type": "non_target"
+      },
+      "source": {
+        "dataset": "Wikimedia Commons",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/73/Hezery99-SYM_SR125i_digital_meter.jpg/1280px-Hezery99-SYM_SR125i_digital_meter.jpg",
+        "page_url": "https://commons.wikimedia.org/wiki/File:Hezery99-SYM_SR125i_digital_meter.jpg",
+        "license": "CC BY-SA 4.0",
+        "attribution": "Hezery99",
+        "sha256": "b05aaa32ed6314965cfbda20279eace2089f45278c1b48b2e59bd77668752c2a"
+      }
+    },
+    {
+      "id": "test-ignore-02-kitchen-scale",
+      "split": "test",
+      "subcategory": "numeric_display_non_workout",
+      "description": "Empty Escali digital kitchen scale on a counter.",
+      "expected": {
+        "kind": "ignore",
+        "kcal": 0,
+        "ground_truth_type": "non_target"
+      },
+      "source": {
+        "dataset": "Wikimedia Commons",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4f/Escali_digital_kitchen_scale.jpg/1280px-Escali_digital_kitchen_scale.jpg",
+        "page_url": "https://commons.wikimedia.org/wiki/File:Escali_digital_kitchen_scale.jpg",
+        "license": "CC BY-SA 4.0",
+        "attribution": "Ser Amantio di Nicolao",
+        "sha256": "73c0f9f4f212c9771b370011cfdc7d6d7bc44d642d1bd04e5d226f8bb14061bb"
+      }
+    },
+    {
+      "id": "test-ignore-03-kitchen-counter",
+      "split": "test",
+      "subcategory": "empty_kitchen",
+      "description": "Empty marble kitchen countertop and cabinets with no food.",
+      "expected": {
+        "kind": "ignore",
+        "kcal": 0,
+        "ground_truth_type": "non_target"
+      },
+      "source": {
+        "dataset": "Wikimedia Commons",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fa/Kitchen_Countertop_Installation_%26_Custom_Stone_Fitting.jpg/1280px-Kitchen_Countertop_Installation_%26_Custom_Stone_Fitting.jpg",
+        "page_url": "https://commons.wikimedia.org/wiki/File:Kitchen_Countertop_Installation_%26_Custom_Stone_Fitting.jpg",
+        "license": "CC0",
+        "attribution": "Donovan Nimmo",
+        "sha256": "2b775803efea63aa65b9c200aeb663de9789db307e6f2c929b38644cce1cdd09"
+      }
+    },
+    {
+      "id": "test-ignore-04-mcd-receipt",
+      "split": "test",
+      "subcategory": "receipt",
+      "description": "McDonald's sales receipt listing fast food items and prices; no actual meal.",
+      "expected": {
+        "kind": "ignore",
+        "kcal": 0,
+        "ground_truth_type": "non_target"
+      },
+      "source": {
+        "dataset": "Wikimedia Commons",
+        "url": "https://upload.wikimedia.org/wikipedia/commons/f/f2/McDonald%27s_Kunming_Restaurant_sales_receipt_20160717.jpg",
+        "page_url": "https://commons.wikimedia.org/wiki/File:McDonald%27s_Kunming_Restaurant_sales_receipt_20160717.jpg",
+        "license": "CC BY-SA 4.0",
+        "attribution": "Solomon203",
+        "sha256": "b82b7e1939da4b2d7179a2f6b79df084ea73e4f959c1a7a4ceea6096ba418fbc"
+      }
+    },
+    {
+      "id": "test-ignore-05-black-coffee",
+      "split": "test",
+      "subcategory": "zero_cal_plain_drink",
+      "description": "Small cup of plain black coffee with no milk, cream, sugar, or food (~2 kcal; ignored by policy).",
+      "expected": {
+        "kind": "ignore",
+        "kcal": 0,
+        "ground_truth_type": "non_target"
+      },
+      "source": {
+        "dataset": "Wikimedia Commons",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/45/A_small_cup_of_coffee.JPG/1280px-A_small_cup_of_coffee.JPG",
+        "page_url": "https://commons.wikimedia.org/wiki/File:A_small_cup_of_coffee.JPG",
+        "license": "CC BY-SA 2.0",
+        "attribution": "Julius Schorzman",
+        "sha256": "bbbb4ab6f72899d296c263fc8b6f27a1ed11aeb6b53c36062afe8a33629b46c5"
+      }
+    },
+    {
+      "id": "test-ignore-06-idle-german-treadmill",
+      "split": "test",
+      "subcategory": "idle_cardio_console",
+      "description": "Idle Life Fitness treadmill console displaying PROGRAMM WAEHLEN ODER Q with no active calorie readout.",
+      "expected": {
+        "kind": "ignore",
+        "kcal": 0,
+        "ground_truth_type": "non_target"
+      },
+      "source": {
+        "dataset": "Wikimedia Commons",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/21/Treadmill_display_in_fitness_center_features_functional_training_program_settings_and_workout_statistics_for_gym_users.jpg/1280px-Treadmill_display_in_fitness_center_features_functional_training_program_settings_and_workout_statistics_for_gym_users.jpg",
+        "page_url": "https://commons.wikimedia.org/wiki/File:Treadmill_display_in_fitness_center_features_functional_training_program_settings_and_workout_statistics_for_gym_users.jpg",
+        "license": "CC BY 2.0",
+        "attribution": "Shixart1985",
+        "sha256": "428cccee25e65e6bb382dedb7caa325ca2f2204a1d6ddfb5ff56edd0989fc83a"
+      }
+    },
+    {
+      "id": "test-ignore-07-concept2-lifetime",
+      "split": "test",
+      "subcategory": "non_calorie_console_summary",
+      "description": "Concept2 PM4 LogCard Lifetime Summary showing 235433 lifetime meters and 70 workouts, with no calorie readout.",
+      "expected": {
+        "kind": "ignore",
+        "kcal": 0,
+        "ground_truth_type": "non_target"
+      },
+      "source": {
+        "dataset": "Flickr CC",
+        "url": "https://live.staticflickr.com/6119/6239976399_83672cc449_b.jpg",
+        "page_url": "https://www.flickr.com/photos/65317231@N00/6239976399/",
+        "license": "CC BY-NC-ND 2.0",
+        "attribution": "yann.co.nz",
+        "sha256": "8d0e0ffb4c0e6837c2f42aff510348e3e6976aa9aafc5dad69bea735184b3051"
+      }
+    },
+    {
+      "id": "test-ignore-08-stationary-bike-no-screen",
+      "split": "test",
+      "subcategory": "gym_equipment_no_screen",
+      "description": "Stationary exercise bike photographed from the side against a wall; no readable calorie display.",
+      "expected": {
+        "kind": "ignore",
+        "kcal": 0,
+        "ground_truth_type": "non_target"
+      },
+      "source": {
+        "dataset": "Wikimedia Commons",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/30/Ergometer_Crane_Power_S9.JPG/1280px-Ergometer_Crane_Power_S9.JPG",
+        "page_url": "https://commons.wikimedia.org/wiki/File:Ergometer_Crane_Power_S9.JPG",
+        "license": "CC BY-SA 3.0",
+        "attribution": "4028mdk09",
+        "sha256": "8d9f2db1efeeca8506fe074cbb9dbc74f932d45361ded8daf764e5bae51bd950"
+      }
+    }
+  ]
+}

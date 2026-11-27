@@ -13,7 +13,7 @@ This document defines the technical architecture, data model, API contracts, mob
 
 ### 1.1 High-Level Architecture
 
-fitlogr uses a deliberately lean **two-tier architecture** (one cross-platform mobile client + one Cloudflare Worker backed by Cloudflare D1), delegating photo storage to the user's own Google Photos account and AI inference to OpenRouter.
+fitlogr uses a deliberately lean **two-tier architecture** (one cross-platform mobile client + one Cloudflare Worker backed by Cloudflare D1). The iPhone app keeps meal photos on the phone and sends AI inference to OpenRouter. Google Photos album upload remains only for older app builds that omit `upload_to_google_photos: false`.
 
 ```text
 +-----------------------------------------------------------------------+
@@ -55,9 +55,9 @@ fitlogr uses a deliberately lean **two-tier architecture** (one cross-platform m
 
 1. **Authoritative Data Boundaries:**
    - **Cloudflare D1** is authoritative for user accounts, settings, goals, meal records, food items, normalized health records, daily summaries, sync checkpoints, and Google Photos media item IDs.
-   - **Google Photos** (`fitlogr` album in the user's account) is authoritative for meal photo binaries.
+   - **The phone** is where meal photo files live. The iPhone app shows the local file or the Apple Photos asset, and falls back to a Google Photos URL only for meals an older build already uploaded.
    - **Expo SQLite** on the phone is a full offline read cache and mutation outbox, synced incrementally with D1.
-2. **Zero Permanent Photo Storage on fitlogr Infrastructure:** Image bytes exist only in Cloudflare Worker request memory while analyzing with OpenRouter and uploading to Google Photos, then are discarded immediately. Neither D1 nor Cloudflare R2/KV stores photo binaries or temporary Google Photos URLs.
+2. **Zero Permanent Photo Storage on fitlogr Infrastructure:** Image bytes exist only in Cloudflare Worker request memory during analysis, then are discarded. The new iPhone app does not upload them. Neither D1 nor Cloudflare R2/KV stores photo binaries.
 3. **Backend-Only Secrets and Third-Party Calls:** The mobile app never receives `OPENROUTER_API_KEY`, `GOOGLE_OAUTH_CLIENT_SECRET`, `TOKEN_ENCRYPTION_KEY`, `SESSION_SECRET`, or Google OAuth access/refresh tokens. All OpenRouter and Google Photos Library API calls execute from the Worker.
 4. **Minimal Infrastructure Footprint:** No separate database host, container cluster, message queue, Redis, KV, Durable Objects, or R2 bucket is required for v1. Cloudflare Workers + D1 + mobile SQLite handle all workloads cleanly within Cloudflare's low-cost tiers.
 

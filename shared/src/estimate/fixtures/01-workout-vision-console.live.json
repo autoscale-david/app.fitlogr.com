@@ -1,0 +1,50 @@
+{
+  "scene_check": "The image shows a Vision Fitness exercise equipment console displaying workout metrics including distance, heart rate, watts, RPM, calories, time, and resistance.",
+  "console_windows": [
+    {
+      "label": "Distance",
+      "value": "1.16",
+      "unit": "mi"
+    },
+    {
+      "label": "Heart Rate",
+      "value": "0",
+      "unit": "bpm"
+    },
+    {
+      "label": "Watts",
+      "value": "66",
+      "unit": "W"
+    },
+    {
+      "label": "RPM",
+      "value": "35",
+      "unit": "rpm"
+    },
+    {
+      "label": "Calories",
+      "value": "153",
+      "unit": "kcal"
+    },
+    {
+      "label": "Time",
+      "value": "8.25",
+      "unit": "min"
+    },
+    {
+      "label": "Resistance",
+      "value": "5",
+      "unit": ""
+    }
+  ],
+  "portion_notes": null,
+  "classification": "workout",
+  "is_meal": false,
+  "confidence": 1,
+  "meal_name": null,
+  "suggested_meal_type": null,
+  "notes": null,
+  "reason": "The image shows an exercise machine console displaying workout metrics and a calorie burn of 153 kcal.",
+  "burn_kcal": 153,
+  "items": []
+}

@@ -16,9 +16,9 @@ export function MealPhotoConsent({
         <View style={styles.card}>
           <Text style={styles.title}>Analyze meal photos?</Text>
           <Text style={styles.body}>
-            fitlogr compresses the photo, removes location and camera details, and sends it to fitlogr and OpenRouter to
-            estimate the foods and calories. Confirmed meals are saved in a fitlogr album in your Google Photos. Photos
-            are not used to train models, and you can mark any photo as not a meal.
+            fitlogr compresses a photo that looks like food, removes location and camera details, and sends it to
+            fitlogr and OpenRouter to estimate the foods and calories. The photo stays on this phone. Photos are not
+            used to train models, and you can mark any photo as not a meal.
           </Text>
           <Pressable style={styles.agree} onPress={onAgree}>
             <Text style={styles.agreeText}>Agree and continue</Text>

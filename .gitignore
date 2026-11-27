@@ -35,6 +35,9 @@ mobile/android/
 coverage/
 *.tsbuildinfo
 
+# Local eval caches & run logs
+.cache/
+
 # Logs
 *.log
 npm-debug.*

@@ -1,0 +1,35 @@
+{
+  "assumption": "Visual portion estimate, not a lab measurement. The Kenzi cup is a filled 12 fl oz latte with tulip art: 1 espresso shot plus about 10 fl oz of 2% milk, 158 kcal. The pastry is one round laminated berry-and-cream danish, about 11 cm across and 125 g, with a dark berry jam well and a pale cream-cheese or custard cap: about 80 g butter pastry, 25 g jam, and 20 g cream cheese, 448 kcal. Together 606 kcal.",
+  "classification": "meal",
+  "is_meal": true,
+  "confidence": 0.7,
+  "meal_name": "Kenzi latte and berry danish",
+  "suggested_meal_type": "snack",
+  "notes": null,
+  "reason": "12 fl oz Kenzi latte and one berry cream danish.",
+  "burn_kcal": null,
+  "items": [
+    {
+      "name": "Kenzi latte",
+      "quantity": 12,
+      "unit": "fl oz",
+      "estimated_grams": 340,
+      "calories_kcal": 158,
+      "protein_g": 10,
+      "carbs_g": 16,
+      "fat_g": 6,
+      "confidence": 0.6
+    },
+    {
+      "name": "Berry cream danish",
+      "quantity": 1,
+      "unit": "pastry",
+      "estimated_grams": 125,
+      "calories_kcal": 448,
+      "protein_g": 8,
+      "carbs_g": 50,
+      "fat_g": 24,
+      "confidence": 0.45
+    }
+  ]
+}

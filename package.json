@@ -10,7 +10,8 @@
   ],
   "scripts": {
     "typecheck": "npm run typecheck -w @fitlogr/shared && npm run typecheck -w @fitlogr/worker && npm run typecheck -w @fitlogr/mobile",
-    "test": "npm run test -w @fitlogr/shared && npm run test -w @fitlogr/worker",
+    "test": "npm run test -w @fitlogr/shared && npm run test -w @fitlogr/worker && npm run test -w @fitlogr/mobile",
+    "eval:estimate": "vite-node eval/estimate/run.ts",
     "dev:worker": "npm run dev -w @fitlogr/worker",
     "dev:mobile": "npm run start -w @fitlogr/mobile",
     "mobile:doctor": "npm run doctor -w @fitlogr/mobile",

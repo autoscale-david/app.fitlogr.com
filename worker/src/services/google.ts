@@ -32,12 +32,19 @@ export function buildAuthorizeUrl(input: {
   nonce: string;
   codeChallenge: string;
   includePickerScope?: boolean;
+  includePhotosScopes?: boolean;
 }): string {
   const url = new URL(AUTHORIZE_URL);
   url.searchParams.set("client_id", input.clientId);
   url.searchParams.set("redirect_uri", input.redirectUri);
   url.searchParams.set("response_type", "code");
-  url.searchParams.set("scope", googleScopes(input.includePickerScope === true).join(" "));
+  url.searchParams.set(
+    "scope",
+    googleScopes({
+      includePhotosScopes: input.includePhotosScopes,
+      includePickerScope: input.includePickerScope === true,
+    }).join(" "),
+  );
   url.searchParams.set("state", input.state);
   url.searchParams.set("nonce", input.nonce);
   url.searchParams.set("code_challenge", input.codeChallenge);

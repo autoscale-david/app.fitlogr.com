@@ -16,7 +16,7 @@ fitlogr makes calorie and fitness tracking effortless. No tedious food logging, 
 - **Friction-free:** Minimize manual data entry and user interactions.
 - **AI-first:** Automatically turn photos and fitness data into useful insights.
 - **Cross-platform:** Support iOS and Android with seamless synchronization.
-- **Privacy-first:** Store meal photos in the user's own Google Photos account.
+- **Privacy-first:** Keep meal photos on the phone. Send a photo for analysis only when it looks like food.
 - **Cost-efficient:** Minimize operating costs to keep fitlogr free.
 
 Users should not need to open fitlogr after every meal or workout.
@@ -28,7 +28,7 @@ Users should not need to open fitlogr after every meal or workout.
 - Automatically discover meal photos from the device's photo library.
 - Use AI to identify food, estimate portion sizes, calories, protein, carbohydrates, and fat.
 - Automatically organize meals by capture date and time.
-- Upload meal photos to a dedicated `fitlogr` album in Google Photos.
+- Keep meal photos on the phone. The server does not store photo files.
 - Detect duplicate photos and meals.
 - Allow users to correct nutritional estimates or exclude photos.
 
@@ -55,14 +55,14 @@ Support compatible fitness watches, fitness trackers, and smart scales through p
 
 ## User Accounts & Synchronization
 
-- Require users to connect a Google account and authorize Google Photos.
+- Require a Google account for identity (name and email). The iPhone app does not ask for Google Photos access.
 - Use the Google account as the shared identity across devices.
 - Allow users to capture meals on one device and review progress on another.
 - Synchronize nutrition records, health data, goals, preferences, and historical progress.
 - Use local caching for offline access and synchronize when connectivity returns.
 - Prevent duplicate records across devices.
 - Support account deletion and data export.
-- Support alternative authentication if required by Apple App Store policies, while maintaining Google Photos connectivity.
+- Support alternative authentication if required by Apple App Store policies.
 
 ## App Environment
 
@@ -77,7 +77,7 @@ Maintain a single cross-platform mobile codebase.
 | Navigation | Expo Router |
 | Authentication | Google OAuth 2.0 |
 | Photo discovery | Expo MediaLibrary |
-| Photo storage | Google Photos |
+| Photo storage | On the phone (Apple Photos on iPhone) |
 | Local database | Expo SQLite |
 | Secure storage | Expo SecureStore |
 | iOS health integration | Apple HealthKit |
@@ -100,7 +100,7 @@ The website and backend API are served by a Cloudflare Worker hosted on fitlogr.
 | Hosting | Cloudflare Workers |
 | Backend language | TypeScript |
 | Database | Cloudflare D1 |
-| Photo storage | Google Photos |
+| Photo storage | On the phone. The worker keeps no photo files. |
 | AI inference | OpenRouter |
 | Deployment | Cloudflare Wrangler |
 | CI/CD | GitHub Actions |
@@ -222,19 +222,20 @@ Do not maintain permanent photo storage on fitlogr infrastructure.
 - Centralize Google Photos API operations through the backend.
 - Handle revoked permissions and account reconnection gracefully.
 
-## Photo Discovery & Google Photos
+## Photo Discovery
 
-Google Photos restricts third-party access to photos not created by the requesting application. fitlogr addresses this through automatic local photo discovery and app-managed uploads.
+The iPhone app reads Apple Photos on the device. A photo the on-device filter rejects never leaves the phone.
 
 ### Photo Processing
 
-1. Discover new photos from the device's authorized photo library.
-2. Identify potential meal photos using on-device classification where practical.
+1. Discover new photos from the iPhone photo library.
+2. Decide on the phone which photos look like food.
 3. Deduplicate photos using content hashes and image fingerprints.
-4. Compress candidate meal photos and submit them for AI analysis.
-5. Upload identified meal photos to the user's `fitlogr` Google Photos album.
-6. Store nutritional estimates and Google Photos media item IDs in Cloudflare D1.
-7. Make meal records and photos available across all connected devices.
+4. Compress a photo that passed the filter and submit it for AI analysis.
+5. Keep the photo on the phone. Store the nutritional estimate in Cloudflare D1.
+6. Show the meal from the phone's copy of the photo.
+
+Older app builds can still opt into a Google Photos album upload. The iPhone app sends `upload_to_google_photos: false`. Sign-in from this app requests only `openid`, `email`, and `profile`.
 
 ### Google Photos Integration
 

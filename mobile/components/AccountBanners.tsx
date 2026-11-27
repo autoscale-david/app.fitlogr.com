@@ -2,30 +2,24 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-nati
 import { ui } from "./settingsUi";
 import { colors } from "../theme";
 
-export function GoogleReconnectBanner({
+export function SessionExpiredBanner({
   visible,
   busy,
-  sessionExpired,
-  onReconnect,
+  onSignIn,
 }: {
   visible: boolean;
   busy?: boolean;
-  /** The fitlogr session ended (not only Google Photos access); the same button signs in again. */
-  sessionExpired?: boolean;
-  onReconnect: () => void;
+  onSignIn: () => void;
 }) {
-  if (!visible && !sessionExpired) return null;
-  const title = sessionExpired ? "Sign in again" : "Reconnect Google";
+  if (!visible) return null;
   return (
     <View style={[ui.card, styles.banner]}>
-      <Text style={ui.cardTitle}>{title}</Text>
+      <Text style={ui.cardTitle}>Sign in again</Text>
       <Text style={ui.body}>
-        {sessionExpired
-          ? "Your fitlogr session ended. Everything on this phone is kept, including changes not synced yet. Sign in with the same Google account to sync again."
-          : "Google Photos access was revoked. Your meals stay here. Reconnect to keep saving new photos to your fitlogr album."}
+        Your fitlogr session ended. Everything on this phone is kept, including changes not synced yet. Sign in with the same Google account to sync again.
       </Text>
-      <Pressable style={ui.primary} disabled={busy} onPress={onReconnect} accessibilityRole="button">
-        {busy ? <ActivityIndicator color="#062214" /> : <Text style={ui.primaryText}>{title}</Text>}
+      <Pressable style={ui.primary} disabled={busy} onPress={onSignIn} accessibilityRole="button">
+        {busy ? <ActivityIndicator color="#062214" /> : <Text style={ui.primaryText}>Sign in again</Text>}
       </Pressable>
     </View>
   );
