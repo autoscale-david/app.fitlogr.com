@@ -1,0 +1,24 @@
+{
+  "assumption": "The Vision Fitness console calories window reads 153. That machine figure is the expected burn, not a visual estimate. The same row shows 35 under time and 5 under resistance. The next window reads 825 under a second time label and is not calories. The top row shows 116, heart rate 0, and 66 watts. 66 watts for 35 minutes is about 33 kcal of mechanical work, so 153 kcal is the plausible metabolic total and 825 is not.",
+  "classification": "workout",
+  "is_meal": false,
+  "confidence": 0.95,
+  "meal_name": "Vision Fitness cardio",
+  "suggested_meal_type": null,
+  "notes": null,
+  "reason": "Vision Fitness console calories window reads 153.",
+  "burn_kcal": 153,
+  "items": [
+    {
+      "name": "Vision Fitness cardio",
+      "quantity": 35,
+      "unit": "min",
+      "estimated_grams": null,
+      "calories_kcal": 153,
+      "protein_g": 0,
+      "carbs_g": 0,
+      "fat_g": 0,
+      "confidence": 0.95
+    }
+  ]
+}

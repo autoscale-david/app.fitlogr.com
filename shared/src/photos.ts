@@ -89,19 +89,25 @@ export type MealVisionItem = z.infer<typeof VisionItemObjectSchema>;
 
 const VisionObjectSchema = z
   .object({
-    classification: z.enum(["meal", "not_meal"]),
+    classification: z.enum(["meal", "workout", "ignore"]),
     is_meal: z.boolean(),
     confidence: z.number().min(0).max(1),
     meal_name: z.string().min(1).max(120).nullable(),
     suggested_meal_type: MealTypeSchema.nullable(),
     notes: z.string().max(300).nullable(),
+    reason: z.string().max(300).nullable(),
+    burn_kcal: z.number().min(0).max(20000).nullable(),
     items: z.array(MealVisionItemSchema).max(30),
   })
   .refine((value) => value.is_meal === (value.classification === "meal"), {
     message: "classification does not match is_meal",
   });
 
-/** OpenRouter vision payload. Totals are intentionally absent; the server sums items. */
+/**
+ * OpenRouter vision payload.
+ * Meal totals are summed from items. `burn_kcal` is the machine readout for a workout.
+ * Older `not_meal` payloads normalize to `ignore`.
+ */
 export const MealVisionSchema = z.preprocess(normalizeVision, VisionObjectSchema);
 export type MealVision = z.infer<typeof VisionObjectSchema>;
 
@@ -389,16 +395,26 @@ function toHashResult(contentSha256: string, photo: KnownPhotoHash, kind: "exact
 function normalizeVision(input: unknown): unknown {
   if (!input || typeof input !== "object") return input;
   const record = { ...(input as Record<string, unknown>) };
-  if (record.classification === undefined && typeof record.is_meal === "boolean") {
-    record.classification = record.is_meal ? "meal" : "not_meal";
+  if (record.classification === "not_meal" || record.classification === "non_meal" || record.classification === "none") {
+    record.classification = "ignore";
   }
-  if (record.is_meal === undefined && (record.classification === "meal" || record.classification === "not_meal")) {
+  if (record.classification === undefined && typeof record.is_meal === "boolean") {
+    record.classification = record.is_meal ? "meal" : "ignore";
+  }
+  if (record.is_meal === undefined && typeof record.classification === "string") {
     record.is_meal = record.classification === "meal";
   }
   if (record.meal_name === undefined && typeof record.mealName === "string") record.meal_name = record.mealName;
   if (record.meal_name === "") record.meal_name = null;
   if (record.suggested_meal_type === undefined) record.suggested_meal_type = null;
   if (record.notes === undefined) record.notes = null;
+  if (typeof record.reason !== "string" || record.reason.trim() === "") record.reason = null;
+  else record.reason = record.reason.trim();
+  if (typeof record.burn_kcal === "string" && record.burn_kcal.trim() !== "") {
+    const parsed = Number(record.burn_kcal);
+    if (Number.isFinite(parsed)) record.burn_kcal = parsed;
+  }
+  if (record.burn_kcal === undefined || record.burn_kcal === null || record.burn_kcal === "") record.burn_kcal = null;
   if (Array.isArray(record.items)) record.items = record.items.map((item) => normalizeVisionItem(item));
   return record;
 }

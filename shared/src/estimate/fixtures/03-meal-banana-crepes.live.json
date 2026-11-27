@@ -1,0 +1,67 @@
+{
+  "classification": "meal",
+  "is_meal": true,
+  "confidence": 0.9,
+  "meal_name": "Crepes with Bananas and Whipped Cream",
+  "suggested_meal_type": "breakfast",
+  "notes": null,
+  "reason": "The photo shows crepes with bananas and whipped cream, which is a meal.",
+  "burn_kcal": null,
+  "items": [
+    {
+      "name": "crepes",
+      "quantity": 3,
+      "unit": "crepe",
+      "estimated_grams": 150,
+      "calories_kcal": 450,
+      "protein_g": 15,
+      "carbs_g": 60,
+      "fat_g": 18,
+      "confidence": 0.8
+    },
+    {
+      "name": "banana",
+      "quantity": 0.5,
+      "unit": "banana",
+      "estimated_grams": 60,
+      "calories_kcal": 53,
+      "protein_g": 0.6,
+      "carbs_g": 13.5,
+      "fat_g": 0.2,
+      "confidence": 0.9
+    },
+    {
+      "name": "whipped cream",
+      "quantity": 0.25,
+      "unit": "cup",
+      "estimated_grams": 30,
+      "calories_kcal": 100,
+      "protein_g": 0.5,
+      "carbs_g": 4,
+      "fat_g": 9,
+      "confidence": 0.8
+    },
+    {
+      "name": "powdered sugar",
+      "quantity": 1,
+      "unit": "tablespoon",
+      "estimated_grams": 12,
+      "calories_kcal": 45,
+      "protein_g": 0,
+      "carbs_g": 12,
+      "fat_g": 0,
+      "confidence": 0.7
+    },
+    {
+      "name": "syrup",
+      "quantity": 1,
+      "unit": "tablespoon",
+      "estimated_grams": 20,
+      "calories_kcal": 52,
+      "protein_g": 0,
+      "carbs_g": 13,
+      "fat_g": 0,
+      "confidence": 0.7
+    }
+  ]
+}

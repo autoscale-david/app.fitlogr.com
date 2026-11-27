@@ -7,12 +7,13 @@ export const DEFAULT_VISION_FALLBACK = "openai/gpt-4o-mini";
 
 const VISION_TIMEOUT_MS = 20_000;
 
-const PROMPT = `You estimate nutrition from one photo. Reply with JSON only, no markdown.
+export const VISION_PROMPT = `You classify one photo and estimate calories. Reply with JSON only, no markdown.
 Use exactly this shape:
-{"classification":"meal"|"not_meal","is_meal":boolean,"confidence":number,"meal_name":string|null,"suggested_meal_type":"breakfast"|"lunch"|"dinner"|"snack"|"meal"|null,"notes":string|null,"items":[{"name":string,"quantity":number,"unit":string,"estimated_grams":number|null,"calories_kcal":number,"protein_g":number,"carbs_g":number,"fat_g":number,"confidence":number}]}
-classification is "meal" only when the photo shows food someone is about to eat.
-Do not include a total. Estimate each visible food item separately.
-If it is not a meal, return classification "not_meal", is_meal false, and items [].`;
+{"classification":"meal"|"workout"|"ignore","is_meal":boolean,"confidence":number,"meal_name":string|null,"suggested_meal_type":"breakfast"|"lunch"|"dinner"|"snack"|"meal"|null,"notes":string|null,"reason":string,"burn_kcal":number|null,"items":[{"name":string,"quantity":number,"unit":string,"estimated_grams":number|null,"calories_kcal":number,"protein_g":number,"carbs_g":number,"fat_g":number,"confidence":number}]}
+classification is "meal" only when the photo shows food or drink someone is about to eat. Estimate each visible food item separately. Do not include a meal total. Set burn_kcal to null and is_meal to true.
+classification is "workout" when the photo shows an exercise-machine console or another display of energy burned. Set burn_kcal to the digits in the window whose own label reads calories, cal, or kcal. Do not use a number labeled time, distance, speed, pace, watts, mets, heart rate, or resistance, even when that number is larger or easier to see. Do not invent food. Set is_meal to false.
+classification is "ignore" when the photo is neither food nor a workout. Set is_meal to false, items to [], and burn_kcal to 0.
+reason is one short sentence explaining the classification.`;
 
 export interface VisionConfig {
   apiKey: string;
@@ -93,32 +94,7 @@ async function runModel(
 
   let response: Response;
   try {
-    response = await fetchImpl(`${config.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${config.apiKey}`,
-        "content-type": "application/json",
-        "http-referer": config.appUrl,
-        "x-title": "fitlogr",
-      },
-      body: JSON.stringify({
-        model,
-        temperature: 0,
-        max_tokens: 1200,
-        response_format: { type: "json_object" },
-        provider: { data_collection: "deny" },
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: PROMPT },
-              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${bytesToBase64(image)}` } },
-            ],
-          },
-        ],
-      }),
-      signal: AbortSignal.timeout(VISION_TIMEOUT_MS),
-    });
+    response = await fetchImpl(`${config.baseUrl}/chat/completions`, visionCompletionInit(config, model, image));
   } catch {
     return attempt("upstream_error", null);
   }
@@ -131,14 +107,8 @@ async function runModel(
     return attempt("schema_error", null);
   }
   const usage = readUsage(payload);
-  const text = messageText(payload);
-  if (!text) return attempt("schema_error", null, usage);
-  let json: unknown;
-  try {
-    json = JSON.parse(stripFence(text));
-  } catch {
-    return attempt("schema_error", null, usage);
-  }
+  const json = modelJsonFromCompletion(payload);
+  if (!json) return attempt("schema_error", null, usage);
   const parsed = MealVisionSchema.safeParse(json);
   if (!parsed.success) return attempt("schema_error", null, usage);
   return attempt("ok", parsed.data, usage);
@@ -177,6 +147,46 @@ function roundCost(value: number): number {
 
 function numberOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+export function visionCompletionInit(config: VisionConfig, model: string, image: Uint8Array): RequestInit {
+  return {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${config.apiKey}`,
+      "content-type": "application/json",
+      "http-referer": config.appUrl,
+      "x-title": "fitlogr",
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0,
+      max_tokens: 1200,
+      response_format: { type: "json_object" },
+      provider: { data_collection: "deny" },
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: VISION_PROMPT },
+            { type: "image_url", image_url: { url: `data:image/jpeg;base64,${bytesToBase64(image)}` } },
+          ],
+        },
+      ],
+    }),
+    signal: AbortSignal.timeout(VISION_TIMEOUT_MS),
+  };
+}
+
+/** Model JSON from a chat completion, or null when the message is missing or not JSON. */
+export function modelJsonFromCompletion(payload: unknown): unknown | null {
+  const text = messageText(payload);
+  if (!text) return null;
+  try {
+    return JSON.parse(stripFence(text));
+  } catch {
+    return null;
+  }
 }
 
 function messageText(payload: unknown): string | null {

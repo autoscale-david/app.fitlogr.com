@@ -98,6 +98,66 @@ describe("openrouter vision", () => {
     ).rejects.toMatchObject({ code: "AI_UPSTREAM_ERROR", attempts: [expect.objectContaining({ status: "upstream_error" }), expect.objectContaining({ status: "upstream_error", fallbackUsed: true })] });
   });
 
+  it("asks the model to separate meals, workouts, and everything else", async () => {
+    let prompt = "";
+    await analyzeMealVision(async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      prompt = body.messages[0].content[0].text;
+      return Response.json({
+        choices: [{ message: { content: JSON.stringify(meal) } }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, cost: 0 },
+      });
+    }, config, jpeg());
+    expect(prompt).toContain('"meal"');
+    expect(prompt).toContain('"workout"');
+    expect(prompt).toContain('"ignore"');
+    expect(prompt).toContain("calories, cal, or kcal");
+  });
+
+  it("accepts a console workout and an ignore photo", async () => {
+    const payloads = [
+      {
+        classification: "workout",
+        is_meal: false,
+        confidence: 0.9,
+        meal_name: "Bike",
+        suggested_meal_type: null,
+        notes: null,
+        reason: "Console reads 153.",
+        burn_kcal: 153,
+        items: [],
+      },
+      {
+        classification: "ignore",
+        is_meal: false,
+        confidence: 0.9,
+        meal_name: null,
+        suggested_meal_type: null,
+        notes: null,
+        reason: "Not food.",
+        burn_kcal: 0,
+        items: [],
+      },
+      {
+        classification: "not_meal",
+        is_meal: false,
+        confidence: 0.9,
+        meal_name: null,
+        suggested_meal_type: null,
+        notes: "A dog",
+        items: [],
+      },
+    ];
+    const seen: string[] = [];
+    for (const payload of payloads) {
+      const result = await analyzeMealVision(async () => {
+        return Response.json({ choices: [{ message: { content: JSON.stringify(payload) } }] });
+      }, config, jpeg());
+      seen.push(result.analysis.classification);
+    }
+    expect(seen).toEqual(["workout", "ignore", "ignore"]);
+  });
+
   it("reads the configured model and falls back to gpt-4o-mini", () => {
     expect(
       visionConfigFromEnv({
