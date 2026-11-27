@@ -30,21 +30,45 @@ public class PhotoClassifierModule: Module {
 
     // iOS suspends a background-launched app within seconds unless it holds a background task.
     // The returned id must be passed to endBackgroundWork. iOS allows roughly 30 seconds.
+    // UIApplication is main-thread only; these closures run on a background queue.
     AsyncFunction("beginBackgroundWork") { (name: String) -> Int in
-      var identifier: UIBackgroundTaskIdentifier = .invalid
-      identifier = UIApplication.shared.beginBackgroundTask(withName: name) {
-        UIApplication.shared.endBackgroundTask(identifier)
-        identifier = .invalid
+      return DispatchQueue.main.sync { () -> Int in
+        let task = BackgroundTaskBox()
+        task.identifier = UIApplication.shared.beginBackgroundTask(withName: name) {
+          UIApplication.shared.endBackgroundTask(task.identifier)
+          task.identifier = .invalid
+        }
+        return task.identifier.rawValue
       }
-      return identifier.rawValue
-    }.runOnQueue(.main)
+    }
 
     AsyncFunction("endBackgroundWork") { (rawIdentifier: Int) in
-      let identifier = UIBackgroundTaskIdentifier(rawValue: rawIdentifier)
-      if identifier != .invalid {
-        UIApplication.shared.endBackgroundTask(identifier)
+      DispatchQueue.main.async {
+        let identifier = UIBackgroundTaskIdentifier(rawValue: rawIdentifier)
+        if identifier != .invalid {
+          UIApplication.shared.endBackgroundTask(identifier)
+        }
       }
-    }.runOnQueue(.main)
+    }
+  }
+}
+
+/// Holds the task id so the expiration handler can end the same task it was created for.
+private final class BackgroundTaskBox: @unchecked Sendable {
+  var identifier: UIBackgroundTaskIdentifier = .invalid
+}
+
+/// A continuation must be resumed exactly once, even if Photos calls the handler again.
+private final class ResumeOnce: @unchecked Sendable {
+  private let lock = NSLock()
+  private var done = false
+
+  func claim() -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    if done { return false }
+    done = true
+    return true
   }
 }
 
@@ -66,17 +90,24 @@ private func requestImage(_ asset: PHAsset, allowNetwork: Bool) async -> UIImage
   return await withCheckedContinuation { (continuation: CheckedContinuation<UIImage?, Never>) in
     let options = PHImageRequestOptions()
     options.isNetworkAccessAllowed = allowNetwork
-    // highQualityFormat calls the handler exactly once, which a continuation requires.
+    // highQualityFormat delivers one final image rather than a preview followed by a better one.
     options.deliveryMode = .highQualityFormat
     options.resizeMode = .fast
     options.isSynchronous = false
+    let once = ResumeOnce()
     PHImageManager.default().requestImage(
       for: asset,
       targetSize: CGSize(width: 448, height: 448),
       contentMode: .aspectFit,
       options: options
-    ) { image, _ in
-      continuation.resume(returning: image)
+    ) { image, info in
+      let degraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
+      if degraded && image != nil {
+        return
+      }
+      if once.claim() {
+        continuation.resume(returning: image)
+      }
     }
   }
 }
