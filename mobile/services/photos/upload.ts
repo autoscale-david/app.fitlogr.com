@@ -18,6 +18,8 @@ export interface ImportResult {
   message: string;
   /** Set when photo analysis is rate limited: wait this long before sending another photo. */
   retryAfterSeconds?: number;
+  /** Why a photo was skipped without analysis. `in_flight` means another pass is sending it right now. */
+  skipReason?: "in_flight" | "already_checked" | "server_excluded" | "server_non_meal";
   remotePhotoId?: string | null;
   mealId?: string | null;
   name?: string;
@@ -29,6 +31,9 @@ export interface ImportResult {
 
 /** Photos being sent right now, so two scans running at once never upload the same photo twice. */
 const inFlight = new Set<string>();
+
+/** The server accepts at most this many on-device labels with a photo. */
+const MAX_LABELS_SENT = 12;
 
 /** True when this local photo was already handled (or is being sent) and should not be prepared again. */
 export async function alreadyChecked(db: SQLiteDatabase, assetId: string): Promise<boolean> {
@@ -59,8 +64,11 @@ export async function importPreparedPhoto(
   }
   const assetId = input.assetId ?? image.sha256;
   // A deliberate pick overrides an earlier "not a meal" mark for this file.
+  if (inFlight.has(assetId)) {
+    return { kind: "skipped", message: "That photo is being checked right now.", skipReason: "in_flight" };
+  }
   if (!input.forceMeal && (await alreadyChecked(db, assetId))) {
-    return { kind: "skipped", message: "That photo was already checked." };
+    return { kind: "skipped", message: "That photo was already checked.", skipReason: "already_checked" };
   }
 
   inFlight.add(assetId);
@@ -78,11 +86,16 @@ export async function importPreparedPhoto(
     if (match && match.status !== "new" && !explicitPickReopens(match.status, input.forceMeal === true)) {
       await remember(db, assetId, image, input.capturedAt, match.status, match.photo_id);
       if (match.status === "excluded" || match.status === "non_meal") {
-        return { kind: "skipped", message: "That photo was already skipped." };
+        return {
+          kind: "skipped",
+          message: "That photo was already skipped.",
+          skipReason: match.status === "excluded" ? "server_excluded" : "server_non_meal",
+          remotePhotoId: match.photo_id,
+        };
       }
       // The meal may exist only on the server. Ask analyze to return it so it can be written here.
       if (!input.forceMeal) {
-        return { kind: "duplicate", message: "That meal photo is already logged." };
+        return { kind: "duplicate", message: "That meal photo is already logged.", remotePhotoId: match.photo_id, mealId: match.meal_id };
       }
     }
 
@@ -97,7 +110,7 @@ export async function importPreparedPhoto(
       // This app keeps the photo on the phone. Older builds omit the flag and still use the album.
       upload_to_google_photos: false,
       ...(input.onDeviceVerdict ? { on_device_verdict: input.onDeviceVerdict } : {}),
-      ...(input.onDeviceLabels ? { on_device_labels: input.onDeviceLabels } : {}),
+      ...(input.onDeviceLabels ? { on_device_labels: topLabels(input.onDeviceLabels) } : {}),
     };
     const form = new FormData();
     form.append("metadata", JSON.stringify(metadata));
@@ -122,7 +135,11 @@ export async function importPreparedPhoto(
         items: analyzed.meal.items.filter((item) => !item.deleted_at).map(toLocalItem),
       });
     }
-    await remember(db, assetId, image, input.capturedAt, analyzed.classification ?? analyzed.outcome, analyzed.photo.id);
+    // The stored state is what fitlogr did, not only what the model said: a "meal" the server was too
+    // unsure to log must not read as a logged meal.
+    const state =
+      analyzed.outcome === "meal" ? "meal" : analyzed.outcome === "duplicate" ? "duplicate" : analyzed.classification === "workout" ? "workout" : "ignore";
+    await remember(db, assetId, image, input.capturedAt, state, analyzed.photo.id);
     const shared = {
       remotePhotoId: analyzed.photo.id,
       mealId: analyzed.meal?.id ?? null,
@@ -159,6 +176,14 @@ export async function importPreparedPhoto(
   } finally {
     inFlight.delete(assetId);
   }
+}
+
+/** The strongest labels, clipped to what the server's schema accepts. */
+function topLabels(labels: { id: string; confidence: number }[]): { id: string; confidence: number }[] {
+  return [...labels]
+    .sort((a, b) => b.confidence - a.confidence)
+    .slice(0, MAX_LABELS_SENT)
+    .map((label) => ({ id: label.id.slice(0, 160), confidence: Math.min(1, Math.max(0, label.confidence)) }));
 }
 
 /** "fitlogr can analyze more photos in about 4 minutes." / "...in about 3 hours." */

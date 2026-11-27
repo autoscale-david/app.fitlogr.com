@@ -46,8 +46,9 @@ import {
   type LibraryAccess,
 } from "./photos";
 import { decideLabels, getClassifier } from "./engine/classifier";
+import { armHealthWake } from "./engine/background";
 import { subscribeEngine, runPass } from "./engine/runPass";
-import { runPhotoPipeline } from "./engine/photoPass";
+import { recordImport } from "./engine/photoPass";
 import { queueMeal, queueMealDelete, queuePhotoExclude, queueSettings, queueWeight, syncAccount } from "./sync";
 
 interface Account {
@@ -266,10 +267,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         void readGoals(db).then(setGoals);
         void readHealthConnection(db).then(setHealth);
       }
-      if (event.type === "progress" && event.message) {
-        setPhotoScan((current) => ({ ...current, active: false, message: event.message }));
+      if (event.type === "state") {
+        void readSetting(db, "last_synced_at").then((stamp) => setLastSyncedAt(stamp || null));
+      }
+      if (event.type === "progress") {
+        setPhotoScan((current) => ({ ...current, active: event.running, message: event.message || current.message }));
       }
       if (event.type === "alert") setCalorieNotice(event.body);
+      if (event.type === "session-expired") {
+        // Same as a sync that hits an expired session: keep everything on the phone and ask to sign in.
+        void clearSession().then(() => {
+          setSessionExpired(true);
+          setSyncError("Your session ended. Sign in again to keep syncing. Everything on this phone is kept.");
+          setRefreshToken((token) => token + 1);
+        });
+      }
     });
     const subscription = AppState.addEventListener("change", (state) => {
       if (state !== "active") return;
@@ -425,6 +437,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const provider = getHealthProvider();
           if (provider.id === "healthkit" && (await provider.getPermissionState()) !== "authorized") {
             await provider.requestPermissions();
+            // Background delivery only starts for observers registered after access is granted.
+            armHealthWake();
           }
         } catch (error) {
           setSyncError(error instanceof Error ? error.message : "Apple Health sync failed");
@@ -501,6 +515,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           onDeviceVerdict,
           onDeviceLabels,
         });
+        // A photo added by hand appears in the photo log too, with what the on-device check said about it.
+        await recordImport(db, {
+          assetId: prepared.sha256,
+          capturedAtMs: Date.parse(when.capturedAt) || Date.now(),
+          source: "picker",
+          verdict: onDeviceVerdict ?? null,
+          labels: onDeviceLabels,
+          preparedUri: prepared.uri,
+          result,
+        }).catch(() => undefined);
         // The meal is already in the local log. Refresh before sync so a picker blur cannot skip the update.
         setRefreshToken((token) => token + 1);
         try {
@@ -523,30 +547,36 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             message: "Sign in with Google before importing history.",
           };
         }
-        const result = await runPhotoPipeline(db, {
-          days,
-          budgetMs: Number.POSITIVE_INFINITY,
-          ask: true,
-          signal,
-          onProgress: (counts) =>
-            onProgress({
-              scanned: counts.checked,
-              skipped: 0,
-              meals: counts.meals,
-              nonMeals: Math.max(0, counts.analysed - counts.meals),
-              errors: counts.errors,
-            }),
-        });
-        setPhotoScan({ active: false, message: result.message, access: result.access });
+        // Through the engine, so it can never run alongside another pass over the same photos.
+        await writeSetting(db, "photo_history_days", String(days));
+        setPhotoScan((current) => ({ ...current, active: true }));
+        const pass = await runPass({ reason: "manual", active: true, historyDays: days, signal });
+        const result = pass.photos;
         setRefreshToken((token) => token + 1);
+        if (!result) {
+          setPhotoScan((current) => ({ ...current, active: false }));
+          return {
+            status: "unavailable",
+            capped: false,
+            scanned: 0,
+            skipped: 0,
+            meals: 0,
+            nonMeals: 0,
+            errors: 0,
+            message: pass.error === "session" ? "Sign in again to keep importing photos." : "Agree to photo analysis first.",
+          };
+        }
+        const counts = result.counts;
+        onProgress({ scanned: counts.checked, skipped: 0, meals: counts.meals, nonMeals: Math.max(0, counts.analysed - counts.meals), errors: counts.errors });
+        setPhotoScan({ active: false, message: result.message, access: result.access });
         return {
           status: result.access === "denied" || result.access === "undetermined" ? "permission_denied" : signal.aborted ? "cancelled" : "imported",
           capped: result.stoppedForBudget,
-          scanned: result.counts.checked,
+          scanned: counts.checked,
           skipped: 0,
-          meals: result.counts.meals,
-          nonMeals: Math.max(0, result.counts.analysed - result.counts.meals),
-          errors: result.counts.errors,
+          meals: counts.meals,
+          nonMeals: Math.max(0, counts.analysed - counts.meals),
+          errors: counts.errors,
           message: result.message,
         };
       },

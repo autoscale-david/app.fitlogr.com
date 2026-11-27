@@ -19,11 +19,13 @@ interface AuditSqlRow {
   meal_id: string | null;
   last_error: string | null;
   thumb_uri: string | null;
+  attempts: number | null;
+  ai_at: string | null;
 }
 
 const COLUMNS = `local_asset_id, captured_at, capture_date, photo_source, scan_status, verdict, labels_json,
   classifier_id, policy_version, classified_at, ai_classification, ai_confidence, ai_estimate_json,
-  remote_photo_id, meal_id, last_error, thumb_uri`;
+  remote_photo_id, meal_id, last_error, thumb_uri, attempts, ai_at`;
 
 /** Known rows for these ids, plus anything still queued or failed, in batches of 80. */
 export async function loadAuditMap(db: SQLiteDatabase, ids: string[]): Promise<Map<string, PipelineRow>> {
@@ -49,8 +51,8 @@ export async function saveAuditRow(db: SQLiteDatabase, row: PipelineRow, thumbUr
     `INSERT INTO local_media_assets (
        local_asset_id, captured_at, capture_date, photo_source, scan_status, verdict, labels_json,
        classifier_id, policy_version, classified_at, ai_classification, ai_confidence, ai_estimate_json,
-       remote_photo_id, meal_id, last_error, thumb_uri, google_pending, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+       remote_photo_id, meal_id, last_error, thumb_uri, attempts, ai_at, google_pending, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
      ON CONFLICT(local_asset_id) DO UPDATE SET
        captured_at = excluded.captured_at,
        capture_date = excluded.capture_date,
@@ -68,6 +70,8 @@ export async function saveAuditRow(db: SQLiteDatabase, row: PipelineRow, thumbUr
        meal_id = COALESCE(excluded.meal_id, local_media_assets.meal_id),
        last_error = excluded.last_error,
        thumb_uri = COALESCE(excluded.thumb_uri, local_media_assets.thumb_uri),
+       attempts = excluded.attempts,
+       ai_at = COALESCE(excluded.ai_at, local_media_assets.ai_at),
        updated_at = excluded.updated_at`,
     row.id,
     new Date(row.capturedAtMs).toISOString(),
@@ -86,6 +90,8 @@ export async function saveAuditRow(db: SQLiteDatabase, row: PipelineRow, thumbUr
     row.mealId,
     row.error,
     thumbUri ?? null,
+    row.attempts ?? 0,
+    row.analysedAt ?? null,
     now,
   );
 }
@@ -109,25 +115,34 @@ function toPipeline(row: AuditSqlRow): PipelineRow {
     remotePhotoId: row.remote_photo_id,
     mealId: row.meal_id,
     error: row.last_error,
+    attempts: row.attempts ?? 0,
+    analysedAt: row.ai_at,
   };
 }
 
+/** Maps a stored status to a pipeline state, including the statuses older builds wrote. */
 function toState(status: string): PipelineRow["aiState"] {
-  if (
-    status === "not_sent" ||
-    status === "queued" ||
-    status === "meal" ||
-    status === "workout" ||
-    status === "ignore" ||
-    status === "duplicate" ||
-    status === "excluded" ||
-    status === "error" ||
-    status === "pending"
-  ) {
-    return status === "pending" ? "error" : status;
+  switch (status) {
+    case "not_sent":
+    case "queued":
+    case "meal":
+    case "workout":
+    case "ignore":
+    case "duplicate":
+    case "excluded":
+    case "error":
+    case "failed":
+      return status;
+    case "pending":
+      return "error";
+    case "not_meal":
+    case "non_meal":
+      return "ignore";
+    case "near_duplicate":
+      return "duplicate";
+    default:
+      return "not_sent";
   }
-  if (status === "not_meal") return "ignore";
-  return "not_sent";
 }
 
 function parseLabels(raw: string | null): PipelineLabel[] {

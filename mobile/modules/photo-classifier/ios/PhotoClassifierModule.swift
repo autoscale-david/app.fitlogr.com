@@ -1,35 +1,50 @@
 import ExpoModulesCore
+import ImageIO
 import Photos
 import UIKit
 import Vision
 
-let defaultMaxLabels = 8
-let defaultMinConfidence = 0.05
-
+/// On-device image labels from Apple's Vision framework, plus a way to ask iOS for a little more
+/// time when the app is woken in the background. Nothing in this module uses the network except
+/// fetching a small rendition from iCloud when the photo is not on the phone.
 public class PhotoClassifierModule: Module {
   public func definition() -> ModuleDefinition {
     Name("PhotoClassifier")
 
     // One bad asset is an error entry. The rest of the batch still returns.
-    AsyncFunction("classifyAssets") { (assetIds: [String], options: [String: Any]) async -> [[String: Any]] in
-      let maxLabels = intOption(options, "maxLabels", defaultMaxLabels)
-      let minConfidence = floatOption(options, "minConfidence", defaultMinConfidence)
+    AsyncFunction("classifyAssets") { (assetIds: [String], maxLabels: Int, minConfidence: Double) async -> [[String: Any]] in
       var results: [[String: Any]] = []
       for assetId in assetIds {
-        results.append(await classifyAsset(assetId, maxLabels: maxLabels, minConfidence: minConfidence))
+        results.append(await classifyAsset(assetId, maxLabels: maxLabels, minConfidence: Float(minConfidence)))
       }
       return results
     }
 
-    AsyncFunction("classifyFile") { (uri: String, options: [String: Any]) async -> [String: Any] in
-      let maxLabels = intOption(options, "maxLabels", defaultMaxLabels)
-      let minConfidence = floatOption(options, "minConfidence", defaultMinConfidence)
-      return classifyImage(loadFile(uri), assetId: uri, maxLabels: maxLabels, minConfidence: minConfidence)
+    AsyncFunction("classifyFile") { (uri: String, maxLabels: Int, minConfidence: Double) async -> [String: Any] in
+      return classifyImage(loadFile(uri), assetId: uri, maxLabels: maxLabels, minConfidence: Float(minConfidence))
     }
 
     Function("supportedLabels") { () -> [String] in
-      supportedLabelIds()
+      return supportedLabelIds()
     }
+
+    // iOS suspends a background-launched app within seconds unless it holds a background task.
+    // The returned id must be passed to endBackgroundWork. iOS allows roughly 30 seconds.
+    AsyncFunction("beginBackgroundWork") { (name: String) -> Int in
+      var identifier: UIBackgroundTaskIdentifier = .invalid
+      identifier = UIApplication.shared.beginBackgroundTask(withName: name) {
+        UIApplication.shared.endBackgroundTask(identifier)
+        identifier = .invalid
+      }
+      return identifier.rawValue
+    }.runOnQueue(.main)
+
+    AsyncFunction("endBackgroundWork") { (rawIdentifier: Int) in
+      let identifier = UIBackgroundTaskIdentifier(rawValue: rawIdentifier)
+      if identifier != .invalid {
+        UIApplication.shared.endBackgroundTask(identifier)
+      }
+    }.runOnQueue(.main)
   }
 }
 
@@ -39,80 +54,81 @@ private func classifyAsset(_ assetId: String, maxLabels: Int, minConfidence: Flo
   guard let asset = fetched.firstObject else {
     return ["assetId": assetId, "error": "Photo is not in the library"]
   }
-  let image = await requestImage(asset, allowNetwork: false) ?? await requestImage(asset, allowNetwork: true)
+  // iOS keeps small renditions on the phone, so the first try needs no network.
+  var image = await requestImage(asset, allowNetwork: false)
+  if image == nil {
+    image = await requestImage(asset, allowNetwork: true)
+  }
   return classifyImage(image, assetId: assetId, maxLabels: maxLabels, minConfidence: minConfidence)
 }
 
 private func requestImage(_ asset: PHAsset, allowNetwork: Bool) async -> UIImage? {
-  await withCheckedContinuation { continuation in
+  return await withCheckedContinuation { (continuation: CheckedContinuation<UIImage?, Never>) in
     let options = PHImageRequestOptions()
     options.isNetworkAccessAllowed = allowNetwork
+    // highQualityFormat calls the handler exactly once, which a continuation requires.
     options.deliveryMode = .highQualityFormat
     options.resizeMode = .fast
     options.isSynchronous = false
-    var resumed = false
-    func finish(_ image: UIImage?) {
-      if resumed { return }
-      resumed = true
-      continuation.resume(returning: image)
-    }
     PHImageManager.default().requestImage(
       for: asset,
       targetSize: CGSize(width: 448, height: 448),
       contentMode: .aspectFit,
       options: options
-    ) { image, info in
-      let cancelled = (info?[PHImageCancelledKey] as? Bool) ?? false
-      if cancelled {
-        finish(nil)
-        return
-      }
-      let degraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
-      if degraded { return }
-      finish(image)
+    ) { image, _ in
+      continuation.resume(returning: image)
     }
   }
 }
 
 private func loadFile(_ uri: String) -> UIImage? {
-  let path = uri.hasPrefix("file://") ? String(uri.dropFirst(7)) : uri
-  return UIImage(contentsOfFile: path)
+  if let url = URL(string: uri), url.isFileURL {
+    return UIImage(contentsOfFile: url.path)
+  }
+  return UIImage(contentsOfFile: uri)
 }
 
 private func classifyImage(_ image: UIImage?, assetId: String, maxLabels: Int, minConfidence: Float) -> [String: Any] {
-  guard let cgImage = image?.cgImage else {
+  guard let image = image, let cgImage = image.cgImage else {
     return ["assetId": assetId, "error": "Photo could not be read"]
   }
-  let request = VNClassifyImageRequest()
-  let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-  do {
-    try handler.perform([request])
-  } catch {
-    return ["assetId": assetId, "error": error.localizedDescription]
+  return autoreleasepool { () -> [String: Any] in
+    let request = VNClassifyImageRequest()
+    let handler = VNImageRequestHandler(cgImage: cgImage, orientation: cgOrientation(image.imageOrientation), options: [:])
+    do {
+      try handler.perform([request])
+    } catch {
+      return ["assetId": assetId, "error": error.localizedDescription]
+    }
+    let observations = (request.results ?? [])
+      .filter { $0.confidence >= minConfidence }
+      .sorted { $0.confidence > $1.confidence }
+      .prefix(max(1, maxLabels))
+    let labels: [[String: Any]] = observations.map { observation in
+      return ["id": observation.identifier, "confidence": Double(observation.confidence)]
+    }
+    return ["assetId": assetId, "labels": labels]
   }
-  let observations = (request.results ?? [])
-    .filter { $0.confidence >= minConfidence }
-    .sorted { $0.confidence > $1.confidence }
-    .prefix(maxLabels)
-  let labels: [[String: Any]] = observations.map { ["id": $0.identifier, "confidence": $0.confidence] }
-  return ["assetId": assetId, "labels": labels]
 }
 
+/// The camera stores most photos rotated and records how to turn them. Vision needs to be told.
+private func cgOrientation(_ orientation: UIImage.Orientation) -> CGImagePropertyOrientation {
+  switch orientation {
+  case .up: return .up
+  case .down: return .down
+  case .left: return .left
+  case .right: return .right
+  case .upMirrored: return .upMirrored
+  case .downMirrored: return .downMirrored
+  case .leftMirrored: return .leftMirrored
+  case .rightMirrored: return .rightMirrored
+  @unknown default: return .up
+  }
+}
+
+/// The identifiers this iOS version's classifier can emit.
 private func supportedLabelIds() -> [String] {
-  // Vision's documented return is the identifier strings this OS can emit.
-  // currentRevision is the classifier this device actually runs.
   let revision = VNClassifyImageRequest.currentRevision
-  return (try? VNClassifyImageRequest.knownClassifications(forRevision: revision)) ?? []
-}
-
-private func intOption(_ options: [String: Any], _ key: String, _ fallback: Int) -> Int {
-  if let value = options[key] as? Int { return value }
-  if let value = options[key] as? Double { return Int(value) }
-  return fallback
-}
-
-private func floatOption(_ options: [String: Any], _ key: String, _ fallback: Float) -> Float {
-  if let value = options[key] as? Double { return Float(value) }
-  if let value = options[key] as? Float { return value }
-  return fallback
+  let known = (try? VNClassifyImageRequest.knownClassifications(forRevision: revision)) ?? []
+  return known.map { $0.identifier }
 }

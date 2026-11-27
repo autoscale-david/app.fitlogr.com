@@ -154,6 +154,98 @@ describe("photo pipeline", () => {
     expect(analysed.length).toBeLessThan(3);
     expect(result.counts.waiting).toBeGreaterThan(0);
   });
+
+  it("logs a fresh photo before it even classifies the backlog", async () => {
+    const photos = [photo("today", 0), ...Array.from({ length: 5 }, (_, index) => photo(`old-${index}`, 10 + index))];
+    const rows = new Map<string, PipelineRow>();
+    const order: string[] = [];
+    await runPipeline({
+      ...base(photos, rows),
+      nowMs: photo("today", 0).capturedAtMs + 60_000,
+      classify: async (item) => {
+        order.push(`classify:${item.id}`);
+        return { labels: [{ id: "food", confidence: 1 }] };
+      },
+      analyze: async (item) => {
+        order.push(`analyse:${item.id}`);
+        return { kind: "meal", name: item.id, kcal: 1 };
+      },
+    });
+    expect(order.slice(0, 3)).toEqual(["classify:today", "analyse:today", "classify:old-0"]);
+  });
+});
+
+describe("photo pipeline bookkeeping", () => {
+  it("persists classification before analysis and the result after it", async () => {
+    const photos = [photo("a", 0), photo("shot", 1, true)];
+    const rows = new Map<string, PipelineRow>();
+    const saved: string[] = [];
+    await runPipeline({
+      ...base(photos, rows),
+      persist: async (row) => {
+        saved.push(`${row.id}:${row.aiState}`);
+      },
+      analyze: async () => ({ kind: "meal", name: "A", kcal: 5, mealId: "m-a" }),
+    });
+    // "a" is from today, so it is sent before yesterday's screenshot is even looked at.
+    expect(saved).toEqual(["a:queued", "a:meal", "shot:not_sent"]);
+    expect(rows.get("a")?.analysedAt).toEqual(expect.any(String));
+  });
+
+  it("stops retrying a photo that keeps failing, and never re-classifies it for an analysis error", async () => {
+    const photos = [photo("bad", 0)];
+    const rows = new Map<string, PipelineRow>();
+    let classified = 0;
+    let sent = 0;
+    const once = () =>
+      runPipeline({
+        ...base(photos, rows),
+        classify: async () => {
+          classified += 1;
+          return { labels: [{ id: "food", confidence: 1 }] };
+        },
+        analyze: async () => {
+          sent += 1;
+          return { kind: "error", message: "Meal analysis failed" };
+        },
+      });
+    await once();
+    expect(rows.get("bad")).toMatchObject({ aiState: "error", attempts: 1 });
+    await once();
+    await once();
+    expect(rows.get("bad")).toMatchObject({ aiState: "failed", attempts: 3 });
+    await once();
+    expect(sent).toBe(3);
+    expect(classified).toBe(1);
+    expect(isFinalAudit(rows.get("bad")!)).toBe(true);
+  });
+
+  it("leaves a photo queued when another pass is already sending it", async () => {
+    const photos = [photo("busy", 0), photo("free", 1)];
+    const rows = new Map<string, PipelineRow>();
+    const result = await runPipeline({
+      ...base(photos, rows),
+      analyze: async (item) => (item.id === "busy" ? { kind: "skip" } : { kind: "meal", name: "Free", kcal: 1 }),
+    });
+    expect(rows.get("busy")?.aiState).toBe("queued");
+    expect(rows.get("free")?.aiState).toBe("meal");
+    expect(result.counts.waiting).toBe(1);
+  });
+
+  it("measures a rate-limit wait from when the limit was hit, not from when the pass began", async () => {
+    const photos = [photo("a", 0)];
+    const rows = new Map<string, PipelineRow>();
+    let now = 0;
+    const result = await runPipeline({
+      ...base(photos, rows),
+      clock: () => now,
+      analyze: async () => {
+        now += 90_000; // the pass had been running a while before the server said no
+        return { kind: "rate_limited", retryAfterSeconds: 60 };
+      },
+    });
+    expect(result.resumeAtMs).toBe(base(photos, rows).nowMs + 90_000 + 60_000);
+  });
 });
 
 function donePhoto(row: PipelineRow): PipelinePhoto {

@@ -17,23 +17,46 @@ interface BackgroundKit {
   subscribeToChanges?: (identifier: string, callback: () => void) => { remove: () => void };
 }
 
-// Module scope so a headless HealthKit launch registers observers before React mounts.
-if (Platform.OS === "ios") {
+let subscriptions: { remove: () => void }[] = [];
+
+/**
+ * Turns on Apple Health background delivery and watches for new samples. iOS then wakes the app
+ * (about hourly for a watch wearer, at once for a workout) and each wake runs one short pass.
+ * Called at launch, and again right after the person grants Apple Health access: observers
+ * registered before access was granted never fire. Never asks for permission itself.
+ */
+export function armHealthWake(): void {
+  if (Platform.OS !== "ios") return;
   const kit = loadHealthKitModule() as (ReturnType<typeof loadHealthKitModule> & BackgroundKit) | null;
-  if (kit?.enableBackgroundDelivery && kit.subscribeToChanges) {
-    const wake = () => {
-      void runPass({ reason: "healthkit", active: AppState.currentState === "active" });
-    };
-    for (const identifier of HOURLY_TYPES) {
-      void kit.enableBackgroundDelivery(identifier, HOURLY).catch(() => undefined);
-      kit.subscribeToChanges(identifier, wake);
-    }
-    for (const identifier of IMMEDIATE_TYPES) {
-      void kit.enableBackgroundDelivery(identifier, IMMEDIATE).catch(() => undefined);
-      kit.subscribeToChanges(identifier, wake);
+  if (!kit?.enableBackgroundDelivery || !kit.subscribeToChanges) return;
+  for (const subscription of subscriptions) {
+    try {
+      subscription.remove();
+    } catch {
+      // Already gone.
     }
   }
+  subscriptions = [];
+  // HealthKit also calls this once at every launch. With the app open that is an ordinary foreground pass.
+  const wake = () => {
+    const active = AppState.currentState === "active";
+    void runPass({ reason: active ? "foreground" : "healthkit", active });
+  };
+  const watch = (identifier: string, frequency: number) => {
+    try {
+      void kit.enableBackgroundDelivery?.(identifier, frequency).catch(() => undefined);
+      const subscription = kit.subscribeToChanges?.(identifier, wake);
+      if (subscription) subscriptions.push(subscription);
+    } catch {
+      // Apple Health is unavailable or access was not granted yet. Setup arms this again.
+    }
+  };
+  for (const identifier of HOURLY_TYPES) watch(identifier, HOURLY);
+  for (const identifier of IMMEDIATE_TYPES) watch(identifier, IMMEDIATE);
 }
+
+// Module scope so a headless HealthKit launch registers observers before React mounts.
+armHealthWake();
 
 TaskManager.defineTask(PASS_TASK, async () => {
   try {

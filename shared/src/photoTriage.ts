@@ -24,11 +24,12 @@ export interface PhotoTriagePolicy {
 }
 
 export const PHOTO_TRIAGE_POLICY: PhotoTriagePolicy = {
-  version: "2026-11-26",
+  version: "2026-11-27",
   foodLabels: ["food", "meal", "dish", "fruit", "vegetable", "dessert", "beverage"],
   workoutLabels: ["exercise_machine", "treadmill", "dumbbell", "barbell", "gym", "stationary_bike", "elliptical"],
   foodKeywords: ["food", "meal", "dish", "fruit", "vegetable", "drink", "beverage", "dessert", "cuisine", "snack", "bread", "pizza", "salad", "pasta", "coffee"],
-  workoutKeywords: ["gym", "exercise", "treadmill", "dumbbell", "barbell", "workout", "elliptical", "stationary_bike", "display", "screen"],
+  // No "screen" or "display": a photo of a monitor or a phone is far more often private than a gym console.
+  workoutKeywords: ["gym", "exercise", "treadmill", "dumbbell", "barbell", "workout", "elliptical", "stationary_bike"],
   foodThreshold: 0.2,
   workoutThreshold: 0.3,
   uncertainThreshold: 0.05,

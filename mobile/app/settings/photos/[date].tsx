@@ -6,9 +6,9 @@ import { DetailScreen, ui } from "../../../components/settingsUi";
 import { listAuditEntries, type AuditEntry, type AuditFilter } from "../../../services/engine/auditQuery";
 import { openFitlogrDatabase } from "../../../services/db";
 import { localDateISO } from "../../../services/dates";
+import { recordImport } from "../../../services/engine/photoPass";
 import { prepareLibraryPhoto } from "../../../services/photos/library";
 import { importPreparedPhoto } from "../../../services/photos/upload";
-import { api } from "../../../services/api";
 import { useStore } from "../../../services/store";
 import { colors } from "../../../theme";
 
@@ -27,6 +27,7 @@ export default function PhotoDayScreen() {
   const [rows, setRows] = useState<AuditEntry[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [working, setWorking] = useState(false);
 
   const load = useCallback(async () => {
     if (!date) return;
@@ -57,7 +58,7 @@ export default function PhotoDayScreen() {
           <View style={{ flex: 1 }}>
             <Text style={ui.cardTitle}>{clock(row.capturedAt)}</Text>
             <Text style={ui.body}>
-              {row.verdict ?? "unchecked"}
+              {verdictLine(row.verdict)}
               {row.labels[0] ? ` · ${row.labels[0].id} ${Math.round(row.labels[0].confidence * 100)}%` : ""}
             </Text>
             <Text style={ui.meta}>
@@ -81,36 +82,59 @@ export default function PhotoDayScreen() {
           {open.error ? <Text style={ui.error}>{open.error}</Text> : null}
           <Pressable
             style={ui.secondary}
+            disabled={working}
             onPress={() => {
+              setWorking(true);
+              setNote(null);
               void (async () => {
-                const db = await openFitlogrDatabase();
-                const prepared = await prepareLibraryPhoto(open.id);
-                const result = await importPreparedPhoto(db, prepared, {
-                  capturedAt: open.capturedAt ?? new Date().toISOString(),
-                  localDate: open.captureDate || localDateISO(),
-                  source: "device_library",
-                  assetId: open.id,
-                  forceMeal: true,
-                  onDeviceVerdict: open.verdict ?? undefined,
-                  onDeviceLabels: open.labels,
-                });
-                setNote(result.message);
-                await load();
+                try {
+                  const db = await openFitlogrDatabase();
+                  const prepared = await prepareLibraryPhoto(open.id);
+                  const capturedAtMs = open.capturedAt ? Date.parse(open.capturedAt) : Date.now();
+                  const result = await importPreparedPhoto(db, prepared, {
+                    capturedAt: new Date(capturedAtMs).toISOString(),
+                    localDate: open.captureDate || localDateISO(),
+                    source: "device_library",
+                    assetId: open.id,
+                    forceMeal: true,
+                    onDeviceVerdict: open.verdict ?? undefined,
+                    onDeviceLabels: open.labels,
+                  });
+                  // Update the log row too, so it shows the new result and the meal it created.
+                  await recordImport(db, { assetId: open.id, capturedAtMs, source: "library", preparedUri: prepared.uri, result });
+                  setNote(result.message);
+                  void store.sync(true);
+                } catch (error) {
+                  setNote(error instanceof Error ? error.message : "The photo could not be analyzed.");
+                } finally {
+                  setWorking(false);
+                  await load();
+                }
               })();
             }}
           >
-            <Text style={ui.secondaryText}>Analyse anyway</Text>
+            <Text style={ui.secondaryText}>{working ? "Analysing…" : "Analyse anyway"}</Text>
           </Pressable>
           <Pressable
             style={ui.secondary}
+            disabled={working}
             onPress={() => {
               void (async () => {
-                if (open.remotePhotoId) await api.send("POST", `/photos/${open.remotePhotoId}/exclude`, { reason: "not_meal" });
-                if (open.mealId) await store.deleteMeal(open.mealId, false, open.remotePhotoId);
-                const db = await openFitlogrDatabase();
-                await db.runAsync(`UPDATE local_media_assets SET scan_status = 'excluded', updated_at = ? WHERE local_asset_id = ?`, new Date().toISOString(), open.id);
-                setSelected(null);
-                await load();
+                try {
+                  // Deleting the meal also tells the server to exclude the photo, through the offline queue.
+                  if (open.mealId) await store.deleteMeal(open.mealId, false, open.remotePhotoId);
+                  const db = await openFitlogrDatabase();
+                  await db.runAsync(
+                    `UPDATE local_media_assets SET scan_status = 'excluded', meal_id = NULL, updated_at = ? WHERE local_asset_id = ?`,
+                    new Date().toISOString(),
+                    open.id,
+                  );
+                  setSelected(null);
+                } catch (error) {
+                  setNote(error instanceof Error ? error.message : "That could not be saved.");
+                } finally {
+                  await load();
+                }
               })();
             }}
           >
@@ -150,12 +174,49 @@ function PhotoThumb({ row, large }: { row: AuditEntry; large?: boolean }) {
   );
 }
 
+/** What the AI said, and what fitlogr did with it. The state decides; the model's word is detail. */
 function aiLine(row: AuditEntry): string {
-  if (row.aiState === "not_sent") return "not sent";
-  if (row.classification === "meal" || row.aiState === "meal") return "meal";
-  if (row.classification === "workout" || row.aiState === "workout") return "workout";
-  if (row.classification === "ignore" || row.aiState === "ignore") return "none";
-  return row.aiState;
+  switch (row.aiState) {
+    case "not_sent":
+      return "AI: not sent";
+    case "queued":
+      return "AI: waiting";
+    case "meal":
+      return "AI: meal · logged";
+    case "workout":
+      return "AI: workout";
+    case "ignore":
+      return row.classification === "meal" ? "AI: meal, too unsure to log" : "AI: none";
+    case "duplicate":
+      return "AI: already logged";
+    case "excluded":
+      return "AI: excluded";
+    case "error":
+      return "AI: error, will retry";
+    case "failed":
+      return "AI: failed";
+    default:
+      return `AI: ${row.aiState}`;
+  }
+}
+
+function verdictLine(verdict: string | null): string {
+  switch (verdict) {
+    case "food":
+      return "On phone: food";
+    case "workout":
+      return "On phone: workout";
+    case "uncertain":
+      return "On phone: unsure";
+    case "not_relevant":
+      return "On phone: not food";
+    case "screenshot":
+      return "On phone: screenshot";
+    case "unreadable":
+      return "On phone: could not read";
+    default:
+      return "On phone: not checked";
+  }
 }
 
 function clock(iso: string | null): string {

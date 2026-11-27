@@ -56,7 +56,6 @@ export async function runPhotoPipeline(
     return true;
   });
   const rows = await loadAuditMap(db, discovered.map((photo) => photo.id));
-  const before = new Map([...rows].map(([id, row]) => [id, JSON.stringify(row)]));
   const resumeRaw = await readSetting(db, RESUME_AT_KEY);
   const resumeAtMs = resumeRaw ? Number(resumeRaw) : null;
   const thumbs = new Map<string, string>();
@@ -73,11 +72,10 @@ export async function runPhotoPipeline(
     decide: decideLabels,
     analyze: async (photo, row) => analyzePhoto(db, photo, row, options.signal, thumbs, options.onMeal),
     toLocalDate: (ms) => localDateISO(new Date(ms)),
+    // Saved row by row: iOS can suspend the app mid-pass, and the next pass must pick up where this one stopped.
+    persist: (row) => saveAuditRow(db, row, thumbs.get(row.id) ?? null),
+    onProgress: options.onProgress,
   });
-  for (const [id, row] of rows) {
-    if (before.get(id) === JSON.stringify(row) && !thumbs.has(id)) continue;
-    await saveAuditRow(db, row, thumbs.get(id) ?? null);
-  }
   if (result.resumeAtMs) await writeSetting(db, RESUME_AT_KEY, String(result.resumeAtMs));
   else await writeSetting(db, RESUME_AT_KEY, "");
   options.onProgress?.(result.counts);
@@ -129,20 +127,35 @@ async function analyzePhoto(
     if (thumb) thumbs.set(photo.id, thumb);
     onMeal?.();
   }
-  return mapImport(result);
+  return outcomeFromImport(result);
 }
 
-function mapImport(result: ImportResult): AnalyzeOutcome {
+/** How one upload result is recorded in the photo log. Shared by the pipeline and by photos added by hand. */
+export function outcomeFromImport(result: ImportResult): AnalyzeOutcome {
   if (result.kind === "rate_limited") return { kind: "rate_limited", retryAfterSeconds: result.retryAfterSeconds, message: result.message };
   if (result.kind === "offline" || result.kind === "consent") return { kind: "paused", message: result.message };
   if (result.kind === "error") return { kind: "error", message: result.message };
-  if (result.kind === "duplicate" || result.kind === "skipped") {
-    return { kind: result.kind === "duplicate" ? "duplicate" : "excluded", message: result.message, remotePhotoId: result.remotePhotoId, classification: result.classification, estimate: result.estimate, confidence: result.confidence };
+  if (result.kind === "skipped") {
+    // Another pass is sending this photo, or already recorded it: leave the row as it is.
+    if (result.skipReason === "in_flight" || result.skipReason === "already_checked") return { kind: "skip" };
+    return { kind: result.skipReason === "server_non_meal" ? "ignore" : "excluded", message: result.message, remotePhotoId: result.remotePhotoId };
+  }
+  if (result.kind === "duplicate") {
+    return {
+      kind: "duplicate",
+      message: result.message,
+      remotePhotoId: result.remotePhotoId,
+      mealId: result.mealId,
+      classification: result.classification,
+      estimate: result.estimate,
+      confidence: result.confidence,
+    };
   }
   if (result.classification === "workout") {
     return { kind: "workout", remotePhotoId: result.remotePhotoId, classification: "workout", confidence: result.confidence, estimate: result.estimate, message: result.message };
   }
   if (result.kind === "not_meal") {
+    // The model can call a photo a meal and still not log it (low confidence, no items). Keep its word for it.
     return { kind: "ignore", remotePhotoId: result.remotePhotoId, classification: result.classification ?? "ignore", confidence: result.confidence, estimate: result.estimate, message: result.message };
   }
   return {
@@ -156,4 +169,53 @@ function mapImport(result: ImportResult): AnalyzeOutcome {
     estimate: result.estimate,
     message: result.message,
   };
+}
+
+/**
+ * Writes the photo-log row for a photo analysed outside a pass: one the person picked or took in the
+ * app, or "Analyse anyway" from the log. Keeps whatever the row already says about the on-device check.
+ */
+export async function recordImport(
+  db: SQLiteDatabase,
+  input: {
+    assetId: string;
+    capturedAtMs: number;
+    source: "library" | "camera" | "picker";
+    verdict?: string | null;
+    labels?: { id: string; confidence: number }[];
+    preparedUri?: string;
+    result: ImportResult;
+  },
+): Promise<void> {
+  const outcome = outcomeFromImport(input.result);
+  if (outcome.kind === "skip" || outcome.kind === "paused" || outcome.kind === "rate_limited") return;
+  const existing = (await loadAuditMap(db, [input.assetId])).get(input.assetId);
+  const classifier = getClassifier();
+  const now = new Date().toISOString();
+  let thumb: string | null = null;
+  if (outcome.kind === "meal" && outcome.mealId && input.preparedUri) thumb = await copyMealThumb(input.preparedUri, outcome.mealId);
+  await saveAuditRow(
+    db,
+    {
+      id: input.assetId,
+      capturedAtMs: input.capturedAtMs,
+      captureDate: localDateISO(new Date(input.capturedAtMs)),
+      source: existing?.source ?? input.source,
+      verdict: input.verdict ?? existing?.verdict ?? null,
+      labels: input.labels ?? existing?.labels ?? [],
+      classifierId: existing?.classifierId ?? classifier.id,
+      policyVersion: existing?.policyVersion ?? CLASSIFIER_POLICY_VERSION,
+      classifiedAt: existing?.classifiedAt ?? (input.labels ? now : null),
+      aiState: outcome.kind === "error" ? "error" : outcome.kind,
+      classification: outcome.classification ?? existing?.classification ?? null,
+      confidence: outcome.confidence ?? existing?.confidence ?? null,
+      estimate: outcome.estimate ?? existing?.estimate ?? null,
+      remotePhotoId: outcome.remotePhotoId ?? existing?.remotePhotoId ?? null,
+      mealId: outcome.mealId ?? existing?.mealId ?? null,
+      error: outcome.kind === "error" ? outcome.message ?? "The photo could not be analyzed" : null,
+      attempts: existing?.attempts ?? 0,
+      analysedAt: now,
+    },
+    thumb,
+  );
 }

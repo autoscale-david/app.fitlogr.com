@@ -230,9 +230,14 @@ export async function migrate(db: SQLiteDatabase): Promise<void> {
     "ALTER TABLE local_media_assets ADD COLUMN meal_id TEXT",
     "ALTER TABLE local_media_assets ADD COLUMN thumb_uri TEXT",
     "ALTER TABLE local_media_assets ADD COLUMN last_error TEXT",
+    "ALTER TABLE local_media_assets ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
   ]) {
     await addColumn(db, statement);
   }
+  // Photos handled by an earlier build have no capture date; without one they never show in the photo log.
+  await db.execAsync(
+    "UPDATE local_media_assets SET capture_date = date(captured_at, 'localtime') WHERE capture_date IS NULL AND captured_at IS NOT NULL",
+  );
   await db.execAsync("CREATE INDEX IF NOT EXISTS idx_local_media_capture_date ON local_media_assets(capture_date)");
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS pass_log (

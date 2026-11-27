@@ -1,5 +1,5 @@
-import { useCallback, useState } from "react";
-import { ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useState } from "react";
+import { ActivityIndicator, AppState, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { router, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { getClassifier } from "../services/engine/classifier";
@@ -20,7 +20,6 @@ export default function SetupScreen() {
   const [note, setNote] = useState<string | null>(null);
   const [photos, setPhotos] = useState<LibraryAccess | null>(null);
   const [days, setDays] = useState<90 | 365>(90);
-  const [progress, setProgress] = useState<string | null>(null);
   const classifier = getClassifier();
 
   const refresh = useCallback(async () => {
@@ -37,6 +36,14 @@ export default function SetupScreen() {
     }, [refresh]),
   );
 
+  // Coming back from iOS Settings does not refocus the screen, so re-check photo access on return.
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") void refresh();
+    });
+    return () => subscription.remove();
+  }, [refresh]);
+
   function next() {
     setNote(null);
     setStep((current) => Math.min(STEPS.length - 1, current + 1));
@@ -45,14 +52,8 @@ export default function SetupScreen() {
   async function finish() {
     await store.writeLocal("setup_done", "1");
     await store.writeLocal("photo_history_days", String(days));
-    if (store.mode !== "account") {
-      router.replace("/");
-      return;
-    }
-    setBusy(true);
-    const result = await runPass({ reason: "setup", active: true, historyDays: days });
-    setProgress(result.photos?.message ?? "Automatic logging is on.");
-    setBusy(false);
+    // The first pass over months of photos takes minutes. It runs on while the Log shows its progress.
+    if (store.mode === "account") void runPass({ reason: "setup", active: true, historyDays: days });
     router.replace("/");
   }
 
@@ -96,23 +97,25 @@ export default function SetupScreen() {
             <Text style={ui.body}>Limited access only sees photos you picked. New meals will be missed until you allow all photos.</Text>
           ) : null}
           {!store.photoConsent ? (
-            <Pressable
-              style={ui.primary}
-              onPress={() => {
-                void store.acceptPhotoConsent().then(next);
-              }}
-            >
+            // Two taps on this step: agree first, then iOS asks for photo access.
+            <Pressable style={ui.primary} onPress={() => void store.acceptPhotoConsent()}>
               <Text style={ui.primaryText}>Agree to photo analysis</Text>
+            </Pressable>
+          ) : photos === "full" ? (
+            <Pressable style={ui.primary} onPress={next}>
+              <Text style={ui.primaryText}>Continue</Text>
             </Pressable>
           ) : (
             <Pressable
               style={ui.primary}
               onPress={() => {
-                void libraryAccess(true).then((access) => {
-                  setPhotos(access);
-                  if (access === "full") next();
-                  else if (access === "limited" || access === "denied") void Linking.openSettings();
-                });
+                void libraryAccess(true)
+                  .then((access) => {
+                    setPhotos(access);
+                    if (access === "full") next();
+                    else if (access === "limited" || access === "denied") void Linking.openSettings();
+                  })
+                  .catch(() => setNote("Photo access needs the fitlogr iPhone app."));
               }}
             >
               <Text style={ui.primaryText}>{photos === "limited" || photos === "denied" ? "Open Settings" : "Allow all photos"}</Text>
@@ -180,9 +183,8 @@ export default function SetupScreen() {
       {step === 5 ? (
         <>
           <Text style={ui.body}>That's the setup. fitlogr will log new meals when you open it, and when the phone allows a background refresh.</Text>
-          {progress ? <Text style={ui.body}>{progress}</Text> : null}
-          <Pressable style={ui.primary} disabled={busy} onPress={() => void finish()}>
-            {busy ? <ActivityIndicator color="#062214" /> : <Text style={ui.primaryText}>Start logging</Text>}
+          <Pressable style={ui.primary} onPress={() => void finish()}>
+            <Text style={ui.primaryText}>Start logging</Text>
           </Pressable>
         </>
       ) : null}

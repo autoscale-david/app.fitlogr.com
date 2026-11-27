@@ -12,9 +12,12 @@ export interface NativeClassification {
 }
 
 export interface PhotoClassifierNative {
-  classifyAssets(assetIds: string[], options: { maxLabels: number; minConfidence: number }): Promise<NativeClassification[]>;
-  classifyFile(uri: string, options: { maxLabels: number; minConfidence: number }): Promise<NativeClassification>;
+  classifyAssets(assetIds: string[], maxLabels: number, minConfidence: number): Promise<NativeClassification[]>;
+  classifyFile(uri: string, maxLabels: number, minConfidence: number): Promise<NativeClassification>;
   supportedLabels(): string[];
+  /** Asks iOS for about 30 more seconds of background time. Pass the id to `endBackgroundWork`. */
+  beginBackgroundWork(name: string): Promise<number>;
+  endBackgroundWork(id: number): Promise<void>;
 }
 
 export default requireOptionalNativeModule<PhotoClassifierNative>("PhotoClassifier");

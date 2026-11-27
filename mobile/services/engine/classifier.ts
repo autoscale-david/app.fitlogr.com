@@ -11,17 +11,16 @@ export interface PhotoClassifier {
   supportedLabels(): string[];
 }
 
-const OPTIONS = { maxLabels: 8, minConfidence: 0.05 };
+/**
+ * Vision returns a parent label ("food") alongside the specific ones, and a busy photo can have many
+ * labels above the floor. Keep enough of them that a food label is not cut off by the list length.
+ */
+const MAX_LABELS = 40;
+const MIN_CONFIDENCE = 0.05;
+/** A photo that never answers must not hang the pass: every later pass would wait on it. */
+const CLASSIFY_TIMEOUT_MS = 20_000;
 
-const native: PhotoClassifierNative | null = loadNative();
-
-function loadNative(): PhotoClassifierNative | null {
-  try {
-    return nativeModule;
-  } catch {
-    return null;
-  }
-}
+const native: PhotoClassifierNative | null = nativeModule ?? null;
 
 /** Apple Vision when the native module is in the binary. Otherwise automatic scanning is off. */
 export function getClassifier(): PhotoClassifier {
@@ -43,7 +42,7 @@ export function getClassifier(): PhotoClassifier {
     available: true,
     async classifyAsset(assetId) {
       try {
-        const [first] = await native.classifyAssets([assetId], OPTIONS);
+        const [first] = await withTimeout(native.classifyAssets([assetId], MAX_LABELS, MIN_CONFIDENCE));
         if (!first) return { error: "Classifier returned nothing" };
         if (first.error) return { error: first.error };
         return { labels: first.labels ?? [] };
@@ -53,7 +52,7 @@ export function getClassifier(): PhotoClassifier {
     },
     async classifyFile(uri) {
       try {
-        const result = await native.classifyFile(uri, OPTIONS);
+        const result = await withTimeout(native.classifyFile(uri, MAX_LABELS, MIN_CONFIDENCE));
         if (result.error) return { error: result.error };
         return { labels: result.labels ?? [] };
       } catch (error) {
@@ -68,6 +67,40 @@ export function getClassifier(): PhotoClassifier {
       }
     },
   };
+}
+
+function withTimeout<T>(work: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("The photo took too long to load")), CLASSIFY_TIMEOUT_MS);
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+/**
+ * Asks iOS for about 30 seconds of background time, runs `work`, then gives the time back. Without
+ * this iOS suspends a background-woken app within seconds, in the middle of an upload.
+ */
+export async function withBackgroundTime<T>(name: string, work: () => Promise<T>): Promise<T> {
+  let id: number | null = null;
+  try {
+    id = native ? await native.beginBackgroundWork(name) : null;
+  } catch {
+    id = null;
+  }
+  try {
+    return await work();
+  } finally {
+    if (native && id !== null) await native.endBackgroundWork(id).catch(() => undefined);
+  }
 }
 
 export function decideLabels(labels: PipelineLabel[]): { verdict: string; send: boolean } {
