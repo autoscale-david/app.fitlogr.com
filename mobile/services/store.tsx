@@ -45,6 +45,7 @@ import {
   type HistoryScanResult,
   type LibraryAccess,
 } from "./photos";
+import { decideLabels, getClassifier } from "./engine/classifier";
 import { subscribeEngine, runPass } from "./engine/runPass";
 import { runPhotoPipeline } from "./engine/photoPass";
 import { queueMeal, queueMealDelete, queuePhotoExclude, queueSettings, queueWeight, syncAccount } from "./sync";
@@ -483,7 +484,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (!db || mode !== "account") return "Sign in with Google before analyzing a meal photo.";
         const prepared = await prepareMealImage(uri);
         const when = captured ?? capturedToday();
-        const result = await importPreparedPhoto(db, prepared, { ...when, source: "manual", forceMeal: true });
+        const classifier = getClassifier();
+        let onDeviceVerdict: string | undefined;
+        let onDeviceLabels: { id: string; confidence: number }[] | undefined;
+        if (classifier.available) {
+          const classified = await classifier.classifyFile(prepared.uri);
+          if (!("error" in classified)) {
+            onDeviceLabels = classified.labels;
+            onDeviceVerdict = decideLabels(classified.labels).verdict;
+          }
+        }
+        const result = await importPreparedPhoto(db, prepared, {
+          ...when,
+          source: "manual",
+          forceMeal: true,
+          onDeviceVerdict,
+          onDeviceLabels,
+        });
         // The meal is already in the local log. Refresh before sync so a picker blur cannot skip the update.
         setRefreshToken((token) => token + 1);
         try {

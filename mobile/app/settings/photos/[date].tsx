@@ -129,12 +129,25 @@ export default function PhotoDayScreen() {
 }
 
 function PhotoThumb({ row, large }: { row: AuditEntry; large?: boolean }) {
-  const uri = row.thumbUri || (row.id.startsWith("ph://") || row.id.startsWith("file") ? row.id : null);
+  // Rejected photos are shown from the library id only. fitlogr does not keep a copy of them.
+  const uri = row.thumbUri || (row.id.startsWith("ph://") || row.id.startsWith("file:") ? row.id : null);
   const size = large ? 220 : 56;
-  if (!uri || row.aiState === "not_sent") {
-    return <View style={[styles.thumb, { width: size, height: size }]}><Text style={styles.placeholder}>Photo</Text></View>;
+  const [failed, setFailed] = useState(false);
+  if (!uri || failed) {
+    return (
+      <View style={[styles.thumb, { width: size, height: size }]}>
+        <Text style={styles.placeholder}>Photo</Text>
+      </View>
+    );
   }
-  return <Image source={{ uri }} style={{ width: size, height: size, borderRadius: 10, backgroundColor: "#222428" }} contentFit="cover" />;
+  return (
+    <Image
+      source={{ uri }}
+      style={{ width: size, height: size, borderRadius: 10, backgroundColor: "#222428" }}
+      contentFit="cover"
+      onError={() => setFailed(true)}
+    />
+  );
 }
 
 function aiLine(row: AuditEntry): string {
