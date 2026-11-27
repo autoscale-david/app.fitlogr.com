@@ -319,6 +319,54 @@ describe("photo pipeline bookkeeping", () => {
     });
     expect(result.resumeAtMs).toBe(base(photos, rows).nowMs + 90_000 + 60_000);
   });
+
+  it("forgets a rate limit that has passed, even when photos are still waiting", async () => {
+    const photos = [photo("a", 0), photo("b", 1), photo("c", 2)];
+    const rows = new Map<string, PipelineRow>();
+    const limited = await runPipeline({
+      ...base(photos, rows),
+      analyze: async () => ({ kind: "rate_limited", retryAfterSeconds: 60 }),
+    });
+    expect(limited.resumeAtMs).not.toBeNull();
+    // Ten minutes later the limit is over, but the phone is offline.
+    const offline = await runPipeline({
+      ...base(photos, rows),
+      nowMs: base(photos, rows).nowMs + 10 * 60_000,
+      resumeAtMs: limited.resumeAtMs,
+      analyze: async () => ({ kind: "paused" }),
+    });
+    expect(offline.counts.waiting).toBe(3);
+    expect(offline.resumeAtMs).toBeNull();
+  });
+
+  it("a photo that cannot be loaded is not a failed analysis: no wait, and it does not end the pass", async () => {
+    const photos = [photo("gone-1", 0), photo("gone-2", 1), photo("gone-3", 2), photo("fine", 3)];
+    const rows = new Map<string, PipelineRow>();
+    const first = await runPipeline({
+      ...base(photos, rows),
+      analyze: async (item) =>
+        item.id === "fine" ? { kind: "meal", name: "Fine", kcal: 1 } : { kind: "error", local: true, message: "Still in iCloud" },
+    });
+    // Three in a row did not trip the outage breaker, and nothing counted as analysed but the meal.
+    expect(rows.get("fine")?.aiState).toBe("meal");
+    expect(first.counts.analysed).toBe(1);
+    expect(rows.get("gone-1")).toMatchObject({ aiState: "error", attempts: 0, analysedAt: null });
+
+    // The very next pass tries them again, without classifying again.
+    let classified = 0;
+    const second = await runPipeline({
+      ...base(photos, rows),
+      nowMs: base(photos, rows).nowMs + 1000,
+      classify: async () => {
+        classified += 1;
+        return { labels: [{ id: "food", confidence: 1 }] };
+      },
+      analyze: async (item) => ({ kind: "meal", name: item.id, kcal: 1 }),
+    });
+    expect(classified).toBe(0);
+    expect(second.counts.waiting).toBe(0);
+    expect([...rows.values()].every((row) => row.aiState === "meal")).toBe(true);
+  });
 });
 
 function donePhoto(row: PipelineRow): PipelinePhoto {

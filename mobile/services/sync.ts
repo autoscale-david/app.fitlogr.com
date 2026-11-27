@@ -76,21 +76,36 @@ export interface SyncOutcome {
 }
 
 let syncing: Promise<SyncOutcome> | null = null;
+let followUp: Promise<SyncOutcome> | null = null;
+let followUpForce = false;
 
 /**
  * One at a time. The screen and the background engine both sync; two drains running together
- * would send the same queued changes twice. A second caller waits for the one in progress.
+ * would send the same queued changes twice. A call made during a sync gets one more run right after
+ * it, because the running one may already have read the outbox and would miss the caller's change.
  */
 export function syncAccount(db: SQLiteDatabase, force: boolean): Promise<SyncOutcome> {
-  syncing ??= (async () => {
-    await pushPhotoConsent(db);
-    const rejected = await drainOutbox(db, force);
-    await pullChanges(db);
-    return { rejected };
-  })().finally(() => {
-    syncing = null;
-  });
-  return syncing;
+  if (!syncing) {
+    syncing = (async () => {
+      await pushPhotoConsent(db);
+      const rejected = await drainOutbox(db, force);
+      await pullChanges(db);
+      return { rejected };
+    })().finally(() => {
+      syncing = null;
+    });
+    return syncing;
+  }
+  followUpForce ||= force;
+  followUp ??= syncing
+    .catch(() => undefined)
+    .then(() => {
+      const again = followUpForce;
+      followUp = null;
+      followUpForce = false;
+      return syncAccount(db, again);
+    });
+  return followUp;
 }
 
 async function pushPhotoConsent(db: SQLiteDatabase): Promise<void> {

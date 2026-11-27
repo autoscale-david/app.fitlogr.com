@@ -26,10 +26,12 @@ export async function runPhotoPipeline(
     budgetMs: number;
     ask: boolean;
     /**
-     * For a pass started with the app open: end it when the app leaves the foreground. Otherwise iOS
+     * For a pass started with the app open: end it when the app goes to the background. Otherwise iOS
      * freezes it mid-run and every later background wake would join that stale, unlimited pass.
      */
-    stopWhenInactive?: boolean;
+    stopInBackground?: boolean;
+    /** Called when `stopInBackground` ends the pass. */
+    onLeftForeground?: () => void;
     signal?: AbortSignal;
     onProgress?: (counts: PipelineCounts) => void;
     onMeal?: () => void;
@@ -82,13 +84,22 @@ export async function runPhotoPipeline(
     // Saved row by row: iOS can suspend the app mid-pass, and the next pass must pick up where this one stopped.
     persist: (row) => saveAuditRow(db, row, thumbs.get(row.id) ?? null),
     onProgress: options.onProgress,
-    shouldStop: () => options.signal?.aborted === true || (options.stopWhenInactive === true && AppState.currentState !== "active"),
+    shouldStop: () => {
+      if (options.signal?.aborted) return true;
+      // Only "background". iOS also reports "inactive" for a permission prompt, Control Center and
+      // the app switcher, and none of those should end an import.
+      if (options.stopInBackground && AppState.currentState === "background") {
+        options.onLeftForeground?.();
+        return true;
+      }
+      return false;
+    },
     isFatal: (error) => error instanceof SessionExpired,
   });
   if (result.resumeAtMs) await writeSetting(db, RESUME_AT_KEY, String(result.resumeAtMs));
   else await writeSetting(db, RESUME_AT_KEY, "");
   options.onProgress?.(result.counts);
-  const waitSeconds = result.resumeAtMs ? Math.max(1, Math.ceil((result.resumeAtMs - Date.now()) / 1000)) : 0;
+  const waitSeconds = result.resumeAtMs ? Math.ceil((result.resumeAtMs - Date.now()) / 1000) : 0;
   const message = waitSeconds > 0 && result.counts.waiting > 0 ? `${pipelineMessage(result.counts)}. ${rateLimitMessage(waitSeconds)}` : pipelineMessage(result.counts);
   return { ...result, access, message };
 }
@@ -129,7 +140,7 @@ async function analyzePhoto(
     prepared = await prepareLibraryPhoto(photo.id);
   } catch (error) {
     // Nothing was sent: the photo may still be in iCloud, or the phone is locked. Tried again later.
-    return { kind: "error", message: error instanceof Error ? error.message : "The photo could not be loaded" };
+    return { kind: "error", local: true, message: error instanceof Error ? error.message : "The photo could not be loaded" };
   }
   const result = await importPreparedPhoto(db, prepared, {
     capturedAt: new Date(photo.capturedAtMs).toISOString(),
@@ -236,7 +247,8 @@ export async function recordImport(
       remotePhotoId: outcome.remotePhotoId ?? existing?.remotePhotoId ?? null,
       mealId: outcome.mealId ?? existing?.mealId ?? null,
       error: outcome.kind === "error" ? outcome.message ?? "The photo could not be analyzed" : null,
-      attempts: existing?.attempts ?? 0,
+      // A failed try counts, so the automatic retries wait longer each time.
+      attempts: (existing?.attempts ?? 0) + (outcome.kind === "error" && !outcome.local ? 1 : 0),
       analysedAt: now,
     },
     thumb,

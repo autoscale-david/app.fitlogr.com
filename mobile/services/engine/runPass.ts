@@ -52,7 +52,16 @@ function emit(event: EngineEvent): void {
   for (const listener of listeners) listener(event);
 }
 
-let inflight: { promise: Promise<PassResult>; long: boolean } | null = null;
+interface Running {
+  promise: Promise<PassResult>;
+  long: boolean;
+  /** Started with the app open. It ends itself in the background, so it cannot serve a background wake. */
+  foregroundOnly: boolean;
+  /** It has seen the app go to the background and is winding down. */
+  leaving: boolean;
+}
+
+let inflight: Running | null = null;
 let queued: { promise: Promise<PassResult>; request: PassRequest } | null = null;
 let resumeTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -60,14 +69,21 @@ let resumeTimer: ReturnType<typeof setTimeout> | null = null;
  * One pass at a time. A call made while a pass is running joins it, unless it asks for more than
  * that pass does: a foreground, setup, or manual request behind a short background pass gets its
  * own pass right after. Without that, the 20-second pass iOS triggers at launch would swallow the
- * full pass the open app needs. The follow-up uses the most recent request's options.
+ * full pass the open app needs. The same goes for a background wake that finds a pass left over
+ * from when the app was open: that pass is about to end itself, so the wake gets its own.
+ * The follow-up uses the most recent request's options, unless that request asks for less.
  */
 export function runPass(request: PassRequest): Promise<PassResult> {
   if (!inflight) return start(request);
-  const wantsMore = (isLong(request.reason) && !inflight.long) || request.reason === "setup" || request.reason === "manual";
+  const wantsMore =
+    (isLong(request.reason) && !inflight.long) ||
+    request.reason === "setup" ||
+    request.reason === "manual" ||
+    inflight.leaving ||
+    (request.active === false && inflight.foregroundOnly);
   if (!wantsMore) return inflight.promise;
   if (queued) {
-    queued.request = request;
+    if (weight(request) >= weight(queued.request)) queued.request = request;
     return queued.promise;
   }
   const entry: { promise: Promise<PassResult>; request: PassRequest } = {
@@ -83,23 +99,35 @@ export function runPass(request: PassRequest): Promise<PassResult> {
   return entry.promise;
 }
 
+/** A background wake must not replace a queued import, and a plain foreground pass must not replace a manual one. */
+function weight(request: PassRequest): number {
+  if (request.active === false || !isLong(request.reason)) return 0;
+  return request.reason === "foreground" ? 1 : 2;
+}
+
 function start(request: PassRequest): Promise<PassResult> {
   const long = isLong(request.reason);
+  const background = request.active === false || !long;
   const budgetMs = request.budgetMs ?? (long ? Number.POSITIVE_INFINITY : BACKGROUND_BUDGET_MS);
-  const work = () => execute({ ...request, budgetMs });
+  const entry: Running = { promise: Promise.resolve({ ran: false, photos: null, error: null }), long, foregroundOnly: !background, leaving: false };
+  const work = () =>
+    execute({ ...request, budgetMs }, () => {
+      entry.leaving = true;
+    });
   // A background-woken app is suspended within seconds unless it asks iOS for time.
-  const promise = (request.active === false || !long ? withBackgroundTime("fitlogr-pass", work) : work()).finally(() => {
-    inflight = null;
+  entry.promise = (background ? withBackgroundTime("fitlogr-pass", work) : work()).finally(() => {
+    if (inflight === entry) inflight = null;
   });
-  inflight = { promise, long };
-  return promise;
+  inflight = entry;
+  return entry.promise;
 }
 
 /** After a rate limit, continue by itself once the limit resets, as long as the app is still open. */
 function scheduleResume(resumeAtMs: number | null): void {
   if (resumeTimer) clearTimeout(resumeTimer);
   resumeTimer = null;
-  if (!resumeAtMs) return;
+  // A time already past means the limit is over, and the pass that just ran was free to send.
+  if (!resumeAtMs || resumeAtMs <= Date.now()) return;
   const delay = Math.min(Math.max(resumeAtMs - Date.now(), 0) + 2000, 6 * 60 * 60 * 1000);
   resumeTimer = setTimeout(() => {
     resumeTimer = null;
@@ -170,7 +198,7 @@ function sessionEnded(): PassResult {
   return { ran: false, photos: null, error: "session" };
 }
 
-async function execute(request: PassRequest & { budgetMs: number }): Promise<PassResult> {
+async function execute(request: PassRequest & { budgetMs: number }, onLeftForeground: () => void): Promise<PassResult> {
   const started = Date.now();
   const db = await openFitlogrDatabase();
   if ((await readMode(db)) !== "account") return { ran: false, photos: null, error: null };
@@ -211,7 +239,8 @@ async function execute(request: PassRequest & { budgetMs: number }): Promise<Pas
       days: request.historyDays,
       budgetMs: request.budgetMs,
       ask: active && (request.reason === "setup" || request.reason === "manual"),
-      stopWhenInactive: active && isLong(request.reason),
+      stopInBackground: active && isLong(request.reason),
+      onLeftForeground,
       signal: request.signal,
       onProgress: (counts) => emit({ type: "progress", counts, message: pipelineMessage(counts), running: true }),
       onMeal: () => emit({ type: "state" }),

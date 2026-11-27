@@ -60,6 +60,11 @@ export interface AnalyzeOutcome {
    * sending it again cannot work. Anything else (an outage, a model hiccup) is retried later.
    */
   permanent?: boolean;
+  /**
+   * For `error`: the photo could not be loaded on the phone (still in iCloud, phone locked), so
+   * nothing was sent. It does not count as a failed analysis and is tried again on the next pass.
+   */
+  local?: boolean;
 }
 
 export interface LoggedMeal {
@@ -255,6 +260,12 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
         await save({ ...row, error: outcome.message ?? "Photo analysis limit reached" });
         return;
       }
+      if (outcome.kind === "error" && outcome.local) {
+        // Out of the queue for this pass only. No wait, and no sign that the service is down.
+        run.errors += 1;
+        await save({ ...row, aiState: "error", error: outcome.message ?? "The photo could not be loaded" });
+        continue;
+      }
       run.analysed += 1;
       if (outcome.kind === "error") {
         run.errors += 1;
@@ -307,7 +318,9 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
   await drain();
 
   const final = counts();
-  if (canSend && !run.hitLimit && final.waiting === 0) resumeAtMs = null;
+  // A limit that has passed is forgotten even when photos are still waiting for another reason
+  // (offline, an outage, a cancelled import). Keeping it would report a limit that is not there.
+  if (canSend && !run.hitLimit) resumeAtMs = null;
   return { counts: final, resumeAtMs, logged, stoppedForBudget: run.stoppedForBudget || run.paused };
 }
 
