@@ -13,7 +13,7 @@ const config: ExpoConfig = {
   slug: "fitlogr",
   owner: "davidcgweb",
   scheme: "fitlogr",
-  version: "0.1.0",
+  version: "0.2.0",
   orientation: "portrait",
   icon: "./assets/logo.png",
   userInterfaceStyle: "dark",
