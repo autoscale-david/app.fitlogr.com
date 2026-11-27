@@ -4,7 +4,7 @@ import { readSetting, writeSetting } from "../db";
 import { libraryAccess, prepareLibraryPhoto, walkLibraryPhotos, type LibraryAccess } from "../photos/library";
 import { importPreparedPhoto, type ImportResult } from "../photos/upload";
 import { loadAuditMap, saveAuditRow } from "./audit";
-import { STUB_POLICY_VERSION, getClassifier } from "./classifier";
+import { CLASSIFIER_POLICY_VERSION, decideLabels, getClassifier } from "./classifier";
 import { runPipeline, type AnalyzeOutcome, type PipelineCounts, type PipelinePhoto, type PipelineResult } from "./pipeline";
 import { copyMealThumb } from "./thumbs";
 
@@ -68,9 +68,9 @@ export async function runPhotoPipeline(
     resumeAtMs: Number.isFinite(resumeAtMs) ? resumeAtMs : null,
     source: "library",
     classifierId: classifier.id,
-    policyVersion: STUB_POLICY_VERSION,
+    policyVersion: CLASSIFIER_POLICY_VERSION,
     classify: (photo) => classifier.classifyAsset(photo.id),
-    decide: () => ({ verdict: "food", send: true }),
+    decide: decideLabels,
     analyze: async (photo, row) => analyzePhoto(db, photo, row, options.signal, thumbs, options.onMeal),
     toLocalDate: (ms) => localDateISO(new Date(ms)),
   });

@@ -17,6 +17,7 @@
     "@fitlogr/shared": "*",
     "@kingstinct/react-native-healthkit": "^16.2.0",
     "expo": "~58.0.26",
+    "photo-classifier": "file:./modules/photo-classifier",
     "expo-constants": "~58.0.16",
     "expo-crypto": "~58.0.8",
     "expo-dev-client": "~58.0.21",

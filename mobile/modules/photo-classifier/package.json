@@ -1,0 +1,9 @@
+{
+  "name": "photo-classifier",
+  "version": "0.2.0",
+  "description": "On-device Apple Vision classifier for fitlogr photos",
+  "main": "index.ts",
+  "peerDependencies": {
+    "expo": "*"
+  }
+}
