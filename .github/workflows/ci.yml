@@ -17,5 +17,5 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      - name: Validate D1 migration
-        run: sqlite3 :memory: < worker/migrations/0001_initial.sql
+      - name: Validate D1 migrations in order
+        run: cat worker/migrations/*.sql | sqlite3 :memory:

@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import type { MaintenanceEstimate } from "@fitlogr/shared";
+import { formatKcal, formatMonthDay, PLAN_LIMITS, type MaintenanceEstimate } from "@fitlogr/shared";
 import { api } from "../services/api";
 import { useStore } from "../services/store";
+import { ui } from "./settingsUi";
 import { colors, LB_PER_KG } from "../theme";
 
 export function MaintenanceEstimateCard() {
@@ -10,15 +11,14 @@ export function MaintenanceEstimateCard() {
   const [estimate, setEstimate] = useState<MaintenanceEstimate | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [applied, setApplied] = useState<number | null>(null);
   const imperial = store.goals?.unitSystem !== "metric";
+  const signedIn = store.mode === "account";
 
   async function load() {
-    if (store.mode !== "account") {
-      setError("Sign in to estimate base calories from your history.");
-      return;
-    }
     setBusy(true);
     setError(null);
+    setApplied(null);
     try {
       setEstimate(await api.send<MaintenanceEstimate>("GET", "/settings/maintenance-estimate?days=90"));
     } catch (loadError) {
@@ -30,15 +30,19 @@ export function MaintenanceEstimateCard() {
 
   function apply() {
     if (!store.goals || estimate?.estimated_base_calories == null) return;
-    void store.saveGoals({ ...store.goals, baseKcal: estimate.estimated_base_calories });
+    const maintenanceCalories = Math.min(PLAN_LIMITS.maintenanceMax, Math.max(PLAN_LIMITS.maintenanceMin, Math.round(estimate.estimated_base_calories)));
+    void store.saveGoals({ ...store.goals, plan: { ...store.goals.plan, maintenanceCalories } }).then(() => setApplied(maintenanceCalories));
   }
 
   return (
     <View style={styles.wrap}>
-      <Text style={styles.label}>Estimate base calories from history</Text>
-      <Pressable style={styles.button} onPress={() => void load()} disabled={busy}>
-        {busy ? <ActivityIndicator color="#062214" /> : <Text style={styles.buttonText}>Estimate from the last 90 days</Text>}
-      </Pressable>
+      {signedIn ? (
+        <Pressable style={styles.button} onPress={() => void load()} disabled={busy} accessibilityRole="button">
+          {busy ? <ActivityIndicator color={colors.text} /> : <Text style={styles.buttonText}>Estimate from my last 90 days</Text>}
+        </Pressable>
+      ) : (
+        <Text style={styles.body}>Sign in to estimate your baseline from logged meals, burn, and weight.</Text>
+      )}
       {error ? <Text style={styles.body}>{error}</Text> : null}
       {estimate ? (
         <View style={styles.result}>
@@ -46,15 +50,15 @@ export function MaintenanceEstimateCard() {
             <Text style={styles.body}>{estimate.missing_reason}</Text>
           ) : (
             <>
-              <Text style={styles.value}>Base calories {estimate.estimated_base_calories?.toLocaleString()}</Text>
-              <Text style={styles.body}>Total maintenance (TDEE) {estimate.estimated_tdee_calories?.toLocaleString()} kcal</Text>
+              <Text style={styles.value}>Estimated baseline {estimate.estimated_base_calories != null ? formatKcal(estimate.estimated_base_calories) : ""} kcal</Text>
+              <Text style={styles.body}>Average burn with workouts {estimate.estimated_tdee_calories != null ? formatKcal(estimate.estimated_tdee_calories) : ""} kcal/day</Text>
               <Text style={styles.body}>
                 Confidence {estimate.confidence}. {estimate.total_complete_days} complete days across {estimate.qualifying_period_count} period
                 {estimate.qualifying_period_count === 1 ? "" : "s"}.
               </Text>
               {estimate.periods.map((period) => (
                 <Text key={`${period.start_date}-${period.end_date}`} style={styles.body}>
-                  {period.start_date} to {period.end_date}: {formatDelta(period.weight_delta_kg, imperial)} over {period.days} days
+                  {formatMonthDay(period.start_date)} – {formatMonthDay(period.end_date)}: {formatDelta(period.weight_delta_kg, imperial)} over {period.days} days
                 </Text>
               ))}
             </>
@@ -64,9 +68,11 @@ export function MaintenanceEstimateCard() {
               {warning}
             </Text>
           ))}
-          {estimate.estimated_base_calories != null ? (
-            <Pressable style={styles.secondary} onPress={apply}>
-              <Text style={styles.secondaryText}>Apply to base calories</Text>
+          {applied != null ? (
+            <Text style={styles.applied}>Maintenance calories set to {formatKcal(applied)}.</Text>
+          ) : estimate.estimated_base_calories != null ? (
+            <Pressable style={styles.secondary} onPress={apply} accessibilityRole="button">
+              <Text style={styles.secondaryText}>Use as maintenance calories</Text>
             </Pressable>
           ) : null}
         </View>
@@ -83,13 +89,13 @@ function formatDelta(kg: number, imperial: boolean): string {
 }
 
 const styles = StyleSheet.create({
-  wrap: { marginTop: 16 },
-  label: { color: colors.text, fontSize: 15, fontWeight: "700" },
-  body: { color: colors.muted, marginTop: 6, lineHeight: 20 },
-  value: { color: colors.text, marginTop: 10, fontSize: 18, fontWeight: "800" },
-  result: { marginTop: 4 },
-  button: { marginTop: 10, backgroundColor: colors.green, borderRadius: 12, paddingVertical: 12, alignItems: "center" },
-  buttonText: { color: "#062214", fontWeight: "800" },
-  secondary: { marginTop: 10, borderRadius: 12, borderWidth: 1, borderColor: "#2E3338", paddingVertical: 12, alignItems: "center" },
-  secondaryText: { color: colors.text, fontWeight: "700" },
+  wrap: { marginTop: 2 },
+  body: ui.body,
+  value: { color: colors.text, marginTop: 8, fontSize: 16, fontWeight: "800" },
+  result: { marginTop: 2 },
+  button: ui.secondary,
+  buttonText: ui.secondaryText,
+  secondary: ui.secondary,
+  applied: { color: colors.green, fontSize: 13, fontWeight: "700", marginTop: 8 },
+  secondaryText: ui.secondaryText,
 });

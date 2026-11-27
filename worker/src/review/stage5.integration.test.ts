@@ -8,8 +8,10 @@ import { createTestDb } from "../test/d1";
 
 const SESSION_SECRET = "test-session-secret-with-enough-entropy";
 const NOW = "2026-11-24T07:30:00.000Z";
-const INSIGHT =
+const MODEL_INSIGHT =
   "You stayed under your calorie goal and kept the day simple. Protein landed close to target, which is a solid place to finish.";
+const INSIGHT =
+  "You stayed under your calorie target and kept the day simple. Protein landed close to target, which is a solid place to finish.";
 
 let database: D1Database;
 let textMode: "ok" | "fallback" = "ok";
@@ -399,7 +401,7 @@ function mockFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respon
   if (textMode === "fallback" && model.includes("gemini")) {
     return Promise.resolve(chat("not json", { prompt_tokens: 12, completion_tokens: 2, cost: 0.00001 }));
   }
-  return Promise.resolve(chat(JSON.stringify({ insight: INSIGHT }), { prompt_tokens: 80, completion_tokens: 30, cost: 0.00002 }));
+  return Promise.resolve(chat(JSON.stringify({ insight: MODEL_INSIGHT }), { prompt_tokens: 80, completion_tokens: 30, cost: 0.00002 }));
 }
 
 function chat(content: string, usage: { prompt_tokens: number; completion_tokens: number; cost: number }): Response {

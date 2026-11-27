@@ -41,6 +41,16 @@ class Statement {
     };
   }
 
+  /** What D1's batch() returns per statement: rows for SELECT or RETURNING, plus the change count. */
+  async execute(): Promise<{ results: unknown[]; success: true; meta: { changes: number } }> {
+    if (/^\s*SELECT\b|\bRETURNING\b/i.test(this.sql)) {
+      const rows = this.statement().all(...(this.params as never[])) as Record<string, unknown>[];
+      return { results: rows.map((row) => plainRow(row)), success: true, meta: { changes: rows.length } };
+    }
+    const result = await this.run();
+    return { results: [], success: true, meta: { changes: result.meta.changes } };
+  }
+
   private statement(): StatementSync {
     return this.database.prepare(this.sql);
   }
@@ -53,11 +63,11 @@ class TestD1 {
     return new Statement(this.database, sql);
   }
 
-  async batch(statements: Statement[]): Promise<Array<{ success: true; meta: { changes: number } }>> {
+  async batch(statements: Statement[]): Promise<Array<{ results: unknown[]; success: true; meta: { changes: number } }>> {
     this.database.exec("BEGIN");
     try {
       const results = [];
-      for (const statement of statements) results.push(await statement.run());
+      for (const statement of statements) results.push(await statement.execute());
       this.database.exec("COMMIT");
       return results;
     } catch (error) {

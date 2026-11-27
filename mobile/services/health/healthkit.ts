@@ -341,8 +341,8 @@ export class HealthKitProvider implements HealthProvider {
       record_type: type,
       source_platform: "healthkit",
       external_id: sample.uuid,
-      source_app_id: sample.sourceRevision?.source?.bundleIdentifier ?? null,
-      source_device_name: sample.device?.name ?? sample.sourceRevision?.source?.name ?? null,
+      source_app_id: label(sample.sourceRevision?.source?.bundleIdentifier),
+      source_device_name: label(sample.device?.name) ?? label(sample.sourceRevision?.source?.name),
       start_time: when.toISOString(),
       end_time: asDate(sample.endDate).toISOString(),
       local_date: localDateISO(when),
@@ -360,8 +360,8 @@ export class HealthKitProvider implements HealthProvider {
       record_type: "workout",
       source_platform: "healthkit",
       external_id: workout.uuid,
-      source_app_id: workout.sourceRevision?.source?.bundleIdentifier ?? null,
-      source_device_name: workout.device?.name ?? workout.sourceRevision?.source?.name ?? "Apple Watch",
+      source_app_id: label(workout.sourceRevision?.source?.bundleIdentifier),
+      source_device_name: label(workout.device?.name) ?? label(workout.sourceRevision?.source?.name) ?? "Apple Watch",
       start_time: when.toISOString(),
       end_time: asDate(workout.endDate).toISOString(),
       local_date: localDateISO(when),
@@ -392,8 +392,8 @@ export class HealthKitProvider implements HealthProvider {
         record_type: type,
         source_platform: "healthkit",
         external_id: `${idPrefix}${localDateISO(when)}`,
-        source_app_id: source?.bundleIdentifier ?? null,
-        source_device_name: source?.name ?? null,
+        source_app_id: label(source?.bundleIdentifier),
+        source_device_name: label(source?.name),
         start_time: when.toISOString(),
         end_time: asDate(bucket.endDate ?? when).toISOString(),
         local_date: localDateISO(when),
@@ -412,6 +412,12 @@ export class HealthKitProvider implements HealthProvider {
     }
     return records;
   }
+}
+
+/** Source names go to the server, which rejects empty or very long strings; HealthKit can report "". */
+function label(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed.slice(0, 200) : null;
 }
 
 function deleted(type: "weight" | "workout", ids: string[]): HealthSyncRecord[] {

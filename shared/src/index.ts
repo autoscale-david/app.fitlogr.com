@@ -1,3 +1,4 @@
+export * from "./caloriePlan";
 export {
   KCAL_PER_KG,
   MIN_COMPLETE_INTAKE_KCAL,
@@ -72,6 +73,7 @@ export {
   PHOTO_LIMITS,
   PhotoExcludeRequestSchema,
   PhotoExcludeResponseSchema,
+  PickerImportRequestSchema,
   PickerImportSummarySchema,
   PickerSessionSchema,
   PickerStatusSchema,
@@ -79,8 +81,10 @@ export {
   PhotoUrlResponseSchema,
   atwaterWarning,
   dHashFromLuma,
+  explicitPickReopens,
   hammingDistance,
   isConfirmedMeal,
+  localCaptureFromExif,
   matchHash,
   totalsFromVisionItems,
 } from "./photos";
@@ -99,6 +103,7 @@ export type {
   MealVisionItem,
   PhotoExcludeRequest,
   PhotoExcludeResponse,
+  PickerImportRequest,
   PickerImportSummary,
   PickerSession,
   PickerStatus,

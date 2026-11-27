@@ -12,6 +12,8 @@ export const colors = {
   fat: "#E15D68",
   pill: "#222428",
   white: "#FFFFFF",
+  fastAccent: "#9AA6D8",
+  selectedDay: "#2A2D31",
 };
 
 export const LB_PER_KG = 2.2046226218;

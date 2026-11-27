@@ -10,11 +10,37 @@ import {
   PhotoUrlResponseSchema,
   atwaterWarning,
   dHashFromLuma,
+  explicitPickReopens,
   hammingDistance,
   isConfirmedMeal,
+  localCaptureFromExif,
   matchHash,
   totalsFromVisionItems,
 } from "./photos";
+
+describe("explicit photo pick", () => {
+  it("reopens a scan that said the photo was not a meal", () => {
+    expect(explicitPickReopens("non_meal", true)).toBe(true);
+    expect(explicitPickReopens("near_duplicate", true)).toBe(true);
+    expect(explicitPickReopens("duplicate", true)).toBe(false);
+    expect(explicitPickReopens("non_meal", false)).toBe(false);
+  });
+});
+
+describe("photo capture day", () => {
+  it("uses the EXIF local day, not UTC", () => {
+    const when = localCaptureFromExif({ DateTimeOriginal: "2026:11:26 18:30:00" }, new Date("2026-11-27T02:00:00.000Z"));
+    expect(when.localDate).toBe("2026-11-26");
+    expect(new Date(when.capturedAt).getFullYear()).toBe(2026);
+    expect(new Date(when.capturedAt).getDate()).toBe(26);
+  });
+
+  it("falls back to now when the photo has no capture time", () => {
+    const now = new Date(2026, 10, 26, 13, 5, 0);
+    expect(localCaptureFromExif(null, now).localDate).toBe("2026-11-26");
+    expect(localCaptureFromExif({ DateTimeOriginal: "not a date" }, now).localDate).toBe("2026-11-26");
+  });
+});
 
 describe("photo contracts", () => {
   it("accepts a hash batch and rejects an empty one", () => {
@@ -108,18 +134,57 @@ describe("photo contracts", () => {
     expect(hammingDistance(left, right)).toBeGreaterThan(8);
     expect(hammingDistance("0000000000000000", "00000000000000ff")).toBe(8);
 
+    const at = "2026-11-23T18:00:00.000Z";
     const known = [
-      { id: "meal-photo", content_sha256: "a".repeat(64), perceptual_hash: "0000000000000000", status: "analyzed_meal", meal_id: "meal-1" },
-      { id: "skip-photo", content_sha256: "b".repeat(64), perceptual_hash: "ffffffffffffffff", status: "excluded", meal_id: null },
+      { id: "meal-photo", content_sha256: "a".repeat(64), perceptual_hash: "0000000000000000", status: "analyzed_meal", meal_id: "meal-1", captured_at: at },
+      { id: "skip-photo", content_sha256: "b".repeat(64), perceptual_hash: "ffffffffffffffff", status: "excluded", meal_id: null, captured_at: at },
     ];
     expect(matchHash({ content_sha256: "a".repeat(64) }, known).status).toBe("duplicate");
-    expect(matchHash({ content_sha256: "c".repeat(64), perceptual_hash: "00000000000000ff" }, known)).toMatchObject({
+    expect(
+      matchHash({ content_sha256: "c".repeat(64), perceptual_hash: "00000000000000ff", captured_at: "2026-11-23T18:05:00.000Z" }, known),
+    ).toMatchObject({
       status: "near_duplicate",
       photo_id: "meal-photo",
       meal_id: "meal-1",
     });
-    expect(matchHash({ content_sha256: "d".repeat(64), perceptual_hash: "fffffffffffffffe" }, known).status).toBe("excluded");
-    expect(matchHash({ content_sha256: "e".repeat(64), perceptual_hash: "0f0f0f0f0f0f0f0f" }, known).status).toBe("new");
+    expect(
+      matchHash({ content_sha256: "d".repeat(64), perceptual_hash: "fffffffffffffffe", captured_at: "2026-11-23T18:01:00.000Z" }, known).status,
+    ).toBe("excluded");
+    expect(
+      matchHash({ content_sha256: "e".repeat(64), perceptual_hash: "0f0f0f0f0f0f0f0f", captured_at: "2026-11-23T18:01:00.000Z" }, known).status,
+    ).toBe("new");
+  });
+
+  it("only treats a look-alike photo as a duplicate when it was taken close in time", () => {
+    const known = [
+      {
+        id: "breakfast-monday",
+        content_sha256: "a".repeat(64),
+        perceptual_hash: "0000000000000000",
+        status: "analyzed_meal",
+        meal_id: "meal-monday",
+        captured_at: "2026-11-23T08:00:00.000Z",
+      },
+    ];
+    // Same bowl, same table, the next morning: a new meal.
+    expect(
+      matchHash({ content_sha256: "c".repeat(64), perceptual_hash: "0000000000000001", captured_at: "2026-11-24T08:00:00.000Z" }, known).status,
+    ).toBe("new");
+    // No capture time means no near-duplicate guess.
+    expect(matchHash({ content_sha256: "c".repeat(64), perceptual_hash: "0000000000000001" }, known).status).toBe("new");
+    // The same moment from another source (e.g. Google Photos) matches even without a usable dHash.
+    expect(
+      matchHash({ content_sha256: "f".repeat(64), perceptual_hash: null, captured_at: "2026-11-23T08:00:01.000Z" }, known),
+    ).toMatchObject({ status: "near_duplicate", photo_id: "breakfast-monday" });
+    // Two photos without a dHash that share a timestamp (a batch upload) are not merged.
+    const pickerOnly = [{ ...known[0]!, perceptual_hash: null }];
+    expect(
+      matchHash({ content_sha256: "f".repeat(64), perceptual_hash: null, captured_at: "2026-11-23T08:00:00.000Z" }, pickerOnly).status,
+    ).toBe("new");
+    // A photo two minutes later with an unrelated dHash is a different plate.
+    expect(
+      matchHash({ content_sha256: "f".repeat(64), perceptual_hash: "ffffffffffffffff", captured_at: "2026-11-23T08:02:00.000Z" }, known).status,
+    ).toBe("new");
   });
 
   it("reads grayscale from a 9x8 PNG", async () => {

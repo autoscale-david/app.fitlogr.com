@@ -131,7 +131,7 @@ describe("maintenance estimate", () => {
       days: days(10, "2026-07-01", { intakeKcal: 800, activeKcal: 100 }),
       weights: weights("2026-07-01", "2026-07-10", 80, 80),
     });
-    expect(low.warnings.some((warning) => warning.includes("1,000"))).toBe(true);
+    expect(low.warnings.some((warning) => warning.includes("1000"))).toBe(true);
 
     const long = estimateMaintenance({
       daysRequested: 90,

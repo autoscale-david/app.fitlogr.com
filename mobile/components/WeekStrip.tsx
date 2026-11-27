@@ -1,35 +1,31 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import type { DayDotStatus } from "@fitlogr/shared";
 import { addDays, dayNumber, weekdayLetter } from "../services/dates";
 import { colors } from "../theme";
 
 interface WeekStripProps {
   weekStart: string;
   selected: string;
-  logged: ReadonlySet<string>;
+  /** Met / missed against each day's plan; null shows no dot. */
+  status: Readonly<Record<string, DayDotStatus>>;
   onSelect: (date: string) => void;
 }
 
-export function WeekStrip({ weekStart, selected, logged, onSelect }: WeekStripProps) {
+export function WeekStrip({ weekStart, selected, status, onSelect }: WeekStripProps) {
   const days = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
 
   return (
     <View style={styles.row}>
       {days.map((date) => {
         const isSelected = date === selected;
-        const hasLog = logged.has(date);
+        const dot = status[date] ?? null;
         return (
           <Pressable key={date} style={styles.day} onPress={() => onSelect(date)}>
             <View style={[styles.pill, isSelected && styles.pillSelected]}>
               <Text style={[styles.letter, isSelected && styles.letterSelected]}>{weekdayLetter(date)}</Text>
               <Text style={[styles.number, isSelected && styles.numberSelected]}>{dayNumber(date)}</Text>
             </View>
-            <View
-              style={[
-                styles.dot,
-                hasLog && !isSelected && styles.dotLogged,
-                isSelected && styles.dotSelected,
-              ]}
-            />
+            <View style={[styles.dot, dot === "met" && styles.dotMet, dot === "missed" && styles.dotMissed]} />
           </Pressable>
         );
       })}
@@ -53,12 +49,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 2,
   },
-  pillSelected: { backgroundColor: "#2A2D31" },
+  pillSelected: { backgroundColor: colors.selectedDay },
   letter: { color: colors.faint, fontSize: 12, fontWeight: "600" },
   letterSelected: { color: colors.muted },
   number: { color: colors.muted, fontSize: 16, fontWeight: "700" },
   numberSelected: { color: colors.text },
   dot: { width: 5, height: 5, borderRadius: 3, marginTop: 6, backgroundColor: "transparent" },
-  dotLogged: { backgroundColor: colors.orange },
-  dotSelected: { backgroundColor: colors.green },
+  dotMet: { backgroundColor: colors.green },
+  dotMissed: { backgroundColor: colors.orange },
 });

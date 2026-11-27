@@ -16,9 +16,10 @@ let database: D1Database;
 let tokenBodies: string[] = [];
 let pending: { nonce: string; sub: string; email: string; name: string; refreshToken: string } | null = null;
 
+let clockOffsetMs = 0;
 const app = createApp({
   fetch: mockFetch,
-  now: () => new Date(),
+  now: () => new Date(Date.now() + clockOffsetMs),
 });
 
 beforeAll(async () => {
@@ -36,6 +37,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   database = createTestDb();
+  clockOffsetMs = 0;
   tokenBodies = [];
   pending = null;
   clearJwksCache();
@@ -162,6 +164,41 @@ describe("stage 2 API", () => {
     expect(reused.status).toBe(401);
   });
 
+  it("allows only one grace retry of a rotated refresh token, and none after logout", async () => {
+    const session = await signIn({
+      sub: "google-sub-grace",
+      email: "grace@example.com",
+      name: "Grace",
+      refreshToken: "refresh-grace",
+      deviceId: "device-grace01",
+    });
+    const rotated = await post("/api/auth/refresh", { refresh_token: session.refresh_token });
+    expect(rotated.status).toBe(200);
+    const first = await post("/api/auth/refresh", { refresh_token: session.refresh_token });
+    expect(first.status).toBe(200);
+    const retried = await first.json();
+    // A second replay inside the window is treated as theft: every session on the device ends.
+    const second = await post("/api/auth/refresh", { refresh_token: session.refresh_token });
+    expect(second.status).toBe(401);
+    expect((await post("/api/auth/refresh", { refresh_token: retried.refresh_token })).status).toBe(401);
+    const live = await database
+      .prepare("SELECT COUNT(*) AS n FROM user_sessions WHERE revoked_at IS NULL AND device_id = ?")
+      .bind("device-grace01")
+      .first<{ n: number }>();
+    expect(live?.n).toBe(0);
+
+    // A token ended by logout gets no grace even with another live session on the device.
+    const other = await signIn({
+      sub: "google-sub-grace2",
+      email: "grace2@example.com",
+      name: "Grace2",
+      refreshToken: "refresh-grace2",
+      deviceId: "device-grace02",
+    });
+    expect((await post("/api/auth/logout", {}, other.access_token)).status).toBe(200);
+    expect((await post("/api/auth/refresh", { refresh_token: other.refresh_token })).status).toBe(401);
+  });
+
   it("rotates refresh tokens and revokes the session family when a used token is replayed", async () => {
     const session = await signIn({
       sub: "google-sub-rot",
@@ -175,10 +212,27 @@ describe("stage 2 API", () => {
     const next = await rotated.json();
     expect(next.refresh_token).not.toBe(session.refresh_token);
 
+    // A retry right after rotation (the phone never saw the response) works once, and the lost
+    // successor stops working.
+    const retry = await post("/api/auth/refresh", { refresh_token: session.refresh_token });
+    expect(retry.status).toBe(200);
+    const retried = await retry.json();
+    expect(retried.refresh_token).not.toBe(next.refresh_token);
+    const sessions = await database
+      .prepare("SELECT COUNT(*) AS n FROM user_sessions WHERE revoked_at IS NULL AND device_id = ?")
+      .bind("device-rotate1")
+      .first<{ n: number }>();
+    expect(sessions?.n).toBe(1);
+
+    // Replaying a rotated token after the grace window revokes the whole device family.
+    clockOffsetMs = 10 * 60 * 1000;
     const replay = await post("/api/auth/refresh", { refresh_token: session.refresh_token });
     expect(replay.status).toBe(401);
     const afterReplay = await post("/api/auth/refresh", { refresh_token: next.refresh_token });
     expect(afterReplay.status).toBe(401);
+    const afterReplayRetried = await post("/api/auth/refresh", { refresh_token: retried.refresh_token });
+    expect(afterReplayRetried.status).toBe(401);
+    clockOffsetMs = 0;
 
     const loggedOut = await signIn({
       sub: "google-sub-out",

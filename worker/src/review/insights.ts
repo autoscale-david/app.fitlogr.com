@@ -25,7 +25,7 @@ export async function getDailyInsight(
   date: string,
   now: Date,
 ): Promise<DailyInsight> {
-  const snapshot = await loadInsightSnapshot(db, userId, date);
+  const snapshot = await loadInsightSnapshot(db, userId, date, now);
   const fingerprint = await hashInsightSnapshot(snapshot);
   const cached = await db
     .prepare(
@@ -37,7 +37,7 @@ export async function getDailyInsight(
   if (cached?.ai_insight && cached.insight_input_hash === fingerprint && cached.insight_generated_at) {
     return {
       date,
-      insight: cached.ai_insight,
+      insight: withoutGoalWording(cached.ai_insight),
       cached: true,
       generated_at: cached.insight_generated_at,
       model: null,
@@ -49,6 +49,7 @@ export async function getDailyInsight(
   let generated: { insight: string; attempts: TextAttempt[] };
   try {
     generated = await completeInsight(fetchImpl, config, insightPrompt(snapshot));
+    generated = { ...generated, insight: withoutGoalWording(generated.insight) };
   } catch (error) {
     if (error instanceof InsightFailed) {
       await logAttempts(db, userId, error.attempts, date, now);
@@ -76,6 +77,7 @@ function insightPrompt(snapshot: InsightSnapshot): string {
   return `Write a friendly 2-3 sentence daily fitness note for ${snapshot.date}.
 Use only the numbers below. Do not invent meals, workouts, or weight changes.
 Do not give medical advice, diagnoses, or supplement recommendations.
+Call calorie numbers a "target" or the "plan"; judge the day on net intake versus maintenance.
 Reply with JSON only: {"insight":"..."} and keep insight under 320 characters.
 
 Intake: ${snapshot.macros.calories_kcal} kcal
@@ -85,10 +87,17 @@ Fat: ${snapshot.macros.fat_g} g (target ${snapshot.goals.daily_fat_target_g ?? "
 Active calories burned: ${snapshot.active_calories_kcal} kcal
 Resting calories burned: ${snapshot.resting_calories_kcal} kcal
 Weight kg: ${snapshot.weight_kg ?? "none"}
-Calorie target: ${snapshot.goals.daily_calorie_target_kcal ?? "unset"} kcal
-Calorie delta target: ${snapshot.goals.daily_calorie_delta_target_kcal ?? "unset"} kcal
+Maintenance calories (baseline): ${snapshot.plan?.maintenance_kcal ?? "unset"} kcal
+Today's plan: ${snapshot.plan?.label ?? "unset"}
+Calorie target: ${snapshot.goals.daily_calorie_target_kcal ?? "unset"} kcal to eat; a "burn N+" plan already counts N kcal of workout burn, so only burn beyond N adds more
+Calorie offset vs maintenance: ${snapshot.goals.daily_calorie_delta_target_kcal ?? "unset"} kcal
 Meals: ${meals}
 Workouts: ${workouts}`;
+}
+
+/** The app never says "goal"; model wording is normalized to "target". */
+export function withoutGoalWording(text: string): string {
+  return text.replace(/\b(g)(oal)(s?)\b/gi, (_match, g: string, _rest: string, plural: string) => `${g === "G" ? "T" : "t"}arget${plural}`);
 }
 
 async function enforceInsightLimit(db: D1Database, userId: string, date: string, now: Date): Promise<void> {

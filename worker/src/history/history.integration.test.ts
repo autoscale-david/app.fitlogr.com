@@ -33,6 +33,8 @@ let database: D1Database;
 let visionCalls = 0;
 let deletedSessions = 0;
 let mode: "meal" | "not_meal" = "meal";
+let pickerHttp: "ok" | "disabled" = "ok";
+let pickerItems: ReturnType<typeof item>[] = [];
 
 const app = createApp({
   fetch: mockFetch,
@@ -44,6 +46,13 @@ beforeEach(() => {
   visionCalls = 0;
   deletedSessions = 0;
   mode = "meal";
+  pickerHttp = "ok";
+  pickerItems = [
+    item("meal-a", "https://images.example/a"),
+    item("meal-a-again", "https://images.example/a-copy"),
+    item("scenery", "https://images.example/scenery"),
+    item("broken", "https://images.example/broken"),
+  ];
 });
 
 describe("history import and maintenance", () => {
@@ -196,6 +205,8 @@ describe("history import and maintenance", () => {
       non_meals_skipped: 1,
       duplicates_skipped: 1,
       errors: 1,
+      next_cursor: null,
+      retry_after_seconds: null,
     });
     expect(visionCalls).toBe(2);
     expect(deletedSessions).toBe(1);
@@ -214,6 +225,68 @@ describe("history import and maintenance", () => {
       .bind("user-picker")
       .first<{ n: number }>();
     expect(nonMeal?.n).toBe(1);
+  });
+
+  it("imports every picked photo across pages and resumes after the analysis rate limit", async () => {
+    const token = await signIn("user-picker-pages", true);
+    await database
+      .prepare("UPDATE user_settings SET ai_consent_version = '2026-11-23', ai_consent_accepted_at = ? WHERE user_id = ?")
+      .bind(NOW.toISOString(), "user-picker-pages")
+      .run();
+    pickerItems = Array.from({ length: 7 }, (_, index) =>
+      item(`meal-${index}`, `https://images.example/meal-${index}`, `2026-10-0${index + 1}T18:00:00.000Z`),
+    );
+    const first = await (await post("/api/photos/picker/sessions/picker-session-1/import", { paged: true }, token)).json();
+    expect(first).toMatchObject({ total_picked: 5, meals_imported: 5, retry_after_seconds: null });
+    expect(first.next_cursor).toEqual(expect.any(String));
+    expect(deletedSessions).toBe(0);
+
+    // Fill the burst window so the next photo is rate limited.
+    for (let index = 0; index < 30; index += 1) {
+      await database
+        .prepare(
+          `INSERT INTO ai_requests (id, user_id, request_type, model, latency_ms, status, created_at)
+           VALUES (?, 'user-picker-pages', 'meal_vision', 'test', 1, 'ok', ?)`,
+        )
+        .bind(`burst-${index}`, NOW.toISOString())
+        .run();
+    }
+    const limited = await (await post("/api/photos/picker/sessions/picker-session-1/import", { cursor: first.next_cursor }, token)).json();
+    expect(limited).toMatchObject({ total_picked: 0, meals_imported: 0, errors: 0 });
+    expect(limited.retry_after_seconds).toBeGreaterThan(0);
+    expect(limited.next_cursor).toEqual(expect.any(String));
+    expect(deletedSessions).toBe(0);
+
+    await database.prepare("DELETE FROM ai_requests WHERE id LIKE 'burst-%'").run();
+    const rest = await (await post("/api/photos/picker/sessions/picker-session-1/import", { cursor: limited.next_cursor }, token)).json();
+    expect(rest).toMatchObject({ total_picked: 2, meals_imported: 2, next_cursor: null, retry_after_seconds: null });
+    expect(deletedSessions).toBe(1);
+    const meals = await database.prepare("SELECT COUNT(*) AS n FROM meals WHERE user_id = ?").bind("user-picker-pages").first<{ n: number }>();
+    expect(meals?.n).toBe(7);
+  });
+
+  it("keeps the one-call import for older app builds that do not page", async () => {
+    const token = await signIn("user-picker-legacy", true);
+    await database
+      .prepare("UPDATE user_settings SET ai_consent_version = '2026-11-23', ai_consent_accepted_at = ? WHERE user_id = ?")
+      .bind(NOW.toISOString(), "user-picker-legacy")
+      .run();
+    pickerItems = Array.from({ length: 8 }, (_, index) =>
+      item(`meal-${index}`, `https://images.example/meal-${index}`, `2026-10-0${index + 1}T18:00:00.000Z`),
+    );
+    const result = await (await post("/api/photos/picker/sessions/picker-session-1/import", {}, token)).json();
+    expect(result).toMatchObject({ total_picked: 8, meals_imported: 8, next_cursor: null });
+    expect(deletedSessions).toBe(1);
+  });
+
+  it("names a disabled Photos Picker API instead of a generic failure", async () => {
+    pickerHttp = "disabled";
+    const token = await signIn("user-picker-off", true);
+    const created = await post("/api/photos/picker/sessions", {}, token);
+    expect(created.status).toBe(403);
+    const body = await created.json();
+    expect(body.error.code).toBe("PICKER_API_DISABLED");
+    expect(body.error.message).toContain("photospicker.googleapis.com");
   });
 });
 
@@ -279,6 +352,21 @@ function mockFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respon
     return json({ ok: true });
   }
   if (url.endsWith("/v1/sessions") && init?.method === "POST") {
+    if (pickerHttp === "disabled") {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: {
+              code: 403,
+              message: "Photos Picker API has not been used in project 1 before or it is disabled.",
+              status: "PERMISSION_DENIED",
+              details: [{ reason: "SERVICE_DISABLED" }],
+            },
+          }),
+          { status: 403, headers: { "content-type": "application/json" } },
+        ),
+      );
+    }
     return json({
       id: "picker-session-1",
       pickerUri: "https://photos.google.com/picker/session",
@@ -289,19 +377,18 @@ function mockFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respon
     return json({ id: "picker-session-1", mediaItemsSet: true });
   }
   if (url.includes("/v1/mediaItems")) {
-    return json({
-      mediaItems: [
-        item("meal-a", "https://images.example/a"),
-        item("meal-a-again", "https://images.example/a-copy"),
-        item("scenery", "https://images.example/scenery"),
-        item("broken", "https://images.example/broken"),
-      ],
-    });
+    const params = new URL(url).searchParams;
+    const size = Number(params.get("pageSize") ?? "100");
+    const start = Number(params.get("pageToken") ?? "0");
+    const page = pickerItems.slice(start, start + size);
+    const next = start + size < pickerItems.length ? String(start + size) : undefined;
+    return json({ mediaItems: page, ...(next ? { nextPageToken: next } : {}) });
   }
   if (url.startsWith("https://images.example/")) {
     if (url.includes("broken")) return Promise.resolve(new Response("no", { status: 500 }));
     mode = url.includes("scenery") ? "not_meal" : "meal";
-    const seed = url.includes("scenery") ? 2 : 1;
+    const numbered = /meal-(\d+)/.exec(url);
+    const seed = url.includes("scenery") ? 2 : numbered ? 10 + Number(numbered[1]) : 1;
     return Promise.resolve(new Response(jpeg(seed), { status: 200, headers: { "content-type": "image/jpeg" } }));
   }
   if (url.includes("openrouter.ai")) {
@@ -317,8 +404,8 @@ function mockFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respon
   return Promise.resolve(new Response("unexpected", { status: 500 }));
 }
 
-function item(id: string, baseUrl: string) {
-  return { id, createTime: "2026-10-01T18:00:00.000Z", type: "PHOTO", mediaFile: { baseUrl, mimeType: "image/jpeg" } };
+function item(id: string, baseUrl: string, createTime = "2026-10-01T18:00:00.000Z") {
+  return { id, createTime, type: "PHOTO", mediaFile: { baseUrl, mimeType: "image/jpeg" } };
 }
 
 function jpeg(seed: number): Uint8Array {

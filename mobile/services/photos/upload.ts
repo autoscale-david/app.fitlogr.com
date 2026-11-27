@@ -1,37 +1,56 @@
 import type { SQLiteDatabase } from "expo-sqlite";
+import { File } from "expo-file-system";
 import {
   AI_PHOTO_CONSENT_VERSION,
+  explicitPickReopens,
   type AnalyzePhotoResponse,
   type CheckHashesResponse,
+  type PhotoReference,
   type PhotoSource,
 } from "@fitlogr/shared";
-import { ApiError, OfflineError, api } from "../api";
+import { ApiError, OfflineError, SessionExpired, api } from "../api";
 import { deviceTimeZone, localDateISO } from "../dates";
 import { readSetting, writeServerMeal, writeSetting, type MealItemRecord } from "../db";
 import type { PreparedMealImage } from "./prepare";
 
+export type ImportKind = "meal" | "not_meal" | "duplicate" | "skipped" | "offline" | "rate_limited" | "consent" | "error";
+
 export interface ImportResult {
+  kind: ImportKind;
   message: string;
   reconnect: boolean;
+  /** Set when photo analysis is rate limited: wait this long before sending another photo. */
+  retryAfterSeconds?: number;
+}
+
+/** Photos being sent right now, so two scans running at once never upload the same photo twice. */
+const inFlight = new Set<string>();
+
+/** True when this local photo was already handled (or is being sent) and should not be prepared again. */
+export async function alreadyChecked(db: SQLiteDatabase, assetId: string): Promise<boolean> {
+  if (inFlight.has(assetId)) return true;
+  const seen = await db.getFirstAsync<{ scan_status: string }>(
+    "SELECT scan_status FROM local_media_assets WHERE local_asset_id = ?",
+    assetId,
+  );
+  return Boolean(seen && seen.scan_status !== "pending" && seen.scan_status !== "error");
 }
 
 export async function importPreparedPhoto(
   db: SQLiteDatabase,
   image: PreparedMealImage,
-  input: { capturedAt: string; localDate: string; source: PhotoSource; assetId?: string },
+  input: { capturedAt: string; localDate: string; source: PhotoSource; assetId?: string; forceMeal?: boolean },
 ): Promise<ImportResult> {
   if ((await readSetting(db, "ai_photo_consent_version")) !== AI_PHOTO_CONSENT_VERSION) {
-    return { message: "Agree to photo analysis before sending a meal photo.", reconnect: false };
+    return { kind: "consent", message: "Agree to photo analysis before sending a meal photo.", reconnect: false };
   }
   const assetId = input.assetId ?? image.sha256;
-  const seen = await db.getFirstAsync<{ scan_status: string }>(
-    "SELECT scan_status FROM local_media_assets WHERE local_asset_id = ?",
-    assetId,
-  );
-  if (seen && seen.scan_status !== "pending" && seen.scan_status !== "error") {
-    return { message: "That photo was already checked.", reconnect: false };
+  // A deliberate pick overrides an earlier "not a meal" mark for this file.
+  if (!input.forceMeal && (await alreadyChecked(db, assetId))) {
+    return { kind: "skipped", message: "That photo was already checked.", reconnect: false };
   }
 
+  inFlight.add(assetId);
   try {
     const hashes = await api.send<CheckHashesResponse>("POST", "/photos/check-hashes", {
       items: [
@@ -43,12 +62,15 @@ export async function importPreparedPhoto(
       ],
     });
     const match = hashes.results[0];
-    if (match && match.status !== "new") {
+    if (match && match.status !== "new" && !explicitPickReopens(match.status, input.forceMeal === true)) {
       await remember(db, assetId, image, input.capturedAt, match.status, match.photo_id);
       if (match.status === "excluded" || match.status === "non_meal") {
-        return { message: "That photo was already skipped.", reconnect: false };
+        return { kind: "skipped", message: "That photo was already skipped.", reconnect: false };
       }
-      return { message: "That meal photo is already logged.", reconnect: false };
+      // The meal may exist only on the server. Ask analyze to return it so it can be written here.
+      if (!input.forceMeal) {
+        return { kind: "duplicate", message: "That meal photo is already logged.", reconnect: false };
+      }
     }
 
     const metadata = {
@@ -58,6 +80,7 @@ export async function importPreparedPhoto(
       local_date: input.localDate,
       timezone: deviceTimeZone(),
       source: input.source,
+      force_meal: input.forceMeal === true,
     };
     const form = new FormData();
     form.append("metadata", JSON.stringify(metadata));
@@ -82,27 +105,98 @@ export async function importPreparedPhoto(
         items: analyzed.meal.items.filter((item) => !item.deleted_at).map(toLocalItem),
       });
     }
-    await remember(db, assetId, image, input.capturedAt, analyzed.outcome, analyzed.photo.id);
-    if (analyzed.outcome === "not_meal") return { message: "That doesn't look like a meal, so it wasn't added.", reconnect: false };
-    if (analyzed.outcome === "duplicate") return { message: "That meal photo is already logged.", reconnect: false };
-    return { message: analyzed.meal ? `Logged ${analyzed.meal.name}.` : "Meal photo analyzed.", reconnect: false };
+    const reconnect = analyzed.google_reconnect_required === true;
+    const googlePending = analyzed.outcome === "meal" && needsAlbumRetry(analyzed.photo);
+    await remember(db, assetId, image, input.capturedAt, analyzed.outcome, analyzed.photo.id, googlePending);
+    if (analyzed.outcome === "not_meal") {
+      return { kind: "not_meal", message: "That doesn't look like a meal, so it wasn't added.", reconnect: false };
+    }
+    if (analyzed.outcome === "duplicate") return { kind: "duplicate", message: "That meal photo is already logged.", reconnect: false };
+    if (reconnect) {
+      return { kind: "meal", message: "The meal was saved. Reconnect Google to store the photo in your fitlogr album.", reconnect: true };
+    }
+    return { kind: "meal", message: analyzed.meal ? `Logged ${analyzed.meal.name}.` : "Meal photo analyzed.", reconnect: false };
   } catch (error) {
     if (error instanceof OfflineError) {
       await remember(db, assetId, image, input.capturedAt, "pending", null);
-      return { message: "You're offline. fitlogr will send this photo when you reconnect.", reconnect: false };
+      return { kind: "offline", message: "You're offline. fitlogr will send this photo when you reconnect.", reconnect: false };
+    }
+    if (error instanceof SessionExpired) throw error;
+    if (error instanceof ApiError && error.status === 429) {
+      // Not remembered: the photo is sent again once the limit resets.
+      const wait = error.retryAfterSeconds ?? 60;
+      return { kind: "rate_limited", message: rateLimitMessage(wait), reconnect: false, retryAfterSeconds: wait };
     }
     if (error instanceof ApiError && error.code === "google_reconnect_required") {
+      // Older servers reported a revoked Google grant as an error after saving the meal.
       await remember(db, assetId, image, input.capturedAt, "meal", null);
-      return { message: "The meal was saved. Reconnect Google to store the photo.", reconnect: true };
+      return { kind: "meal", message: "The meal was saved. Reconnect Google to store the photo.", reconnect: true };
     }
     if (error instanceof ApiError && error.code === "AI_CONSENT_REQUIRED") {
       await writeSetting(db, "ai_photo_consent_pending", "1");
-      return { message: "Agree to photo analysis before sending a meal photo.", reconnect: false };
+      return { kind: "consent", message: "Agree to photo analysis before sending a meal photo.", reconnect: false };
     }
     await remember(db, assetId, image, input.capturedAt, "error", null);
     const message = error instanceof ApiError ? error.message : "The photo could not be analyzed.";
-    return { message, reconnect: false };
+    return { kind: "error", message, reconnect: false };
+  } finally {
+    inFlight.delete(assetId);
   }
+}
+
+/** "fitlogr can analyze more photos in about 4 minutes." / "...in about 3 hours." */
+export function rateLimitMessage(seconds: number): string {
+  const minutes = Math.max(1, Math.ceil(seconds / 60));
+  const when = minutes < 90 ? `${minutes} minute${minutes === 1 ? "" : "s"}` : `${Math.round(minutes / 60)} hours`;
+  return `Photo analysis limit reached. fitlogr can analyze more photos in about ${when}.`;
+}
+
+function needsAlbumRetry(photo: PhotoReference): boolean {
+  // "quota_exceeded" means the Google account is out of storage; a retry will not help until space is freed.
+  return !photo.google_media_item_id && photo.google_status === "failed";
+}
+
+/**
+ * Re-sends meal photos whose Google Photos album upload failed (outage, rate limit, revoked access).
+ * Uses the same compressed JPEG that was analyzed, so the server can check it is the same photo.
+ */
+export async function retryAlbumUploads(db: SQLiteDatabase, limit = 5): Promise<number> {
+  const rows = await db.getAllAsync<{ local_asset_id: string; uri: string | null; remote_photo_id: string | null }>(
+    `SELECT local_asset_id, uri, remote_photo_id FROM local_media_assets
+     WHERE google_pending = 1 AND remote_photo_id IS NOT NULL ORDER BY updated_at LIMIT ?`,
+    limit,
+  );
+  let uploaded = 0;
+  for (const row of rows) {
+    const file = row.uri ? new File(row.uri) : null;
+    if (!row.remote_photo_id || !file || !file.exists) {
+      // The compressed copy was cleared from the cache; nothing left to send.
+      await setAlbumPending(db, row.local_asset_id, false);
+      continue;
+    }
+    const form = new FormData();
+    form.append("image", { uri: file.uri, name: "meal.jpg", type: "image/jpeg" } as unknown as Blob);
+    try {
+      await api.upload<PhotoReference>(`/photos/${encodeURIComponent(row.remote_photo_id)}/google-upload`, form);
+      await setAlbumPending(db, row.local_asset_id, false);
+      uploaded += 1;
+    } catch (error) {
+      if (error instanceof OfflineError || error instanceof SessionExpired) throw error;
+      // Rejected for good, or Google storage is full (retrying only re-sends the photo until space is freed).
+      if (error instanceof ApiError && ([400, 404, 409, 413, 415].includes(error.status) || error.code === "GOOGLE_QUOTA_EXCEEDED")) {
+        await setAlbumPending(db, row.local_asset_id, false);
+        continue;
+      }
+      if (error instanceof ApiError && error.code === "google_reconnect_required") break;
+      // Google still failing: keep it, but move it to the back so other queued photos get a turn.
+      await db.runAsync("UPDATE local_media_assets SET updated_at = ? WHERE local_asset_id = ?", new Date().toISOString(), row.local_asset_id);
+    }
+  }
+  return uploaded;
+}
+
+async function setAlbumPending(db: SQLiteDatabase, assetId: string, pending: boolean): Promise<void> {
+  await db.runAsync("UPDATE local_media_assets SET google_pending = ? WHERE local_asset_id = ?", pending ? 1 : 0, assetId);
 }
 
 export function capturedToday(date = new Date()): { capturedAt: string; localDate: string } {
@@ -116,17 +210,19 @@ async function remember(
   capturedAt: string,
   status: string,
   photoId: string | null,
+  googlePending = false,
 ): Promise<void> {
   await db.runAsync(
     `INSERT INTO local_media_assets (
-       local_asset_id, uri, content_sha256, perceptual_hash, captured_at, scan_status, remote_photo_id, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       local_asset_id, uri, content_sha256, perceptual_hash, captured_at, scan_status, remote_photo_id, google_pending, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(local_asset_id) DO UPDATE SET
        uri = excluded.uri,
        content_sha256 = excluded.content_sha256,
        perceptual_hash = excluded.perceptual_hash,
        scan_status = excluded.scan_status,
        remote_photo_id = COALESCE(excluded.remote_photo_id, local_media_assets.remote_photo_id),
+       google_pending = excluded.google_pending,
        updated_at = excluded.updated_at`,
     assetId,
     image.uri,
@@ -135,6 +231,7 @@ async function remember(
     capturedAt,
     status,
     photoId,
+    googlePending ? 1 : 0,
     new Date().toISOString(),
   );
 }

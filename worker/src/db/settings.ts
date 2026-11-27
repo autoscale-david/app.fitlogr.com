@@ -1,5 +1,6 @@
-import type { Settings, SettingsUpdate } from "@fitlogr/shared";
+import { parseCaloriePlanJson, type Settings, type SettingsUpdate } from "@fitlogr/shared";
 import { ApiError } from "../http";
+import { DEFAULT_MAINTENANCE_KCAL, refreshCurrentSnapshots } from "../settings/plan";
 import { flag } from "./rows";
 
 interface SettingsRow {
@@ -11,6 +12,8 @@ interface SettingsRow {
   daily_protein_target_g: number | null;
   daily_carbs_target_g: number | null;
   daily_fat_target_g: number | null;
+  maintenance_calories_kcal: number | null;
+  calorie_plan_json: string | null;
   auto_scan_photos: number;
   wifi_only_uploads: number;
   confirm_before_ai: number;
@@ -21,8 +24,8 @@ interface SettingsRow {
 }
 
 const COLUMNS = `timezone, unit_system, target_weight_kg, daily_calorie_target_kcal, daily_calorie_delta_target_kcal,
-  daily_protein_target_g, daily_carbs_target_g, daily_fat_target_g, auto_scan_photos, wifi_only_uploads,
-  confirm_before_ai, photo_scan_since, ai_consent_version, ai_consent_accepted_at, updated_at`;
+  daily_protein_target_g, daily_carbs_target_g, daily_fat_target_g, maintenance_calories_kcal, calorie_plan_json,
+  auto_scan_photos, wifi_only_uploads, confirm_before_ai, photo_scan_since, ai_consent_version, ai_consent_accepted_at, updated_at`;
 
 export async function getSettings(db: D1Database, userId: string): Promise<Settings> {
   const row = await db.prepare(`SELECT ${COLUMNS} FROM user_settings WHERE user_id = ?`).bind(userId).first<SettingsRow>();
@@ -40,7 +43,15 @@ export async function updateSettings(db: D1Database, userId: string, patch: Sett
   if (patch.timezone !== undefined) set("timezone", patch.timezone);
   if (patch.unit_system !== undefined) set("unit_system", patch.unit_system);
   if (patch.target_weight_kg !== undefined) set("target_weight_kg", patch.target_weight_kg);
-  if (patch.daily_calorie_target_kcal !== undefined) set("daily_calorie_target_kcal", patch.daily_calorie_target_kcal);
+  // Maintenance and the legacy base calorie column always hold the same number.
+  if (patch.maintenance_calories_kcal !== undefined) {
+    set("maintenance_calories_kcal", patch.maintenance_calories_kcal);
+    set("daily_calorie_target_kcal", patch.maintenance_calories_kcal);
+  } else if (patch.daily_calorie_target_kcal !== undefined) {
+    set("daily_calorie_target_kcal", patch.daily_calorie_target_kcal);
+    if (patch.daily_calorie_target_kcal !== null) set("maintenance_calories_kcal", patch.daily_calorie_target_kcal);
+  }
+  if (patch.calorie_plan !== undefined) set("calorie_plan_json", JSON.stringify(patch.calorie_plan));
   if (patch.daily_calorie_delta_target_kcal !== undefined) set("daily_calorie_delta_target_kcal", patch.daily_calorie_delta_target_kcal);
   if (patch.daily_protein_target_g !== undefined) set("daily_protein_target_g", patch.daily_protein_target_g);
   if (patch.daily_carbs_target_g !== undefined) set("daily_carbs_target_g", patch.daily_carbs_target_g);
@@ -67,6 +78,12 @@ export async function updateSettings(db: D1Database, userId: string, patch: Sett
     if (!current) throw new ApiError(404, "NOT_FOUND", "Settings not found");
     throw new ApiError(409, "CONFLICT", "Settings were updated on another device");
   }
+  const planChanged =
+    patch.calorie_plan !== undefined ||
+    patch.maintenance_calories_kcal !== undefined ||
+    patch.daily_calorie_target_kcal !== undefined ||
+    patch.timezone !== undefined;
+  if (planChanged) await refreshCurrentSnapshots(db, userId, new Date(now));
   return getSettings(db, userId);
 }
 
@@ -80,6 +97,8 @@ export function toSettings(row: SettingsRow): Settings {
     daily_protein_target_g: row.daily_protein_target_g,
     daily_carbs_target_g: row.daily_carbs_target_g,
     daily_fat_target_g: row.daily_fat_target_g,
+    maintenance_calories_kcal: row.maintenance_calories_kcal ?? row.daily_calorie_target_kcal ?? DEFAULT_MAINTENANCE_KCAL,
+    calorie_plan: parseCaloriePlanJson(row.calorie_plan_json),
     auto_scan_photos: flag(row.auto_scan_photos),
     wifi_only_uploads: flag(row.wifi_only_uploads),
     confirm_before_ai: flag(row.confirm_before_ai),

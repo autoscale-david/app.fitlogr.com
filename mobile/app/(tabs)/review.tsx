@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import type { DailyInsight, TrendPoint } from "@fitlogr/shared";
+import { formatKcal, type DailyInsight, type TrendPoint } from "@fitlogr/shared";
 import { GoogleReconnectBanner, SyncStatusBanner } from "../../components/AccountBanners";
 import { MealCard, WorkoutCard } from "../../components/LogCard";
 import { MacroBars } from "../../components/MacroBars";
@@ -43,7 +44,7 @@ export default function ReviewScreen() {
               date,
               calories_in_kcal: intake,
               calories_burned_kcal: burned,
-              surplus_deficit_kcal: intake - store.goals!.baseKcal,
+              surplus_deficit_kcal: intake - store.goals!.plan.maintenanceCalories,
               protein_g: log.proteinG,
               carbs_g: log.carbsG,
               fat_g: log.fatG,
@@ -89,7 +90,8 @@ export default function ReviewScreen() {
   const intake = day?.eatenKcal ?? 0;
   const burn = (day?.activeBurnedKcal ?? 0) + (day?.restingBurnedKcal ?? 0);
   const net = intake - burn;
-  const versusGoal = goals ? intake - goals.baseKcal : 0;
+  const maintenance = goals?.plan.maintenanceCalories ?? 0;
+  const versusMaintenance = goals ? intake - maintenance : 0;
   const weight =
     day?.weightKg == null || !goals
       ? "No weigh-in"
@@ -110,6 +112,7 @@ export default function ReviewScreen() {
 
       <GoogleReconnectBanner
         visible={store.googleReconnectRequired}
+        sessionExpired={store.sessionExpired}
         busy={reconnecting}
         onReconnect={() => {
           setReconnecting(true);
@@ -122,6 +125,7 @@ export default function ReviewScreen() {
         }}
       />
       <SyncStatusBanner
+        compact
         visible={store.mode === "account"}
         pending={store.pending}
         lastSyncedAt={store.lastSyncedAt}
@@ -139,14 +143,14 @@ export default function ReviewScreen() {
             <View style={styles.balanceRow}>
               <BalanceStat label="Intake" value={intake} />
               <BalanceStat label="Burned" value={burn} />
-              <BalanceStat label={net <= 0 ? "Deficit" : "Surplus"} value={Math.abs(net)} accent={net <= 0 ? colors.green : colors.orange} />
+              <BalanceStat label="Net" value={net} />
             </View>
-            <Text style={styles.goalLine}>
-              {versusGoal === 0
-                ? "Right on your calorie goal"
-                : versusGoal < 0
-                  ? `${Math.abs(versusGoal).toLocaleString()} kcal under your ${goals.baseKcal.toLocaleString()} goal`
-                  : `${versusGoal.toLocaleString()} kcal over your ${goals.baseKcal.toLocaleString()} goal`}
+            <Text style={styles.maintenanceLine}>
+              {versusMaintenance === 0
+                ? `At your ${formatKcal(maintenance)} kcal baseline`
+                : versusMaintenance < 0
+                  ? `${formatKcal(Math.abs(versusMaintenance))} kcal below your ${formatKcal(maintenance)} kcal baseline`
+                  : `${formatKcal(versusMaintenance)} kcal above your ${formatKcal(maintenance)} kcal baseline`}
             </Text>
           </View>
 
@@ -164,7 +168,14 @@ export default function ReviewScreen() {
           ) : (
             <>
               {day.meals.map((meal) => (
-                <MealCard key={meal.id} meal={meal} />
+                <Pressable
+                  key={meal.id}
+                  onPress={() => router.push({ pathname: "/meal/[id]", params: { id: meal.id } })}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Edit ${meal.name}`}
+                >
+                  <MealCard meal={meal} />
+                </Pressable>
               ))}
               {day.workouts.map((workout) => (
                 <WorkoutCard key={workout.id} workout={workout} />
@@ -202,7 +213,7 @@ export default function ReviewScreen() {
             ) : (
               <>
                 <Text style={styles.meta}>Sample preview. Sign in for an insight written from your day.</Text>
-                <Text style={styles.insightText}>{sampleInsight(day, goals.baseKcal, goals.proteinTarget)}</Text>
+                <Text style={styles.insightText}>{sampleInsight(day, maintenance, goals.proteinTarget)}</Text>
               </>
             )}
           </View>
@@ -215,7 +226,7 @@ export default function ReviewScreen() {
 function BalanceStat({ label, value, accent }: { label: string; value: number; accent?: string }) {
   return (
     <View style={styles.stat}>
-      <Text style={[styles.statValue, accent ? { color: accent } : null]}>{value.toLocaleString()}</Text>
+      <Text style={[styles.statValue, accent ? { color: accent } : null]}>{formatKcal(value)}</Text>
       <Text style={styles.statLabel}>{label}</Text>
     </View>
   );
@@ -270,12 +281,14 @@ function formatWeight(kg: number, unitSystem: "metric" | "imperial"): string {
   return unitSystem === "metric" ? `${kg.toFixed(1)} kg` : `${(kg * LB_PER_KG).toFixed(1)} lb`;
 }
 
-function sampleInsight(day: DayLog, calorieGoal: number, proteinGoal: number): string {
+function sampleInsight(day: DayLog, maintenance: number, proteinTarget: number): string {
   const burned = day.activeBurnedKcal + day.restingBurnedKcal;
-  const versus = day.eatenKcal - calorieGoal;
-  const goalLine =
-    versus <= 0 ? `${Math.abs(versus).toLocaleString()} kcal under the ${calorieGoal.toLocaleString()} calorie goal.` : `${versus.toLocaleString()} kcal over the calorie goal.`;
-  return `This sample day shows ${day.eatenKcal.toLocaleString()} kcal eaten and ${burned.toLocaleString()} kcal burned. Protein is ${day.proteinG}g of ${proteinGoal}g. ${goalLine}`;
+  const versus = day.eatenKcal - maintenance;
+  const balance =
+    versus <= 0
+      ? `${formatKcal(Math.abs(versus))} kcal below the ${formatKcal(maintenance)} kcal baseline.`
+      : `${formatKcal(versus)} kcal above the ${formatKcal(maintenance)} kcal baseline.`;
+  return `This sample day shows ${formatKcal(day.eatenKcal)} kcal eaten and ${formatKcal(burned)} kcal burned. Protein is ${day.proteinG}g of ${proteinTarget}g. ${balance}`;
 }
 
 function emptyDay(): DayLog {
@@ -291,6 +304,7 @@ function emptyDay(): DayLog {
     restingBurnedKcal: 0,
     steps: null,
     heartRateBpm: null,
+    planSnapshot: null,
   };
 }
 
@@ -304,7 +318,7 @@ const styles = StyleSheet.create({
   stat: { flex: 1 },
   statValue: { color: colors.text, fontSize: 22, fontWeight: "800" },
   statLabel: { color: colors.muted, marginTop: 4 },
-  goalLine: { color: colors.text, marginTop: 14, lineHeight: 20 },
+  maintenanceLine: { color: colors.text, marginTop: 14, lineHeight: 20 },
   section: { color: colors.text, fontSize: 20, fontWeight: "800", marginTop: 22 },
   sectionInline: { color: colors.text, fontSize: 20, fontWeight: "800" },
   trendHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 22 },
