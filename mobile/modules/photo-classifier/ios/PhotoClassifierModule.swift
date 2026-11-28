@@ -102,9 +102,13 @@ private func requestImage(_ asset: PHAsset, allowNetwork: Bool) async -> UIImage
       options: options
     ) { image, info in
       let degraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
-      // A better copy follows a degraded one only when the network may be used. Without it this
-      // is the only callback, and waiting for another would hang until the caller gives up.
-      if degraded && image != nil && allowNetwork {
+      if degraded && image != nil {
+        // With the network allowed, the full image follows in a second callback: wait for it.
+        // Without it nothing follows, so answer "nothing" and let the caller ask again with the
+        // network. Waiting here would hang until the caller gave up.
+        if !allowNetwork && once.claim() {
+          continuation.resume(returning: nil)
+        }
         return
       }
       if once.claim() {

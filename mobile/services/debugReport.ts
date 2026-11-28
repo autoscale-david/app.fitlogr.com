@@ -72,7 +72,7 @@ export async function buildDebugReport(logLines = 600): Promise<string> {
 
   await section("Build", lines, async () => [
     `version: ${info.version}`,
-    `commit: ${info.commit ?? "unknown (not an EAS build)"}`,
+    `commit: ${info.commit ?? (Updates.isEmbeddedLaunch ? "unknown (not an EAS build)" : "unknown (running an over-the-air update)")}`,
     `profile: ${info.profile ?? "unknown"} · built ${info.builtAt ?? "unknown"}`,
     `update: ${Updates.isEmbeddedLaunch ? "none, running the JavaScript built into the app" : `over-the-air update ${Updates.updateId ?? "?"}`}`,
     `channel: ${Updates.channel ?? "none"} · runtime ${Updates.runtimeVersion ?? "?"}`,
@@ -96,79 +96,89 @@ export async function buildDebugReport(logLines = 600): Promise<string> {
     return [`native module: linked (apple-vision) · policy ${CLASSIFIER_POLICY_VERSION}`, `labels this iOS version can emit: ${labels < 0 ? "call failed" : labels}`];
   });
 
-  const db = await openFitlogrDatabase();
+  // The log is still worth having when the database is the thing that is broken.
+  let db: Awaited<ReturnType<typeof openFitlogrDatabase>> | null = null;
+  try {
+    db = await openFitlogrDatabase();
+  } catch (error) {
+    lines.push("", "## Database", `could not be opened: ${error instanceof Error ? error.message : String(error)}`);
+  }
 
-  await section("Account and permissions", lines, async () => {
-    const session = await readSession();
-    const consent = await readSetting(db, "ai_photo_consent_version");
-    const out = [
-      `mode: ${await readMode(db)}`,
-      `session: ${session.refreshToken ? "present" : "none"} · access token expires ${session.expiresAt ?? "?"}`,
-      `photo analysis consent: ${consent === AI_PHOTO_CONSENT_VERSION ? "agreed" : `not agreed (stored "${consent ?? ""}", current "${AI_PHOTO_CONSENT_VERSION}")`}`,
-    ];
-    try {
-      out.push(`photo library access: ${await libraryAccess(false)}`);
-    } catch (error) {
-      out.push(`photo library access: could not read (${error instanceof Error ? error.message : String(error)})`);
-    }
-    try {
-      const notifications = await Notifications.getPermissionsAsync();
-      out.push(`notifications: ${notifications.status}`);
-    } catch {
-      out.push("notifications: could not read");
-    }
-    try {
-      const health = await readHealthConnection(db);
-      out.push(`apple health: ${health.connected ? "connected" : "not connected"} · permission ${health.permission} · ${health.message ?? ""}`);
-    } catch (error) {
-      out.push(`apple health: could not read (${error instanceof Error ? error.message : String(error)})`);
-    }
-    return out;
-  });
+  if (db) {
+    const database = db;
 
-  await section("Settings", lines, async () => {
-    const out: string[] = [];
-    for (const key of SETTINGS_SHOWN) out.push(`${key}: ${(await readSetting(db, key)) ?? "(unset)"}`);
-    return out;
-  });
-
-  await section("Changes waiting to sync", lines, async () => {
-    const rows = await db.getAllAsync<{ method: string; path: string; retry_count: number; next_retry_at: string | null; created_at: string }>(
-      "SELECT method, path, retry_count, next_retry_at, created_at FROM sync_outbox ORDER BY created_at LIMIT 30",
-    );
-    if (rows.length === 0) return ["none"];
-    return rows.map((row) => `${row.method} ${row.path} · created ${row.created_at} · tries ${row.retry_count} · next ${row.next_retry_at ?? "now"}`);
-  });
-
-  await section("Photo log totals", lines, async () => {
-    const states = await db.getAllAsync<{ scan_status: string; n: number }>(
-      "SELECT scan_status, COUNT(*) AS n FROM local_media_assets GROUP BY scan_status ORDER BY n DESC",
-    );
-    const verdicts = await db.getAllAsync<{ verdict: string | null; n: number }>(
-      "SELECT verdict, COUNT(*) AS n FROM local_media_assets GROUP BY verdict ORDER BY n DESC",
-    );
-    const errors = await db.getAllAsync<{ last_error: string; n: number }>(
-      "SELECT last_error, COUNT(*) AS n FROM local_media_assets WHERE last_error IS NOT NULL AND last_error != '' GROUP BY last_error ORDER BY n DESC LIMIT 8",
-    );
-    const meals = await db.getFirstAsync<{ n: number }>("SELECT COUNT(*) AS n FROM meals");
-    return [
-      `by AI state: ${states.map((row) => `${row.scan_status} ${row.n}`).join(", ") || "no photos yet"}`,
-      `by on-device verdict: ${verdicts.map((row) => `${row.verdict ?? "none"} ${row.n}`).join(", ") || "no photos yet"}`,
-      `meals on this phone: ${meals?.n ?? 0}`,
-      ...errors.map((row) => `error x${row.n}: ${row.last_error}`),
-    ];
-  });
-
-  await section("Recent passes (newest first)", lines, async () => {
-    const passes = await listPasses(db);
-    if (passes.length === 0) return ["none recorded"];
-    return passes.slice(0, 25).map((pass) => {
-      const counts = pass.counts
-        ? ` · checked ${pass.counts.checked}, food-like ${pass.counts.lookLikeFood}, analysed ${pass.counts.analysed}, meals ${pass.counts.meals}, waiting ${pass.counts.waiting}, errors ${pass.counts.errors}`
-        : " · no photo step";
-      return `${pass.ranAt} ${pass.reason} · ${Math.round(pass.durationMs / 100) / 10}s${counts}${pass.error ? ` · ERROR ${pass.error}` : ""}`;
+    await section("Account and permissions", lines, async () => {
+      const session = await readSession();
+      const consent = await readSetting(database, "ai_photo_consent_version");
+      const out = [
+        `mode: ${await readMode(database)}`,
+        `session: ${session.refreshToken ? "present" : "none"} · access token expires ${session.expiresAt ?? "?"}`,
+        `photo analysis consent: ${consent === AI_PHOTO_CONSENT_VERSION ? "agreed" : `not agreed (stored "${consent ?? ""}", current "${AI_PHOTO_CONSENT_VERSION}")`}`,
+      ];
+      try {
+        out.push(`photo library access: ${await libraryAccess(false)}`);
+      } catch (error) {
+        out.push(`photo library access: could not read (${error instanceof Error ? error.message : String(error)})`);
+      }
+      try {
+        const notifications = await Notifications.getPermissionsAsync();
+        out.push(`notifications: ${notifications.status}`);
+      } catch {
+        out.push("notifications: could not read");
+      }
+      try {
+        const health = await readHealthConnection(database);
+        out.push(`apple health: ${health.connected ? "connected" : "not connected"} · permission ${health.permission} · ${health.message ?? ""}`);
+      } catch (error) {
+        out.push(`apple health: could not read (${error instanceof Error ? error.message : String(error)})`);
+      }
+      return out;
     });
-  });
+
+    await section("Settings", lines, async () => {
+      const out: string[] = [];
+      for (const key of SETTINGS_SHOWN) out.push(`${key}: ${(await readSetting(database, key)) ?? "(unset)"}`);
+      return out;
+    });
+
+    await section("Changes waiting to sync", lines, async () => {
+      const rows = await database.getAllAsync<{ method: string; path: string; retry_count: number; next_retry_at: string | null; created_at: string }>(
+        "SELECT method, path, retry_count, next_retry_at, created_at FROM sync_outbox ORDER BY created_at LIMIT 30",
+      );
+      if (rows.length === 0) return ["none"];
+      return rows.map((row) => `${row.method} ${row.path} · created ${row.created_at} · tries ${row.retry_count} · next ${row.next_retry_at ?? "now"}`);
+    });
+
+    await section("Photo log totals", lines, async () => {
+      const states = await database.getAllAsync<{ scan_status: string; n: number }>(
+        "SELECT scan_status, COUNT(*) AS n FROM local_media_assets GROUP BY scan_status ORDER BY n DESC",
+      );
+      const verdicts = await database.getAllAsync<{ verdict: string | null; n: number }>(
+        "SELECT verdict, COUNT(*) AS n FROM local_media_assets GROUP BY verdict ORDER BY n DESC",
+      );
+      const errors = await database.getAllAsync<{ last_error: string; n: number }>(
+        "SELECT last_error, COUNT(*) AS n FROM local_media_assets WHERE last_error IS NOT NULL AND last_error != '' GROUP BY last_error ORDER BY n DESC LIMIT 8",
+      );
+      const meals = await database.getFirstAsync<{ n: number }>("SELECT COUNT(*) AS n FROM meals");
+      return [
+        `by AI state: ${states.map((row) => `${row.scan_status} ${row.n}`).join(", ") || "no photos yet"}`,
+        `by on-device verdict: ${verdicts.map((row) => `${row.verdict ?? "none"} ${row.n}`).join(", ") || "no photos yet"}`,
+        `meals on this phone: ${meals?.n ?? 0}`,
+        ...errors.map((row) => `error x${row.n}: ${row.last_error}`),
+      ];
+    });
+
+    await section("Recent passes (newest first)", lines, async () => {
+      const passes = await listPasses(database);
+      if (passes.length === 0) return ["none recorded"];
+      return passes.slice(0, 25).map((pass) => {
+        const counts = pass.counts
+          ? ` · checked ${pass.counts.checked}, food-like ${pass.counts.lookLikeFood}, analysed ${pass.counts.analysed}, meals ${pass.counts.meals}, waiting ${pass.counts.waiting}, errors ${pass.counts.errors}`
+          : " · no photo step";
+        return `${pass.ranAt} ${pass.reason} · ${Math.round(pass.durationMs / 100) / 10}s${counts}${pass.error ? ` · ERROR ${pass.error}` : ""}`;
+      });
+    });
+  }
 
   await section(`Log (last ${logLines} lines, oldest first, times in UTC)`, lines, async () => {
     const log = await readDebugLog(logLines);

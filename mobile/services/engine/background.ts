@@ -27,6 +27,8 @@ interface BackgroundKit {
 let subscriptions: { remove: () => void }[] = [];
 let reportedRestricted = false;
 let arming = 0;
+/** Each arm waits for the one before it, so an older native set-up can never undo a newer one. */
+let armChain: Promise<void> = Promise.resolve();
 
 function shortType(identifier: string): string {
   return identifier.replace(/^HK(Quantity|Workout)?TypeIdentifier/, "") || "Workout";
@@ -39,6 +41,15 @@ function shortType(identifier: string): string {
  * observers registered before access was granted never fire. Never asks for permission itself.
  */
 export function armHealthWake(): void {
+  try {
+    armHealthWakeUnguarded();
+  } catch (error) {
+    // This runs when the JavaScript loads. Nothing here may stop the rest of the app from starting.
+    debugLog("wake", `Apple Health background delivery could not be set up: ${describeError(error)}`);
+  }
+}
+
+function armHealthWakeUnguarded(): void {
   if (Platform.OS !== "ios") return;
   const kit = loadHealthKitModule() as (ReturnType<typeof loadHealthKitModule> & BackgroundKit) | null;
   if (!kit?.subscribeToChanges) {
@@ -75,17 +86,21 @@ export function armHealthWake(): void {
     debugLog("wake", `watching ${subscriptions.length} Apple Health types (${path}) · app ${AppState.currentState}`);
   };
 
-  if (kit.configureBackgroundTypes) {
-    // One frequency for all types. iOS itself limits steps and active energy to about hourly.
-    kit
-      .configureBackgroundTypes([...HOURLY_TYPES, ...IMMEDIATE_TYPES], IMMEDIATE)
-      .then(
-        () => subscribe("native observers"),
-        (error: unknown) => {
+  const configure = kit.configureBackgroundTypes;
+  if (configure) {
+    armChain = armChain
+      .then(async () => {
+        if (generation !== arming) return;
+        try {
+          // One frequency for all types. iOS itself limits steps and active energy to about hourly.
+          await configure([...HOURLY_TYPES, ...IMMEDIATE_TYPES], IMMEDIATE);
+          subscribe("native observers");
+        } catch (error) {
           debugLog("wake", `native background observers could not be set up: ${describeError(error)}`);
           subscribe("session observers");
-        },
-      );
+        }
+      })
+      .catch(() => undefined);
     return;
   }
   // Older library: per-type delivery, with observers that only live as long as this process.

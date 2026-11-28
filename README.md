@@ -432,7 +432,7 @@ EAS builds whatever is checked out, so check out the branch you mean to test fir
 
 ### Debugging a build on a phone
 
-Settings → Debug logs shows one text report: the build commit, whether the on-device photo classifier is linked, permissions, changes waiting to sync, photo-log totals, recent passes, and the last 600 log lines (requests with status and timing, each photo's result, Apple Health wake-ups, errors). "Copy or share the report" opens the share sheet. The report holds no token, email address or photo. Log lines are written with `debugLog()` in `mobile/services/debugLog.ts`.
+Settings → Debug logs shows one text report: the build commit, whether the on-device photo classifier is linked, permissions, changes waiting to sync, photo-log totals, recent passes, and the last 600 log lines (requests with status and timing, each photo's result, Apple Health wake-ups, errors). "Copy or share the report" opens the share sheet. The report holds no token, email address or photo; it does include meal names and calories. Log lines are written with `debugLog()` in `mobile/services/debugLog.ts`.
 
 ### API and website
 
