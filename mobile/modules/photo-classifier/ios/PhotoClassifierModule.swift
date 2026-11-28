@@ -4,7 +4,7 @@ import UIKit
 import Vision
 
 let defaultMaxLabels = 8
-let defaultMinConfidence = 0.05
+let defaultMinConfidence: Float = 0.05
 
 public class PhotoClassifierModule: Module {
   public func definition() -> ModuleDefinition {
@@ -39,7 +39,11 @@ private func classifyAsset(_ assetId: String, maxLabels: Int, minConfidence: Flo
   guard let asset = fetched.firstObject else {
     return ["assetId": assetId, "error": "Photo is not in the library"]
   }
-  let image = await requestImage(asset, allowNetwork: false) ?? await requestImage(asset, allowNetwork: true)
+  // `??` cannot wrap an await. Try the local rendition, then iCloud.
+  var image = await requestImage(asset, allowNetwork: false)
+  if image == nil {
+    image = await requestImage(asset, allowNetwork: true)
+  }
   return classifyImage(image, assetId: assetId, maxLabels: maxLabels, minConfidence: minConfidence)
 }
 
@@ -99,10 +103,13 @@ private func classifyImage(_ image: UIImage?, assetId: String, maxLabels: Int, m
 }
 
 private func supportedLabelIds() -> [String] {
-  // Vision's documented return is the identifier strings this OS can emit.
+  // This SDK returns [VNClassificationObservation], not [String].
   // currentRevision is the classifier this device actually runs.
   let revision = VNClassifyImageRequest.currentRevision
-  return (try? VNClassifyImageRequest.knownClassifications(forRevision: revision)) ?? []
+  guard let observations = try? VNClassifyImageRequest.knownClassifications(forRevision: revision) else {
+    return []
+  }
+  return observations.map(\.identifier)
 }
 
 private func intOption(_ options: [String: Any], _ key: String, _ fallback: Int) -> Int {
