@@ -1,0 +1,675 @@
+import {
+  AnalyzePhotoMetadataSchema,
+  PHOTO_LIMITS,
+  publishedEstimate,
+  atwaterWarning,
+  explicitPickReopens,
+  isConfirmedMeal,
+  matchHash,
+  totalsFromVisionItems,
+  type AnalyzePhotoResponse,
+  type CheckHashItem,
+  type CheckHashesResponse,
+  type GooglePhotoStatus,
+  type KnownPhotoHash,
+  type MealVision,
+  type MealVisionItem,
+  type PhotoExcludeResponse,
+  type PhotoReference,
+  type PhotoStatus,
+  type PhotoUrlResponse,
+} from "@fitlogr/shared";
+import { VisionFailed, analyzeMealVision, visionConfigFromEnv, type VisionAttempt } from "../ai/openrouter";
+import { visionLimits } from "../config";
+import { getGoogleConnection } from "../db/accounts";
+import { getMeal } from "../db/meals";
+import { recomputeDailyIntake } from "../db/summaries";
+import type { Env } from "../env";
+import { fetchMealPhotoUrl, uploadMealPhoto, urlExpiresAt } from "../google-photos/library";
+import { GOOGLE_RECONNECT } from "../google-photos/tokens";
+import { ApiError } from "../http";
+import { nowIso, uuidv7 } from "../ids";
+import type { AppDeps } from "../types";
+
+export class RateLimitError extends ApiError {
+  readonly retryAfter: number;
+
+  constructor(retryAfter = 60) {
+    super(429, "RATE_LIMITED", "Too many meal photos today. Try again later.");
+    this.retryAfter = retryAfter;
+  }
+}
+
+interface PhotoRow {
+  id: string;
+  content_sha256: string;
+  status: PhotoStatus;
+  is_meal: number;
+  google_media_item_id: string | null;
+  google_status: GooglePhotoStatus;
+  duplicate_of_photo_id: string | null;
+  local_date: string;
+  timezone: string;
+}
+
+export async function checkPhotoHashes(db: D1Database, userId: string, items: CheckHashItem[]): Promise<CheckHashesResponse> {
+  const known = await loadKnown(db, userId, items.map((item) => item.content_sha256));
+  return { results: items.map((item) => matchHash(item, known)) };
+}
+
+export async function analyzeUploadedPhoto(
+  db: D1Database,
+  env: Env,
+  deps: AppDeps,
+  userId: string,
+  file: { bytes: Uint8Array; type: string },
+  metadataRaw: unknown,
+): Promise<{ status: 200 | 201; body: AnalyzePhotoResponse }> {
+  await requireConsent(db, userId);
+  if (file.bytes.byteLength > PHOTO_LIMITS.maxImageBytes) {
+    throw new ApiError(413, "PAYLOAD_TOO_LARGE", "Photo must be 2 MB or smaller");
+  }
+  if (!isJpeg(file)) throw new ApiError(415, "UNSUPPORTED_MEDIA_TYPE", "Photo must be a JPEG");
+  const parsed = AnalyzePhotoMetadataSchema.safeParse(metadataRaw);
+  if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", parsed.error.issues[0]?.message ?? "Invalid photo");
+  const metadata = parsed.data;
+  const actualHash = await sha256Hex(file.bytes);
+  if (actualHash !== metadata.content_sha256) throw new ApiError(400, "VALIDATION_ERROR", "Photo hash does not match");
+
+  const now = deps.now();
+  const known = await loadKnown(db, userId, [metadata.content_sha256]);
+  const match = matchHash(metadata, known);
+  // A photo the person picked in the Log is logged even when an automatic scan already rejected it.
+  if (match.status !== "new" && match.photo_id && !explicitPickReopens(match.status, metadata.force_meal === true)) {
+    return duplicateResult(db, userId, metadata, match.photo_id, match.status, now);
+  }
+
+  await enforceRateLimit(db, userId, now, visionLimits(env));
+  const photoId = metadata.client_photo_id && /^[A-Za-z0-9_-]{8,80}$/.test(metadata.client_photo_id) ? metadata.client_photo_id : uuidv7(now.getTime());
+  const config = visionConfigFromEnv(env);
+  let analysis: MealVision;
+  let attempts: VisionAttempt[];
+  try {
+    const vision = await analyzeMealVision(deps.fetch, config, file.bytes);
+    analysis = vision.analysis;
+    attempts = vision.attempts;
+  } catch (error) {
+    if (error instanceof VisionFailed) {
+      await logAttempts(db, userId, error.attempts, photoId, now);
+      throw error;
+    }
+    throw error;
+  }
+  await logAttempts(db, userId, attempts, photoId, now);
+
+  const stamp = nowIso(now);
+  const deviceId = await ownedDevice(db, userId, metadata.device_id);
+  if (!isConfirmedMeal(analysis, metadata.force_meal === true)) {
+    await insertPhoto(db, {
+      id: photoId,
+      userId,
+      deviceId,
+      metadata,
+      status: "analyzed_non_meal",
+      isMeal: false,
+      confidence: analysis.confidence,
+      mediaItemId: null,
+      albumId: null,
+      googleStatus: "none",
+      duplicateOf: null,
+      stamp,
+      analysis,
+    });
+    const estimate = publishedEstimate(analysis);
+    return {
+      status: 200,
+      body: {
+        outcome: "not_meal",
+        classification: analysis.classification,
+        estimate,
+        photo: await photoReference(db, userId, photoId),
+        meal: null,
+      },
+    };
+  }
+
+  const items = analysis.items.length > 0 ? analysis.items : [placeholderItem(analysis)];
+  const totals = totalsFromVisionItems(items);
+  const mealName = (analysis.meal_name || "Meal").slice(0, 120);
+  let mediaItemId: string | null = null;
+  let albumId: string | null = null;
+  let googleStatus: GooglePhotoStatus = "none";
+  let reconnect = false;
+  if (await shouldUploadAlbum(db, userId, metadata.upload_to_google_photos)) {
+    try {
+      const uploaded = await uploadMealPhoto(
+        db,
+        env,
+        userId,
+        deps.fetch,
+        now,
+        file.bytes,
+        `${mealName} — ${totals.calories_kcal} kcal (fitlogr estimate)`,
+        `fitlogr-${photoId}.jpg`,
+      );
+      mediaItemId = uploaded.mediaItemId;
+      albumId = uploaded.albumId;
+      googleStatus = "uploaded";
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "GOOGLE_QUOTA_EXCEEDED") googleStatus = "quota_exceeded";
+      else if (error instanceof ApiError && error.code === GOOGLE_RECONNECT) {
+        googleStatus = "failed";
+        reconnect = true;
+      } else if (error instanceof ApiError && error.code === "GOOGLE_UPSTREAM_ERROR") googleStatus = "failed";
+      else throw error;
+    }
+  }
+
+  const notes = [analysis.notes, atwaterWarning(items)].filter((note): note is string => Boolean(note)).join(" ").slice(0, 500);
+  const mealId = uuidv7(now.getTime() + 1);
+  await insertPhoto(db, {
+    id: photoId,
+    userId,
+    deviceId,
+    metadata,
+    status: "analyzed_meal",
+    isMeal: true,
+    confidence: analysis.confidence,
+    mediaItemId,
+    albumId,
+    googleStatus,
+    duplicateOf: null,
+    stamp,
+    analysis,
+  });
+  await db
+    .prepare(
+      `INSERT INTO meals (
+         id, user_id, photo_id, name, meal_type, eaten_at, local_date, timezone,
+         calories_kcal, protein_g, carbs_g, fat_g, ai_confidence, ai_notes,
+         is_ai_estimate, is_user_edited, user_edited_at, created_at, updated_at, deleted_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, NULL, ?, ?, NULL)`,
+    )
+    .bind(
+      mealId,
+      userId,
+      photoId,
+      mealName,
+      analysis.suggested_meal_type ?? "meal",
+      metadata.captured_at,
+      metadata.local_date,
+      metadata.timezone,
+      totals.calories_kcal,
+      totals.protein_g,
+      totals.carbs_g,
+      totals.fat_g,
+      analysis.confidence,
+      notes || null,
+      stamp,
+      stamp,
+    )
+    .run();
+  let offset = 2;
+  for (const item of items) {
+    await db
+      .prepare(
+        `INSERT INTO meal_items (
+           id, meal_id, user_id, sort_order, name, quantity, unit, estimated_grams,
+           calories_kcal, protein_g, carbs_g, fat_g, confidence, is_user_edited, created_at, updated_at, deleted_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL)`,
+      )
+      .bind(
+        uuidv7(now.getTime() + offset),
+        mealId,
+        userId,
+        offset - 2,
+        item.name,
+        item.quantity,
+        item.unit,
+        item.estimated_grams,
+        item.calories_kcal,
+        item.protein_g,
+        item.carbs_g,
+        item.fat_g,
+        item.confidence,
+        stamp,
+        stamp,
+      )
+      .run();
+    offset += 1;
+  }
+  await recomputeDailyIntake(db, userId, metadata.local_date, metadata.timezone, stamp);
+  // The meal is saved either way. The app keeps the photo id so it can retry the album upload after a reconnect.
+  return {
+    status: 201,
+    body: {
+      outcome: "meal",
+      classification: analysis.classification,
+      estimate: publishedEstimate(analysis),
+      photo: await photoReference(db, userId, photoId),
+      meal: await getMeal(db, userId, mealId),
+      ...(reconnect ? { google_reconnect_required: true } : {}),
+    },
+  };
+}
+
+export async function freshPhotoUrl(db: D1Database, env: Env, deps: AppDeps, userId: string, photoId: string): Promise<PhotoUrlResponse> {
+  const row = await ownedPhoto(db, userId, photoId);
+  if (!row) throw new ApiError(404, "NOT_FOUND", "Photo not found");
+  if (!row.google_media_item_id) {
+    return { photo_id: photoId, status: "unavailable", url: null, expires_at: null };
+  }
+  const now = deps.now();
+  const lookedUp = await fetchMealPhotoUrl(db, env, userId, deps.fetch, now, row.google_media_item_id);
+  if ("missing" in lookedUp) {
+    await db
+      .prepare("UPDATE photos SET google_status = 'missing', updated_at = ? WHERE id = ? AND user_id = ?")
+      .bind(nowIso(now), photoId, userId)
+      .run();
+    return { photo_id: photoId, status: "missing", url: null, expires_at: null };
+  }
+  if ("quota" in lookedUp) {
+    // Usually Google's request-rate limit on lookups, which passes. The stored photo status is left alone.
+    return { photo_id: photoId, status: "quota_exceeded", url: null, expires_at: null };
+  }
+  return { photo_id: photoId, status: "ok", url: lookedUp.url, expires_at: urlExpiresAt(now) };
+}
+
+/**
+ * Re-sends a meal photo whose album upload failed (Google outage, rate limit, revoked access).
+ * The bytes must be the same JPEG that was analyzed, so the stored SHA-256 still matches.
+ */
+export async function retryGoogleUpload(
+  db: D1Database,
+  env: Env,
+  deps: AppDeps,
+  userId: string,
+  photoId: string,
+  file: { bytes: Uint8Array; type: string },
+): Promise<PhotoReference> {
+  const row = await ownedPhoto(db, userId, photoId);
+  if (!row) throw new ApiError(404, "NOT_FOUND", "Photo not found");
+  if (row.google_media_item_id) throw new ApiError(409, "CONFLICT", "Photo is already in Google Photos");
+  if (row.status !== "analyzed_meal") throw new ApiError(409, "CONFLICT", "Only meal photos are saved to Google Photos");
+  if (file.bytes.byteLength > PHOTO_LIMITS.maxImageBytes) throw new ApiError(413, "PAYLOAD_TOO_LARGE", "Photo must be 2 MB or smaller");
+  if (!isJpeg(file)) throw new ApiError(415, "UNSUPPORTED_MEDIA_TYPE", "Photo must be a JPEG");
+  if ((await sha256Hex(file.bytes)) !== row.content_sha256) throw new ApiError(400, "VALIDATION_ERROR", "Photo does not match");
+  const now = deps.now();
+  const meal = await db
+    .prepare("SELECT name, calories_kcal FROM meals WHERE photo_id = ? AND user_id = ? AND deleted_at IS NULL")
+    .bind(photoId, userId)
+    .first<{ name: string; calories_kcal: number }>();
+  const description = meal ? `${meal.name} — ${meal.calories_kcal} kcal (fitlogr estimate)` : "fitlogr meal";
+  let googleStatus: GooglePhotoStatus = "failed";
+  try {
+    const uploaded = await uploadMealPhoto(db, env, userId, deps.fetch, now, file.bytes, description, `fitlogr-${photoId}.jpg`);
+    await db
+      .prepare(
+        `UPDATE photos SET google_media_item_id = ?, google_album_id = ?, google_status = 'uploaded', updated_at = ?
+         WHERE id = ? AND user_id = ?`,
+      )
+      .bind(uploaded.mediaItemId, uploaded.albumId, nowIso(now), photoId, userId)
+      .run();
+    return photoReference(db, userId, photoId);
+  } catch (error) {
+    if (error instanceof ApiError && error.code === "GOOGLE_QUOTA_EXCEEDED") googleStatus = "quota_exceeded";
+    await db
+      .prepare("UPDATE photos SET google_status = ?, updated_at = ? WHERE id = ? AND user_id = ?")
+      .bind(googleStatus, nowIso(now), photoId, userId)
+      .run();
+    throw error;
+  }
+}
+
+export async function excludePhoto(db: D1Database, userId: string, photoId: string, now: Date): Promise<PhotoExcludeResponse> {
+  const row = await ownedPhoto(db, userId, photoId);
+  if (!row) throw new ApiError(404, "NOT_FOUND", "Photo not found");
+  const stamp = nowIso(now);
+  await db
+    .prepare("UPDATE photos SET status = 'excluded', is_meal = 0, updated_at = ? WHERE id = ? AND user_id = ?")
+    .bind(stamp, photoId, userId)
+    .run();
+  const meal = await db
+    .prepare("SELECT id, local_date, timezone FROM meals WHERE photo_id = ? AND user_id = ? AND deleted_at IS NULL")
+    .bind(photoId, userId)
+    .first<{ id: string; local_date: string; timezone: string }>();
+  if (meal) {
+    await db
+      .prepare("UPDATE meals SET deleted_at = ?, updated_at = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL")
+      .bind(stamp, stamp, meal.id, userId)
+      .run();
+    await db
+      .prepare("UPDATE meal_items SET deleted_at = ?, updated_at = ? WHERE meal_id = ? AND user_id = ? AND deleted_at IS NULL")
+      .bind(stamp, stamp, meal.id, userId)
+      .run();
+    await recomputeDailyIntake(db, userId, meal.local_date, meal.timezone, stamp);
+  }
+  return { photo_id: photoId, status: "excluded", meal_id: meal?.id ?? null };
+}
+
+/**
+ * Absent keeps today's album upload. True uploads only when the stored token has a Photos scope.
+ * False never calls Google Photos.
+ */
+async function shouldUploadAlbum(db: D1Database, userId: string, flag: boolean | undefined): Promise<boolean> {
+  if (flag === false) return false;
+  if (flag !== true) return true;
+  const connection = await getGoogleConnection(db, userId);
+  return connection.status === "active" && connection.scopes.some((scope) => scope.includes("photoslibrary"));
+}
+
+async function duplicateResult(
+  db: D1Database,
+  userId: string,
+  metadata: { content_sha256: string; perceptual_hash?: string | null; captured_at: string; local_date: string; timezone: string; source?: "device_library" | "google_picker" | "manual"; device_id?: string },
+  photoId: string,
+  status: string,
+  now: Date,
+): Promise<{ status: 200; body: AnalyzePhotoResponse }> {
+  const existing = await ownedPhoto(db, userId, photoId);
+  if (existing && existing.content_sha256 !== metadata.content_sha256) {
+    const stamp = nowIso(now);
+    await insertPhoto(db, {
+      id: uuidv7(now.getTime()),
+      userId,
+      deviceId: await ownedDevice(db, userId, metadata.device_id),
+      metadata,
+      status: "duplicate",
+      isMeal: false,
+      confidence: null,
+      mediaItemId: null,
+      albumId: null,
+      googleStatus: "none",
+      duplicateOf: photoId,
+      stamp,
+    });
+  }
+  const meal = await db
+    .prepare("SELECT id FROM meals WHERE photo_id = ? AND user_id = ? AND deleted_at IS NULL")
+    .bind(photoId, userId)
+    .first<{ id: string }>();
+  return {
+    status: 200,
+    body: {
+      outcome: status === "non_meal" ? "not_meal" : "duplicate",
+      photo: await photoReference(db, userId, photoId),
+      meal: meal ? await getMeal(db, userId, meal.id) : null,
+    },
+  };
+}
+
+async function enforceRateLimit(
+  db: D1Database,
+  userId: string,
+  now: Date,
+  limits: { daily: number; burst: number },
+): Promise<void> {
+  const dayWindowMs = 24 * 60 * 60 * 1000;
+  const daily = await countVision(db, userId, now, dayWindowMs, limits.daily);
+  const burst = await countVision(db, userId, now, PHOTO_LIMITS.burstWindowMs, limits.burst);
+  if (daily.count < limits.daily && burst.count < limits.burst) return;
+  await insertAi(db, {
+    userId,
+    model: "rate-limit",
+    fallbackUsed: false,
+    promptTokens: null,
+    completionTokens: null,
+    estimatedCostUsd: null,
+    latencyMs: 0,
+    status: "rate_limited",
+    relatedEntityId: null,
+    now,
+  });
+  const waits = [
+    daily.count >= limits.daily ? daily.retryAfterSeconds : 0,
+    burst.count >= limits.burst ? burst.retryAfterSeconds : 0,
+  ];
+  throw new RateLimitError(Math.max(1, ...waits));
+}
+
+/** Vision calls in the window, and how long until the call that holds the limit leaves it. */
+async function countVision(
+  db: D1Database,
+  userId: string,
+  now: Date,
+  windowMs: number,
+  limit: number,
+): Promise<{ count: number; retryAfterSeconds: number }> {
+  const since = new Date(now.getTime() - windowMs).toISOString();
+  const count = await db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM ai_requests
+       WHERE user_id = ? AND request_type = 'meal_vision' AND status != 'rate_limited' AND created_at >= ?`,
+    )
+    .bind(userId, since)
+    .first<{ n: number }>();
+  const n = count?.n ?? 0;
+  if (n < limit) return { count: n, retryAfterSeconds: 0 };
+  const blocking = await db
+    .prepare(
+      `SELECT created_at FROM ai_requests
+       WHERE user_id = ? AND request_type = 'meal_vision' AND status != 'rate_limited' AND created_at >= ?
+       ORDER BY created_at DESC LIMIT 1 OFFSET ?`,
+    )
+    .bind(userId, since, limit - 1)
+    .first<{ created_at: string }>();
+  const leavesAt = blocking ? Date.parse(blocking.created_at) + windowMs : now.getTime() + windowMs;
+  return { count: n, retryAfterSeconds: Math.max(1, Math.ceil((leavesAt - now.getTime()) / 1000)) };
+}
+
+async function requireConsent(db: D1Database, userId: string): Promise<void> {
+  const row = await db
+    .prepare("SELECT ai_consent_accepted_at FROM user_settings WHERE user_id = ?")
+    .bind(userId)
+    .first<{ ai_consent_accepted_at: string | null }>();
+  if (!row?.ai_consent_accepted_at) {
+    throw new ApiError(403, "AI_CONSENT_REQUIRED", "Agree to meal photo analysis before sending a photo");
+  }
+}
+
+async function loadKnown(db: D1Database, userId: string, hashes: string[]): Promise<KnownPhotoHash[]> {
+  const recent = await db
+    .prepare(
+      `SELECT p.id, p.content_sha256, p.perceptual_hash, p.status, p.captured_at, m.id AS meal_id
+       FROM photos p
+       LEFT JOIN meals m ON m.photo_id = p.id AND m.user_id = p.user_id AND m.deleted_at IS NULL
+       WHERE p.user_id = ? AND p.deleted_at IS NULL
+       ORDER BY p.created_at DESC
+       LIMIT 2000`,
+    )
+    .bind(userId)
+    .all<KnownPhotoHash>();
+  const byId = new Map(recent.results.map((photo) => [photo.id, photo]));
+  // D1 allows 100 bound parameters per query; a full check-hashes batch is 100 hashes plus the user id.
+  for (let start = 0; start < hashes.length; start += 90) {
+    const chunk = hashes.slice(start, start + 90);
+    const exact = await db
+      .prepare(
+        `SELECT p.id, p.content_sha256, p.perceptual_hash, p.status, p.captured_at, m.id AS meal_id
+         FROM photos p
+         LEFT JOIN meals m ON m.photo_id = p.id AND m.user_id = p.user_id AND m.deleted_at IS NULL
+         WHERE p.user_id = ? AND p.deleted_at IS NULL AND p.content_sha256 IN (${chunk.map(() => "?").join(", ")})`,
+      )
+      .bind(userId, ...chunk)
+      .all<KnownPhotoHash>();
+    for (const photo of exact.results) byId.set(photo.id, photo);
+  }
+  return [...byId.values()];
+}
+
+async function photoReference(db: D1Database, userId: string, photoId: string): Promise<PhotoReference> {
+  const row = await ownedPhoto(db, userId, photoId);
+  if (!row) throw new ApiError(404, "NOT_FOUND", "Photo not found");
+  return {
+    id: row.id,
+    status: row.status,
+    is_meal: row.is_meal === 1,
+    google_media_item_id: row.google_media_item_id,
+    google_status: row.google_status,
+    content_sha256: row.content_sha256,
+    duplicate_of_photo_id: row.duplicate_of_photo_id,
+  };
+}
+
+async function ownedPhoto(db: D1Database, userId: string, photoId: string): Promise<PhotoRow | null> {
+  return db
+    .prepare(
+      `SELECT id, content_sha256, status, is_meal, google_media_item_id, google_status, duplicate_of_photo_id, local_date, timezone
+       FROM photos WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+    )
+    .bind(photoId, userId)
+    .first<PhotoRow>();
+}
+
+async function ownedDevice(db: D1Database, userId: string, deviceId: string | undefined): Promise<string | null> {
+  if (!deviceId) return null;
+  const row = await db.prepare("SELECT id FROM user_devices WHERE id = ? AND user_id = ?").bind(deviceId, userId).first<{ id: string }>();
+  return row?.id ?? null;
+}
+
+async function insertPhoto(
+  db: D1Database,
+  input: {
+    id: string;
+    userId: string;
+    deviceId: string | null;
+    metadata: {
+      content_sha256: string;
+      perceptual_hash?: string | null;
+      captured_at: string;
+      local_date: string;
+      timezone: string;
+      source?: string;
+      on_device_verdict?: string;
+      on_device_labels?: { id: string; confidence: number }[];
+    };
+    status: PhotoStatus;
+    isMeal: boolean;
+    confidence: number | null;
+    mediaItemId: string | null;
+    albumId: string | null;
+    googleStatus: GooglePhotoStatus;
+    duplicateOf: string | null;
+    stamp: string;
+    analysis?: MealVision;
+  },
+): Promise<void> {
+  const estimate = input.analysis ? JSON.stringify(publishedEstimate(input.analysis)) : null;
+  const labels = input.metadata.on_device_labels ? JSON.stringify(input.metadata.on_device_labels) : null;
+  await db
+    .prepare(
+      `INSERT INTO photos (
+         id, user_id, device_id, content_sha256, perceptual_hash, captured_at, local_date, timezone, source,
+         status, is_meal, meal_confidence, google_media_item_id, google_album_id, google_status,
+         duplicate_of_photo_id, ai_classification, ai_estimate_json, device_verdict, device_labels_json,
+         created_at, updated_at, deleted_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+    )
+    .bind(
+      input.id,
+      input.userId,
+      input.deviceId,
+      input.metadata.content_sha256,
+      input.metadata.perceptual_hash ?? null,
+      input.metadata.captured_at,
+      input.metadata.local_date,
+      input.metadata.timezone,
+      input.metadata.source ?? "manual",
+      input.status,
+      input.isMeal ? 1 : 0,
+      input.confidence,
+      input.mediaItemId,
+      input.albumId,
+      input.googleStatus,
+      input.duplicateOf,
+      input.analysis?.classification ?? null,
+      estimate,
+      input.metadata.on_device_verdict ?? null,
+      labels,
+      input.stamp,
+      input.stamp,
+    )
+    .run();
+}
+
+async function logAttempts(db: D1Database, userId: string, attempts: VisionAttempt[], photoId: string, now: Date): Promise<void> {
+  for (const attempt of attempts) {
+    await insertAi(db, {
+      userId,
+      model: attempt.model,
+      fallbackUsed: attempt.fallbackUsed,
+      promptTokens: attempt.promptTokens,
+      completionTokens: attempt.completionTokens,
+      estimatedCostUsd: attempt.estimatedCostUsd,
+      latencyMs: attempt.latencyMs,
+      status: attempt.status,
+      relatedEntityId: photoId,
+      now,
+    });
+  }
+}
+
+async function insertAi(
+  db: D1Database,
+  input: {
+    userId: string;
+    model: string;
+    fallbackUsed: boolean;
+    promptTokens: number | null;
+    completionTokens: number | null;
+    estimatedCostUsd: number | null;
+    latencyMs: number;
+    status: "ok" | "schema_error" | "upstream_error" | "rate_limited";
+    relatedEntityId: string | null;
+    now: Date;
+  },
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO ai_requests (
+         id, user_id, request_type, model, fallback_used, prompt_tokens, completion_tokens,
+         estimated_cost_usd, latency_ms, status, related_entity_id, created_at
+       ) VALUES (?, ?, 'meal_vision', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      uuidv7(input.now.getTime()),
+      input.userId,
+      input.model,
+      input.fallbackUsed ? 1 : 0,
+      input.promptTokens,
+      input.completionTokens,
+      input.estimatedCostUsd,
+      input.latencyMs,
+      input.status,
+      input.relatedEntityId,
+      nowIso(input.now),
+    )
+    .run();
+}
+
+function placeholderItem(analysis: MealVision): MealVisionItem {
+  return {
+    name: analysis.meal_name || "Meal",
+    quantity: 1,
+    unit: "serving",
+    estimated_grams: null,
+    calories_kcal: 0,
+    protein_g: 0,
+    carbs_g: 0,
+    fat_g: 0,
+    confidence: analysis.confidence,
+  };
+}
+
+function isJpeg(file: { bytes: Uint8Array; type: string }): boolean {
+  const type = file.type.toLowerCase();
+  if (type && type !== "image/jpeg" && type !== "image/jpg") return false;
+  return file.bytes.length > 3 && file.bytes[0] === 0xff && file.bytes[1] === 0xd8;
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  const digest = await crypto.subtle.digest("SHA-256", buffer);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}

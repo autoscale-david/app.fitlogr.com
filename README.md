@@ -16,7 +16,7 @@ fitlogr makes calorie and fitness tracking effortless. No tedious food logging, 
 - **Friction-free:** Minimize manual data entry and user interactions.
 - **AI-first:** Automatically turn photos and fitness data into useful insights.
 - **Cross-platform:** Support iOS and Android with seamless synchronization.
-- **Privacy-first:** Store meal photos in the user's own Google Photos account.
+- **Privacy-first:** Keep meal photos on the phone. Send a photo for analysis only when it looks like food.
 - **Cost-efficient:** Minimize operating costs to keep fitlogr free.
 
 Users should not need to open fitlogr after every meal or workout.
@@ -28,7 +28,7 @@ Users should not need to open fitlogr after every meal or workout.
 - Automatically discover meal photos from the device's photo library.
 - Use AI to identify food, estimate portion sizes, calories, protein, carbohydrates, and fat.
 - Automatically organize meals by capture date and time.
-- Upload meal photos to a dedicated `fitlogr` album in Google Photos.
+- Keep meal photos on the phone. The server does not store photo files.
 - Detect duplicate photos and meals.
 - Allow users to correct nutritional estimates or exclude photos.
 
@@ -55,14 +55,14 @@ Support compatible fitness watches, fitness trackers, and smart scales through p
 
 ## User Accounts & Synchronization
 
-- Require users to connect a Google account and authorize Google Photos.
+- Require a Google account for identity (name and email). The iPhone app does not ask for Google Photos access.
 - Use the Google account as the shared identity across devices.
 - Allow users to capture meals on one device and review progress on another.
 - Synchronize nutrition records, health data, goals, preferences, and historical progress.
 - Use local caching for offline access and synchronize when connectivity returns.
 - Prevent duplicate records across devices.
 - Support account deletion and data export.
-- Support alternative authentication if required by Apple App Store policies, while maintaining Google Photos connectivity.
+- Support alternative authentication if required by Apple App Store policies.
 
 ## App Environment
 
@@ -77,7 +77,7 @@ Maintain a single cross-platform mobile codebase.
 | Navigation | Expo Router |
 | Authentication | Google OAuth 2.0 |
 | Photo discovery | Expo MediaLibrary |
-| Photo storage | Google Photos |
+| Photo storage | On the phone (Apple Photos on iPhone) |
 | Local database | Expo SQLite |
 | Secure storage | Expo SecureStore |
 | iOS health integration | Apple HealthKit |
@@ -100,7 +100,7 @@ The website and backend API are served by a Cloudflare Worker hosted on fitlogr.
 | Hosting | Cloudflare Workers |
 | Backend language | TypeScript |
 | Database | Cloudflare D1 |
-| Photo storage | Google Photos |
+| Photo storage | On the phone. The worker keeps no photo files. |
 | AI inference | OpenRouter |
 | Deployment | Cloudflare Wrangler |
 | CI/CD | GitHub Actions |
@@ -124,14 +124,13 @@ Reuse existing infrastructure where appropriate.
 Required integrations:
 
 - Google OAuth 2.0 / OpenID Connect
+
+Legacy integrations, used only by app builds older than 0.2.0:
+
 - Google Photos Library API
-
-Optional integrations:
-
 - Google Photos Picker API
-- Google Health API
 
-Use the same centralized Web OAuth client for all Google Photos API operations across iOS and Android.
+Use the same centralized Web OAuth client for sign-in across iOS and Android.
 
 ### OpenRouter Configuration
 
@@ -199,13 +198,13 @@ API_BASE_URL=https://fitlogr.com/api
                       |
        +--------------+--------------+
        |              |              |
- Cloudflare D1   Google Photos    OpenRouter
- User Accounts   fitlogr Album    AI Analysis
- Fitness Data    Meal Photos      Nutrition
+ Cloudflare D1   Google sign-in   OpenRouter
+ User Accounts   Identity only    AI Analysis
+ Fitness Data                     Nutrition
  Meal Records                     Insights
 ```
 
-Cloudflare D1 is the authoritative database for user and fitness records. Google Photos is the authoritative storage for meal photos.
+Cloudflare D1 is the authoritative database for user and fitness records. Meal photos stay on the phone, in Apple Photos.
 
 Do not maintain permanent photo storage on fitlogr infrastructure.
 
@@ -219,24 +218,26 @@ Do not maintain permanent photo storage on fitlogr infrastructure.
 - Use `TOKEN_ENCRYPTION_KEY` as a Base64-encoded 256-bit encryption key.
 - Use `SESSION_SECRET` for secure session signing where applicable.
 - Maintain secure application sessions independently of Google access tokens.
-- Centralize Google Photos API operations through the backend.
 - Handle revoked permissions and account reconnection gracefully.
 
-## Photo Discovery & Google Photos
+## Photo Discovery
 
-Google Photos restricts third-party access to photos not created by the requesting application. fitlogr addresses this through automatic local photo discovery and app-managed uploads.
+The iPhone app reads Apple Photos on the device. A photo the on-device filter rejects never leaves the phone.
 
 ### Photo Processing
 
-1. Discover new photos from the device's authorized photo library.
-2. Identify potential meal photos using on-device classification where practical.
+1. Discover new photos from the iPhone photo library.
+2. Decide on the phone which photos look like food.
 3. Deduplicate photos using content hashes and image fingerprints.
-4. Compress candidate meal photos and submit them for AI analysis.
-5. Upload identified meal photos to the user's `fitlogr` Google Photos album.
-6. Store nutritional estimates and Google Photos media item IDs in Cloudflare D1.
-7. Make meal records and photos available across all connected devices.
+4. Compress a photo that passed the filter and submit it for AI analysis.
+5. Keep the photo on the phone. Store the nutritional estimate in Cloudflare D1.
+6. Show the meal from the phone's copy of the photo.
 
-### Google Photos Integration
+Older app builds can still opt into a Google Photos album upload. The iPhone app sends `upload_to_google_photos: false`. Sign-in from this app requests only `openid`, `email`, and `profile`.
+
+### Google Photos Integration (legacy)
+
+The iPhone app from 0.2.0 on does not use any of this. The server keeps it for older builds.
 
 - Automatically create a dedicated `fitlogr` album.
 - Upload meal photos using the Google Photos Library API.
@@ -250,19 +251,19 @@ Google Photos automatic backup of the entire device library is not required.
 
 ### OAuth Scopes
 
-Required:
+Requested by the iPhone app (0.2.0 and later):
 
 ```text
 openid
 email
 profile
-https://www.googleapis.com/auth/photoslibrary.appendonly
-https://www.googleapis.com/auth/photoslibrary.readonly.appcreateddata
 ```
 
-Optional, for historical imports:
+Requested only by older builds, for the legacy Google Photos album and picker:
 
 ```text
+https://www.googleapis.com/auth/photoslibrary.appendonly
+https://www.googleapis.com/auth/photoslibrary.readonly.appcreateddata
 https://www.googleapis.com/auth/photospicker.mediaitems.readonly
 ```
 
@@ -393,6 +394,57 @@ Use a monorepo with shared types, validation schemas, and utilities. Adapt the s
 - Maintain backward compatibility with released mobile applications.
 - Complete required OAuth verification and platform permission reviews before public launch.
 - Keep this README updated as the project evolves.
+
+## Local Development
+
+Install dependencies from the repository root with Node.js 22 or newer:
+
+```bash
+npm ci
+```
+
+### Mobile app (Expo Go)
+
+```bash
+npm run dev:mobile
+```
+
+Install the current Expo Go app from the App Store or Google Play, then scan the QR code. Log, Review, and Settings run on the phone with a local SQLite database and sample meals, so you can try the evening review without a Mac and without signing in. Fast Refresh works from Windows.
+
+If the phone is not on the same network as the computer, start with a tunnel:
+
+```bash
+npm run dev:mobile -- --tunnel
+```
+
+Apple Health and Health Connect need an EAS development build. Expo Go uses the on-screen sample activity instead.
+
+### iPhone build (EAS)
+
+Automatic photo scanning, Apple Health and notifications need a native build. Expo Go cannot run them.
+
+```bash
+cd mobile
+npx eas-cli build --platform ios --profile preview
+```
+
+EAS builds whatever is checked out, so check out the branch you mean to test first. Settings shows the version and the commit the build came from at the bottom of the screen. Raise `version` in `mobile/app.config.ts` whenever native code changes: the over-the-air update channel is keyed to the version, and an update published for an older build must not reach a newer one.
+
+### Debugging a build on a phone
+
+Settings → Debug logs shows one text report: the build commit, whether the on-device photo classifier is linked, permissions, changes waiting to sync, photo-log totals, recent passes, and the last 600 log lines (requests with status and timing, each photo's result, Apple Health wake-ups, errors). "Copy or share the report" opens the share sheet. The report holds no token, email address or photo; it does include meal names and calories. Log lines are written with `debugLog()` in `mobile/services/debugLog.ts`.
+
+### API and website
+
+```bash
+npm run dev:worker
+```
+
+Wrangler serves the site and `http://127.0.0.1:8787/api/health`. `npm run dev:worker` uses a local D1 database (`wrangler --env local`), applies `worker/migrations`, and reports `db_ok: true` when that database answers `SELECT 1`.
+
+Copy the secret names from `.env.example` into `worker/.dev.vars` before exercising Google sign-in locally. The production Worker config does not bind D1 until `CLOUDFLARE_API_TOKEN` can create `fitlogr-db`. A token that can deploy Workers but receives HTTP 401 from the D1 API must not be used to attach a missing database, or the live `fitlogr.com` deploy will fail.
+
+Google sign-in uses the system browser. Expo Go returns through the `exp://` or `https://auth.expo.io` URL from `Linking.createURL('auth/callback')`. A native build returns through `fitlogr://auth/callback`. Both are allowlisted. Sample meals stay on the phone only while you are signed out. Signing in clears that preview and syncs the account. Signing out restores the sample day.
 
 ## Mission
 
