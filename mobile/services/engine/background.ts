@@ -14,62 +14,98 @@ const HOURLY_TYPES = ["HKQuantityTypeIdentifierActiveEnergyBurned", "HKQuantityT
 const IMMEDIATE_TYPES = ["HKWorkoutTypeIdentifier", "HKQuantityTypeIdentifierBodyMass"];
 
 interface BackgroundKit {
+  /**
+   * Saves the types natively and registers their observers when the app launches, before any
+   * JavaScript runs. Apple requires that for a wake-up to reach an app it had terminated.
+   * Verified in @kingstinct/react-native-healthkit: (identifiers, frequency) => Promise<boolean>.
+   */
+  configureBackgroundTypes?: (identifiers: string[], frequency: number) => Promise<boolean>;
   enableBackgroundDelivery?: (identifier: string, frequency: number) => Promise<boolean>;
   subscribeToChanges?: (identifier: string, callback: () => void) => { remove: () => void };
 }
 
 let subscriptions: { remove: () => void }[] = [];
 let reportedRestricted = false;
+let arming = 0;
+
+function shortType(identifier: string): string {
+  return identifier.replace(/^HK(Quantity|Workout)?TypeIdentifier/, "") || "Workout";
+}
 
 /**
  * Turns on Apple Health background delivery and watches for new samples. iOS then wakes the app
  * (about hourly for a watch wearer, at once for a workout) and each wake runs one short pass.
- * Called at launch, and again right after the person grants Apple Health access: observers
- * registered before access was granted never fire. Never asks for permission itself.
+ * Called when the JavaScript loads, and again right after the person grants Apple Health access:
+ * observers registered before access was granted never fire. Never asks for permission itself.
  */
 export function armHealthWake(): void {
   if (Platform.OS !== "ios") return;
   const kit = loadHealthKitModule() as (ReturnType<typeof loadHealthKitModule> & BackgroundKit) | null;
-  if (!kit?.enableBackgroundDelivery || !kit.subscribeToChanges) {
+  if (!kit?.subscribeToChanges) {
     debugLog("wake", "Apple Health background delivery is not available in this build");
     return;
   }
-  for (const subscription of subscriptions) {
-    try {
-      subscription.remove();
-    } catch {
-      // Already gone.
-    }
-  }
-  subscriptions = [];
-  // HealthKit also calls this once at every launch. With the app open that is an ordinary foreground pass.
-  const short = (identifier: string) => identifier.replace(/^HK(Quantity|Workout)?TypeIdentifier/, "") || "Workout";
+  const generation = (arming += 1);
+  // HealthKit also reports once at every launch. With the app open that is an ordinary foreground pass.
   const wake = (identifier: string) => {
     const active = AppState.currentState === "active";
-    debugLog("wake", `Apple Health reported ${short(identifier)} · app ${AppState.currentState}`);
+    debugLog("wake", `Apple Health reported ${shortType(identifier)} · app ${AppState.currentState}`);
     void runPass({ reason: active ? "foreground" : "healthkit", active });
   };
-  const watch = (identifier: string, frequency: number) => {
-    try {
+  const subscribe = (path: string) => {
+    // A later call (after access was granted) replaces this one.
+    if (generation !== arming) return;
+    for (const subscription of subscriptions) {
+      try {
+        subscription.remove();
+      } catch {
+        // Already gone.
+      }
+    }
+    subscriptions = [];
+    for (const identifier of [...HOURLY_TYPES, ...IMMEDIATE_TYPES]) {
+      try {
+        const subscription = kit.subscribeToChanges?.(identifier, () => wake(identifier));
+        if (subscription) subscriptions.push(subscription);
+      } catch (error) {
+        // Apple Health is unavailable or access was not granted yet. Setup arms this again.
+        debugLog("wake", `could not watch ${shortType(identifier)}: ${describeError(error)}`);
+      }
+    }
+    debugLog("wake", `watching ${subscriptions.length} Apple Health types (${path}) · app ${AppState.currentState}`);
+  };
+
+  if (kit.configureBackgroundTypes) {
+    // One frequency for all types. iOS itself limits steps and active energy to about hourly.
+    kit
+      .configureBackgroundTypes([...HOURLY_TYPES, ...IMMEDIATE_TYPES], IMMEDIATE)
+      .then(
+        () => subscribe("native observers"),
+        (error: unknown) => {
+          debugLog("wake", `native background observers could not be set up: ${describeError(error)}`);
+          subscribe("session observers");
+        },
+      );
+    return;
+  }
+  // Older library: per-type delivery, with observers that only live as long as this process.
+  for (const [identifiers, frequency] of [
+    [HOURLY_TYPES, HOURLY],
+    [IMMEDIATE_TYPES, IMMEDIATE],
+  ] as const) {
+    for (const identifier of identifiers) {
       void kit
         .enableBackgroundDelivery?.(identifier, frequency)
         .then((enabled) => {
-          if (!enabled) debugLog("wake", `background delivery for ${short(identifier)} was not enabled`);
+          if (!enabled) debugLog("wake", `background delivery for ${shortType(identifier)} was not enabled`);
         })
-        .catch((error: unknown) => debugLog("wake", `background delivery for ${short(identifier)} failed: ${describeError(error)}`));
-      const subscription = kit.subscribeToChanges?.(identifier, () => wake(identifier));
-      if (subscription) subscriptions.push(subscription);
-    } catch (error) {
-      // Apple Health is unavailable or access was not granted yet. Setup arms this again.
-      debugLog("wake", `could not watch ${short(identifier)}: ${describeError(error)}`);
+        .catch((error: unknown) => debugLog("wake", `background delivery for ${shortType(identifier)} failed: ${describeError(error)}`));
     }
-  };
-  for (const identifier of HOURLY_TYPES) watch(identifier, HOURLY);
-  for (const identifier of IMMEDIATE_TYPES) watch(identifier, IMMEDIATE);
-  debugLog("wake", `watching ${subscriptions.length} Apple Health types · app ${AppState.currentState}`);
+  }
+  subscribe("session observers");
 }
 
-// Module scope so a headless HealthKit launch registers observers before React mounts.
+// Module scope, and imported by the entry file, so a launch with nothing on screen still registers these.
 armHealthWake();
 
 TaskManager.defineTask(PASS_TASK, async () => {

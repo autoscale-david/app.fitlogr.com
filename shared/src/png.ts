@@ -1,3 +1,5 @@
+import { inflateZlib } from "./inflate";
+
 const PNG_SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10];
 
 export interface PngLuma {
@@ -6,12 +8,16 @@ export interface PngLuma {
   luma: Uint8Array;
 }
 
-/** Decode an 8-bit non-interlaced PNG into row-major grayscale. Used for dHash. */
+/**
+ * Decode a small non-interlaced PNG into row-major 8-bit grayscale. Used for dHash.
+ * Accepts 8 and 16 bits per channel: an iPhone with a wide-colour screen writes 16.
+ */
 export async function pngLuma(bytes: Uint8Array): Promise<PngLuma> {
   if (!hasSignature(bytes)) throw new Error("Not a PNG");
   let width = 0;
   let height = 0;
   let colorType = -1;
+  let bytesPerSample = 1;
   const idat: Uint8Array[] = [];
   let offset = 8;
   while (offset + 8 <= bytes.length) {
@@ -26,7 +32,8 @@ export async function pngLuma(bytes: Uint8Array): Promise<PngLuma> {
       height = readUint32(data, 4);
       const bitDepth = data[8];
       colorType = data[9] ?? -1;
-      if (bitDepth !== 8 || data[12] !== 0) throw new Error("Unsupported PNG");
+      if ((bitDepth !== 8 && bitDepth !== 16) || data[12] !== 0) throw new Error("Unsupported PNG");
+      bytesPerSample = bitDepth / 8;
       if (width < 1 || height < 1 || width > 64 || height > 64) throw new Error("Unexpected PNG size");
     } else if (type === "IDAT") {
       idat.push(data);
@@ -38,11 +45,14 @@ export async function pngLuma(bytes: Uint8Array): Promise<PngLuma> {
   const channels = channelsFor(colorType);
   if (!width || !height || channels === 0) throw new Error("Incomplete PNG");
   const compressed = concat(idat);
-  const inflated = await inflateZlib(compressed);
-  const stride = width * channels;
+  const inflated = inflateZlib(compressed, 1 << 20);
+  const bytesPerPixel = channels * bytesPerSample;
+  const stride = width * bytesPerPixel;
   const expected = height * (stride + 1);
   if (inflated.length < expected) throw new Error("Truncated PNG pixels");
-  const raw = unfilter(inflated, width, height, channels);
+  const samples = unfilter(inflated, width, height, bytesPerPixel);
+  // A 16-bit sample is stored high byte first, and the high byte is the 8-bit value.
+  const raw = bytesPerSample === 1 ? samples : samples.filter((_, index) => index % 2 === 0);
   const luma = new Uint8Array(width * height);
   for (let index = 0; index < luma.length; index += 1) {
     const pixel = index * channels;
@@ -102,28 +112,6 @@ function paeth(left: number, up: number, upLeft: number): number {
   if (leftDistance <= upDistance && leftDistance <= upLeftDistance) return left;
   if (upDistance <= upLeftDistance) return up;
   return upLeft;
-}
-
-async function inflateZlib(data: Uint8Array): Promise<Uint8Array> {
-  if (typeof DecompressionStream !== "function") throw new Error("PNG inflate is unavailable");
-  const stream = new DecompressionStream("deflate");
-  const writer = stream.writable.getWriter();
-  const copy = new Uint8Array(data.byteLength);
-  copy.set(data);
-  await writer.write(copy);
-  await writer.close();
-  const reader = stream.readable.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) {
-      chunks.push(value);
-      total += value.length;
-    }
-  }
-  return concat(chunks, total);
 }
 
 function concat(chunks: Uint8Array[], knownLength?: number): Uint8Array {

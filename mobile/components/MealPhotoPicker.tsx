@@ -160,11 +160,16 @@ function Action({
 }
 
 async function pick(action: "camera" | "library"): Promise<{ uri: string; exif: Record<string, unknown> | null } | null> {
-  const permission =
-    action === "camera" ? await requestCameraPermissionsAsync() : await requestMediaLibraryPermissionsAsync();
-  if (!permission.granted) {
-    Alert.alert("Permission needed", action === "camera" ? "Camera access is off. Turn it on in iPhone Settings." : "Photo access is off. Turn it on in iPhone Settings.");
-    return null;
+  if (action === "camera") {
+    const permission = await requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert("Permission needed", "Camera access is off. Turn it on in iPhone Settings.");
+      return null;
+    }
+  } else {
+    // The iOS photo picker needs no permission: the person hands over one photo. Asking here is only
+    // so automatic scanning can be offered, and saying no must not block picking a photo.
+    await requestMediaLibraryPermissionsAsync().catch(() => null);
   }
   const result =
     action === "camera"

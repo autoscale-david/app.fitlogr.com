@@ -14,6 +14,7 @@ import {
 } from "@fitlogr/shared";
 import { LB_PER_KG } from "../theme";
 import { addDays, atLocalTime, calendarDay, localDateISO } from "./dates";
+import { resolveThumb } from "./engine/thumbs";
 
 let openingDatabase: Promise<SQLiteDatabase> | null = null;
 
@@ -569,7 +570,7 @@ export async function localMealPhoto(
   );
   if (!row) return { thumbUri: null, fileUri: null, libraryId: null };
   return {
-    thumbUri: row.thumb_uri,
+    thumbUri: resolveThumb(row.thumb_uri),
     fileUri: row.uri,
     libraryId: row.local_asset_id.startsWith("ph://") ? row.local_asset_id : null,
   };

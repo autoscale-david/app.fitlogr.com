@@ -1,4 +1,5 @@
 import type { SQLiteDatabase } from "expo-sqlite";
+import { resolveThumb } from "./thumbs";
 
 export interface AuditDay {
   date: string;
@@ -94,7 +95,7 @@ export async function listAuditEntries(db: SQLiteDatabase, date: string, filter:
     estimate: parseEstimate(row.ai_estimate_json),
     remotePhotoId: row.remote_photo_id,
     mealId: row.meal_id,
-    thumbUri: row.thumb_uri,
+    thumbUri: resolveThumb(row.thumb_uri),
     error: row.last_error,
     classifiedAt: row.classified_at,
     aiAt: row.ai_at,

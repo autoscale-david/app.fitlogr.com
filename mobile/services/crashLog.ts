@@ -34,8 +34,20 @@ export function installCrashLog(): void {
     const previous = scope.ErrorUtils?.getGlobalHandler?.();
     scope.ErrorUtils?.setGlobalHandler?.((error, isFatal) => {
       debugLog("crash", `${isFatal ? "fatal" : "error"}: ${describeError(error)}`);
-      void flushDebugLog();
-      previous?.(error, isFatal);
+      if (!isFatal) {
+        void flushDebugLog();
+        previous?.(error, isFatal);
+        return;
+      }
+      // The usual handler ends a release app at once. Give the line half a second to reach disk first.
+      let passedOn = false;
+      const passOn = () => {
+        if (passedOn) return;
+        passedOn = true;
+        previous?.(error, isFatal);
+      };
+      setTimeout(passOn, 500);
+      void flushDebugLog().then(passOn, passOn);
     });
   } catch {
     // The app runs the same without it.

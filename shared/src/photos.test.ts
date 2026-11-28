@@ -265,7 +265,49 @@ describe("photo contracts", () => {
     expect(decoded.height).toBe(8);
     expect(dHashFromLuma(decoded.luma)).toBe("1010101010101010");
   });
+
+  it("reads the same grayscale from 16-bit RGBA, which a wide-colour iPhone writes", async () => {
+    const png = encodeRgba16Png(9, 8, (x) => (x < 4 ? 10 : 200));
+    const decoded = await pngLuma(png);
+    expect(decoded.width).toBe(9);
+    expect(decoded.height).toBe(8);
+    expect([...decoded.luma.subarray(0, 9)]).toEqual([10, 10, 10, 10, 200, 200, 200, 200, 200]);
+    expect(dHashFromLuma(decoded.luma)).toBe("1010101010101010");
+  });
 });
+
+/** 16 bits per channel, RGBA, with the "up" filter on every row after the first to exercise unfiltering. */
+function encodeRgba16Png(width: number, height: number, gray: (x: number, y: number) => number): Uint8Array {
+  const stride = width * 8;
+  const raw = new Uint8Array(height * (1 + stride));
+  const plain = new Uint8Array(height * stride);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const value = gray(x, y);
+      for (let channel = 0; channel < 4; channel += 1) {
+        const at = y * stride + x * 8 + channel * 2;
+        plain[at] = channel === 3 ? 255 : value;
+        plain[at + 1] = channel === 3 ? 255 : 0x37;
+      }
+    }
+  }
+  for (let y = 0; y < height; y += 1) {
+    const row = y * (1 + stride);
+    raw[row] = y === 0 ? 0 : 2;
+    for (let x = 0; x < stride; x += 1) {
+      const up = y === 0 ? 0 : plain[(y - 1) * stride + x]!;
+      raw[row + 1 + x] = (plain[y * stride + x]! - up) & 255;
+    }
+  }
+  const signature = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+  const ihdr = new Uint8Array(13);
+  const view = new DataView(ihdr.buffer);
+  view.setUint32(0, width);
+  view.setUint32(4, height);
+  ihdr[8] = 16;
+  ihdr[9] = 6;
+  return concat([signature, chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", new Uint8Array())]);
+}
 
 function encodeGrayPng(width: number, height: number, pixel: (x: number, y: number) => number): Uint8Array {
   const raw = new Uint8Array(height * (1 + width));

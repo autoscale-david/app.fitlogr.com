@@ -2,6 +2,7 @@ import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import * as Crypto from "expo-crypto";
 import { File } from "expo-file-system";
 import { PHOTO_LIMITS, dHashFromLuma, pngLuma } from "@fitlogr/shared";
+import { debugLog, describeError } from "../debugLog";
 
 export interface PreparedMealImage {
   uri: string;
@@ -17,29 +18,53 @@ export async function prepareMealImage(uri: string): Promise<PreparedMealImage> 
     maxWidth: PHOTO_LIMITS.maxEdgePx,
     maxHeight: PHOTO_LIMITS.maxEdgePx,
   });
-  const image = await context.renderAsync();
-  const saved = await image.saveAsync({ format: SaveFormat.JPEG, compress: PHOTO_LIMITS.jpegQuality });
-  const bytes = await new File(saved.uri).bytes();
-  const sha256 = await sha256Hex(bytes);
-  return {
-    uri: saved.uri,
-    sha256,
-    dhash: await perceptualHash(uri),
-    width: saved.width,
-    height: saved.height,
-  };
+  let image: Awaited<ReturnType<typeof context.renderAsync>> | null = null;
+  try {
+    image = await context.renderAsync();
+    const saved = await image.saveAsync({ format: SaveFormat.JPEG, compress: PHOTO_LIMITS.jpegQuality });
+    const bytes = await new File(saved.uri).bytes();
+    const sha256 = await sha256Hex(bytes);
+    return {
+      uri: saved.uri,
+      sha256,
+      dhash: await perceptualHash(uri),
+      width: saved.width,
+      height: saved.height,
+    };
+  } finally {
+    // Each holds a decoded image in native memory. An import goes through thousands of photos.
+    release(image);
+    release(context);
+  }
 }
 
-async function perceptualHash(uri: string): Promise<string | null> {
+function release(shared: { release(): void } | null): void {
   try {
-    const context = ImageManipulator.manipulate(uri, { maxWidth: 64, maxHeight: 64 });
+    shared?.release();
+  } catch {
+    // Already released.
+  }
+}
+
+let hashFailureLogged = false;
+
+async function perceptualHash(uri: string): Promise<string | null> {
+  const context = ImageManipulator.manipulate(uri, { maxWidth: 64, maxHeight: 64 });
+  let image: Awaited<ReturnType<typeof context.renderAsync>> | null = null;
+  try {
     context.resize({ width: 9, height: 8 });
-    const image = await context.renderAsync();
+    image = await context.renderAsync();
     const saved = await image.saveAsync({ format: SaveFormat.PNG, compress: 1 });
     const decoded = await pngLuma(await new File(saved.uri).bytes());
     return dHashFromLuma(decoded.luma, decoded.width, decoded.height);
-  } catch {
+  } catch (error) {
+    // Without this hash two shots of the same plate are logged as two meals, so say so once.
+    if (!hashFailureLogged) debugLog("photo", `near-duplicate hash could not be computed: ${describeError(error)}`);
+    hashFailureLogged = true;
     return null;
+  } finally {
+    release(image);
+    release(context);
   }
 }
 

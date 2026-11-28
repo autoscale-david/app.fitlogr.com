@@ -179,10 +179,12 @@ export default function PhotoDayScreen() {
 
 function PhotoThumb({ row, large }: { row: AuditEntry; large?: boolean }) {
   // Rejected photos are shown from the library id only. fitlogr does not keep a copy of them.
-  const uri = row.thumbUri || (row.id.startsWith("ph://") || row.id.startsWith("file:") ? row.id : null);
+  const library = row.id.startsWith("ph://") || row.id.startsWith("file:") ? row.id : null;
+  const sources = [row.thumbUri, library].filter((source, index, all): source is string => Boolean(source) && all.indexOf(source) === index);
   const size = large ? 220 : 56;
-  const [failed, setFailed] = useState(false);
-  if (!uri || failed) {
+  const [tried, setTried] = useState(0);
+  const uri = sources[tried];
+  if (!uri) {
     return (
       <View style={[styles.thumb, { width: size, height: size }]}>
         <Text style={styles.placeholder}>Photo</Text>
@@ -194,7 +196,8 @@ function PhotoThumb({ row, large }: { row: AuditEntry; large?: boolean }) {
       source={{ uri }}
       style={{ width: size, height: size, borderRadius: 10, backgroundColor: "#222428" }}
       contentFit="cover"
-      onError={() => setFailed(true)}
+      // The kept copy is gone: show the photo from the library instead.
+      onError={() => setTried((current) => current + 1)}
     />
   );
 }
