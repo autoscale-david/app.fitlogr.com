@@ -339,6 +339,33 @@ describe("photo pipeline bookkeeping", () => {
     expect(offline.resumeAtMs).toBeNull();
   });
 
+  it("applies a new policy to photos kept on the phone, from their stored labels", async () => {
+    const photos = [photo("pasta", 2), photo("receipt", 3), photo("shot", 4, true)];
+    const rows = new Map<string, PipelineRow>();
+    // Policy 1 keeps everything on the phone.
+    await runPipeline({ ...base(photos, rows), policyVersion: "1", decide: () => ({ verdict: "not_relevant", send: false }) });
+    expect([...rows.values()].every((row) => row.aiState === "not_sent")).toBe(true);
+
+    // Policy 2 sends anything labelled food. The photos are not read again.
+    let classified = 0;
+    rows.set("pasta", { ...rows.get("pasta")!, labels: [{ id: "pasta", confidence: 0.4 }] });
+    rows.set("receipt", { ...rows.get("receipt")!, labels: [{ id: "document", confidence: 0.9 }] });
+    const next = await runPipeline({
+      ...base(photos, rows),
+      policyVersion: "2",
+      classify: async () => {
+        classified += 1;
+        return { labels: [] };
+      },
+      decide: (labels) => (labels.some((label) => label.id === "pasta") ? { verdict: "food", send: true } : { verdict: "not_relevant", send: false }),
+    });
+    expect(classified).toBe(0);
+    expect(rows.get("pasta")).toMatchObject({ aiState: "meal", verdict: "food", policyVersion: "2" });
+    expect(rows.get("receipt")).toMatchObject({ aiState: "not_sent", policyVersion: "2" });
+    expect(rows.get("shot")).toMatchObject({ aiState: "not_sent", verdict: "screenshot" });
+    expect(next.counts.meals).toBe(1);
+  });
+
   it("a photo that cannot be loaded is not a failed analysis: no wait, and it does not end the pass", async () => {
     const photos = [photo("gone-1", 0), photo("gone-2", 1), photo("gone-3", 2), photo("fine", 3)];
     const rows = new Map<string, PipelineRow>();

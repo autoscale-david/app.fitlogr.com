@@ -43,6 +43,99 @@ export default function PhotoDayScreen() {
 
   const open = rows.find((row) => row.id === selected) ?? null;
 
+  const detail = open ? (
+    <View style={ui.card}>
+      <PhotoThumb key={open.id} row={open} large />
+      <Text style={ui.cardTitle}>{verdictLine(open.verdict)}</Text>
+      <Text style={ui.body}>{open.labels.map((label) => `${label.id} ${Math.round(label.confidence * 100)}%`).join(" · ") || "No labels"}</Text>
+      <Text style={ui.cardTitle}>
+        {aiLine(open)}
+        {estimateLine(open)}
+        {open.confidence !== null && open.aiState !== "not_sent" ? ` · ${Math.round(open.confidence * 100)}% sure` : ""}
+      </Text>
+      {open.estimate?.reason ? <Text style={ui.body}>{open.estimate.reason}</Text> : null}
+      {open.estimate?.items?.length ? (
+        <Text style={ui.meta}>{open.estimate.items.map((item) => `${item.name} ${Math.round(item.kcal)}`).join(" · ")}</Text>
+      ) : null}
+      <Text style={ui.meta}>
+        Checked on phone {stamp(open.classifiedAt)} · analysed {stamp(open.aiAt)}
+      </Text>
+      {open.error ? <Text style={ui.error}>{open.error}</Text> : null}
+      {note ? <Text style={ui.body}>{note}</Text> : null}
+      {/* A logged meal has nothing to re-analyse; sending it again could log it twice. */}
+      {open.aiState === "meal" ? null : (
+      <Pressable
+        style={ui.secondary}
+        disabled={working}
+        onPress={() => {
+          setWorking(true);
+          setNote(null);
+          void (async () => {
+            try {
+              const db = await openFitlogrDatabase();
+              const prepared = await prepareLibraryPhoto(open.id);
+              const capturedAtMs = open.capturedAt ? Date.parse(open.capturedAt) : Date.now();
+              const result = await importPreparedPhoto(db, prepared, {
+                capturedAt: new Date(capturedAtMs).toISOString(),
+                localDate: open.captureDate || localDateISO(),
+                source: "device_library",
+                assetId: open.id,
+                forceMeal: true,
+                onDeviceVerdict: open.verdict ?? undefined,
+                onDeviceLabels: open.labels,
+              });
+              // Update the log row too, so it shows the new result and the meal it created.
+              await recordImport(db, { assetId: open.id, capturedAtMs, source: "library", preparedUri: prepared.uri, result });
+              setNote(result.message);
+              void store.sync(true);
+            } catch (error) {
+              setNote(error instanceof Error ? error.message : "The photo could not be analyzed.");
+            } finally {
+              setWorking(false);
+              await load();
+            }
+          })();
+        }}
+      >
+        <Text style={ui.secondaryText}>{working ? "Analysing…" : "Analyse anyway"}</Text>
+      </Pressable>
+      )}
+      {/* Only where there is something to undo or to hold back. */}
+      {open.mealId || open.aiState === "queued" || open.aiState === "error" ? (
+      <Pressable
+        style={ui.secondary}
+        disabled={working}
+        onPress={() => {
+          void (async () => {
+            try {
+              // Deleting the meal also tells the server to exclude the photo, through the offline queue.
+              if (open.mealId) await store.deleteMeal(open.mealId, false, open.remotePhotoId);
+              const db = await openFitlogrDatabase();
+              await db.runAsync(
+                `UPDATE local_media_assets SET scan_status = 'excluded', meal_id = NULL, updated_at = ? WHERE local_asset_id = ?`,
+                new Date().toISOString(),
+                open.id,
+              );
+              setSelected(null);
+            } catch (error) {
+              setNote(error instanceof Error ? error.message : "That could not be saved.");
+            } finally {
+              await load();
+            }
+          })();
+        }}
+      >
+        <Text style={ui.secondaryText}>Not a meal</Text>
+      </Pressable>
+      ) : null}
+      {open.mealId ? (
+        <Pressable style={ui.secondary} onPress={() => router.push({ pathname: "/meal/[id]", params: { id: open.mealId! } })}>
+          <Text style={ui.secondaryText}>Open meal</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  ) : null;
+
   return (
     <DetailScreen title={date || "Photo log"}>
       <View style={styles.filters}>
@@ -52,105 +145,34 @@ export default function PhotoDayScreen() {
           </Pressable>
         ))}
       </View>
+      {rows.length === 0 ? <Text style={ui.body}>No photos here.</Text> : null}
       {rows.map((row) => (
-        <Pressable key={row.id} style={styles.line} onPress={() => setSelected(row.id)}>
-          <PhotoThumb row={row} />
-          <View style={{ flex: 1 }}>
-            <Text style={ui.cardTitle}>{clock(row.capturedAt)}</Text>
-            <Text style={ui.body}>
-              {verdictLine(row.verdict)}
-              {row.labels[0] ? ` · ${row.labels[0].id} ${Math.round(row.labels[0].confidence * 100)}%` : ""}
-            </Text>
-            <Text style={ui.meta}>
-              {aiLine(row)}
-              {row.estimate?.kcal !== undefined ? ` · ${Math.round(row.estimate.kcal)} kcal` : ""}
-            </Text>
-          </View>
-        </Pressable>
-      ))}
-      {open ? (
-        <View style={ui.card}>
-          <PhotoThumb key={open.id} row={open} large />
-          <Text style={ui.body}>{open.labels.map((label) => `${label.id} ${Math.round(label.confidence * 100)}%`).join(" · ") || "No labels"}</Text>
-          {open.estimate?.reason ? <Text style={ui.body}>{open.estimate.reason}</Text> : null}
-          {open.estimate?.items?.length ? (
-            <Text style={ui.meta}>{open.estimate.items.map((item) => `${item.name} ${Math.round(item.kcal)}`).join(" · ")}</Text>
-          ) : null}
-          <Text style={ui.meta}>
-            Classified {open.classifiedAt ?? "—"} · analysed {open.aiAt ?? "—"}
-          </Text>
-          {open.error ? <Text style={ui.error}>{open.error}</Text> : null}
-          {/* A logged meal has nothing to re-analyse; sending it again could log it twice. */}
-          {open.aiState === "meal" ? null : (
+        <View key={row.id}>
           <Pressable
-            style={ui.secondary}
-            disabled={working}
+            style={styles.line}
             onPress={() => {
-              setWorking(true);
               setNote(null);
-              void (async () => {
-                try {
-                  const db = await openFitlogrDatabase();
-                  const prepared = await prepareLibraryPhoto(open.id);
-                  const capturedAtMs = open.capturedAt ? Date.parse(open.capturedAt) : Date.now();
-                  const result = await importPreparedPhoto(db, prepared, {
-                    capturedAt: new Date(capturedAtMs).toISOString(),
-                    localDate: open.captureDate || localDateISO(),
-                    source: "device_library",
-                    assetId: open.id,
-                    forceMeal: true,
-                    onDeviceVerdict: open.verdict ?? undefined,
-                    onDeviceLabels: open.labels,
-                  });
-                  // Update the log row too, so it shows the new result and the meal it created.
-                  await recordImport(db, { assetId: open.id, capturedAtMs, source: "library", preparedUri: prepared.uri, result });
-                  setNote(result.message);
-                  void store.sync(true);
-                } catch (error) {
-                  setNote(error instanceof Error ? error.message : "The photo could not be analyzed.");
-                } finally {
-                  setWorking(false);
-                  await load();
-                }
-              })();
+              setSelected((current) => (current === row.id ? null : row.id));
             }}
           >
-            <Text style={ui.secondaryText}>{working ? "Analysing…" : "Analyse anyway"}</Text>
+            <PhotoThumb row={row} />
+            <View style={{ flex: 1 }}>
+              <Text style={ui.cardTitle}>{clock(row.capturedAt)}</Text>
+              <Text style={ui.body}>
+                {verdictLine(row.verdict)}
+                {topLabels(row.labels, 3)}
+              </Text>
+              <Text style={ui.meta}>
+                {aiLine(row)}
+                {estimateLine(row)}
+              </Text>
+            </View>
           </Pressable>
-          )}
-          <Pressable
-            style={ui.secondary}
-            disabled={working}
-            onPress={() => {
-              void (async () => {
-                try {
-                  // Deleting the meal also tells the server to exclude the photo, through the offline queue.
-                  if (open.mealId) await store.deleteMeal(open.mealId, false, open.remotePhotoId);
-                  const db = await openFitlogrDatabase();
-                  await db.runAsync(
-                    `UPDATE local_media_assets SET scan_status = 'excluded', meal_id = NULL, updated_at = ? WHERE local_asset_id = ?`,
-                    new Date().toISOString(),
-                    open.id,
-                  );
-                  setSelected(null);
-                } catch (error) {
-                  setNote(error instanceof Error ? error.message : "That could not be saved.");
-                } finally {
-                  await load();
-                }
-              })();
-            }}
-          >
-            <Text style={ui.secondaryText}>Not a meal</Text>
-          </Pressable>
-          {open.mealId ? (
-            <Pressable style={ui.secondary} onPress={() => router.push({ pathname: "/meal/[id]", params: { id: open.mealId! } })}>
-              <Text style={ui.secondaryText}>Open meal</Text>
-            </Pressable>
-          ) : null}
+          {/* Right under the photo that was tapped, so it is on screen in a long day. */}
+          {row.id === selected ? detail : null}
         </View>
-      ) : null}
-      {note ? <Text style={ui.body}>{note}</Text> : null}
+      ))}
+      {note && !open ? <Text style={ui.body}>{note}</Text> : null}
     </DetailScreen>
   );
 }
@@ -201,6 +223,26 @@ function aiLine(row: AuditEntry): string {
     default:
       return `AI: ${row.aiState}`;
   }
+}
+
+function topLabels(labels: AuditEntry["labels"], count: number): string {
+  const top = [...labels].sort((a, b) => b.confidence - a.confidence).slice(0, count);
+  return top.length ? ` · ${top.map((label) => `${label.id} ${Math.round(label.confidence * 100)}%`).join(", ")}` : "";
+}
+
+/** The estimate, where there is one: calories eaten for a meal, calories burned for a workout. */
+function estimateLine(row: AuditEntry): string {
+  const kcal = row.estimate?.kcal;
+  if (typeof kcal !== "number" || kcal <= 0) return "";
+  if (row.aiState === "workout" || row.classification === "workout") return ` · ${Math.round(kcal)} kcal burned`;
+  return ` · ${Math.round(kcal)} kcal`;
+}
+
+function stamp(iso: string | null): string {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 function verdictLine(verdict: string | null): string {

@@ -2,7 +2,6 @@ import { useCallback, useRef, useState } from "react";
 import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { router, useFocusEffect } from "expo-router";
 import { getMediaLibraryPermissionsAsync, requestMediaLibraryPermissionsAsync } from "expo-image-picker";
-import { type HistoryProgress } from "../services/photos";
 import { useStore } from "../services/store";
 import { isExpoGo } from "../services/expoGo";
 import { ui } from "./settingsUi";
@@ -18,16 +17,9 @@ const NATIVE_APP = "Needs the fitlogr iPhone app.";
 const LIMITED_ACCESS = "Limited access: only selected photos are visible. Tap to allow all photos in Settings.";
 const NATIVE_IMPORT = "Importing Apple Health and scanning the whole photo library need the fitlogr iPhone app.";
 
-type Busy = "health" | "health-connect" | "apple-photos" | "apple-sync" | null;
+const HISTORY_DAYS = "photo_history_days";
 
-interface ImportCounts {
-  photos: number;
-  total: number;
-  meals: number;
-  workouts: number;
-}
-
-const EMPTY_COUNTS: ImportCounts = { photos: 0, total: 0, meals: 0, workouts: 0 };
+type Busy = "health-connect" | "apple-sync" | null;
 
 export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
   const store = useStore();
@@ -36,10 +28,7 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
   const expoGo = isExpoGo();
   const [days, setDays] = useState<90 | 365>(90);
   const [busy, setBusy] = useState<Busy>(null);
-  const [progress, setProgress] = useState<HistoryProgress | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const [cancel, setCancel] = useState<AbortController | null>(null);
-  const [counts, setCounts] = useState<ImportCounts>(EMPTY_COUNTS);
   const [applePhotos, setApplePhotos] = useState(false);
   /** iOS "Limited Access": connected, but new photos are invisible to the automatic scan. */
   const [applePhotosLimited, setApplePhotosLimited] = useState(false);
@@ -48,6 +37,8 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
   const refreshConnections = useCallback(async () => {
     const current = storeRef.current;
     setApplePhotosSynced(await current.readLocal(APPLE_PHOTOS_SYNCED));
+    // The range chosen in setup, or here earlier. Without this the card always showed 3 months.
+    setDays(Number(await current.readLocal(HISTORY_DAYS)) > 90 ? 365 : 90);
     const library = await photoLibraryAccess();
     setApplePhotos(library !== "none");
     setApplePhotosLimited(library === "limited");
@@ -152,17 +143,12 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
                   key={range.days}
                   style={[styles.preset, days === range.days && styles.presetOn]}
                   onPress={() => {
+                    if (range.days === days || expoGo) return;
                     setDays(range.days);
-                    if (!signedIn) return;
-                    const controller = new AbortController();
-                    setCancel(controller);
-                    setBusy("apple-photos");
-                    void store.scanHistory(range.days, setProgress, controller.signal).then((result) => {
-                      setCounts({ photos: result.meals, total: result.scanned, meals: result.meals, workouts: 0 });
-                      setNote(result.message);
-                      setBusy(null);
-                      setCancel(null);
-                      setProgress(null);
+                    setNote(null);
+                    // Only moves the window: the engine picks up where it left off and reports through photoScan.
+                    void store.scanHistory(range.days, () => undefined, new AbortController().signal).catch((error: unknown) => {
+                      setNote(error instanceof Error ? error.message : "The import could not start.");
                     });
                   }}
                   accessibilityRole="button"
@@ -174,17 +160,14 @@ export function ImportHistoryCard({ signedIn }: { signedIn: boolean }) {
               ))}
             </View>
             <Text style={ui.meta}>Apple Photos and Apple Health import on their own for this window.</Text>
-            {store.photoScan.message ? <Text style={ui.body}>{store.photoScan.message}</Text> : null}
-            {progress && busy === "apple-photos" ? (
-              <Text style={ui.body}>
-                Scanned {progress.scanned}. Meals {progress.meals}. Skipped {progress.skipped}.
-              </Text>
+            {store.photoScan.active || store.photoScan.message ? (
+              <View style={styles.status}>
+                {store.photoScan.active ? <ActivityIndicator color={colors.green} /> : null}
+                <Text style={[ui.body, styles.statusText]}>{store.photoScan.message ?? "Checking your photos…"}</Text>
+              </View>
             ) : null}
             {expoGo ? <Text style={ui.meta}>{NATIVE_IMPORT}</Text> : null}
             {note ? <Text style={ui.body}>{note}</Text> : null}
-            <Text style={ui.body}>
-              Photos {counts.photos} · Health records {counts.total} · Meals {counts.meals}
-            </Text>
           </>
         )}
       </View>
@@ -258,11 +241,6 @@ const styles = StyleSheet.create({
   rowBody: { flex: 1, minWidth: 0 },
   rowTitle: { color: colors.text, fontSize: 15, fontWeight: "700" },
   rowTitleOff: { color: colors.muted, fontWeight: "600" },
-  disabled: { opacity: 0.45 },
+  status: { flexDirection: "row", alignItems: "center", gap: 8 },
+  statusText: { flex: 1 },
 });
-
-function formatWait(seconds: number): string {
-  const minutes = Math.floor(seconds / 60);
-  const rest = seconds % 60;
-  return minutes > 0 ? `${minutes}:${String(rest).padStart(2, "0")}` : `${rest}s`;
-}

@@ -124,14 +124,13 @@ Reuse existing infrastructure where appropriate.
 Required integrations:
 
 - Google OAuth 2.0 / OpenID Connect
+
+Legacy integrations, used only by app builds older than 0.2.0:
+
 - Google Photos Library API
-
-Optional integrations:
-
 - Google Photos Picker API
-- Google Health API
 
-Use the same centralized Web OAuth client for all Google Photos API operations across iOS and Android.
+Use the same centralized Web OAuth client for sign-in across iOS and Android.
 
 ### OpenRouter Configuration
 
@@ -199,13 +198,13 @@ API_BASE_URL=https://fitlogr.com/api
                       |
        +--------------+--------------+
        |              |              |
- Cloudflare D1   Google Photos    OpenRouter
- User Accounts   fitlogr Album    AI Analysis
- Fitness Data    Meal Photos      Nutrition
+ Cloudflare D1   Google sign-in   OpenRouter
+ User Accounts   Identity only    AI Analysis
+ Fitness Data                     Nutrition
  Meal Records                     Insights
 ```
 
-Cloudflare D1 is the authoritative database for user and fitness records. Google Photos is the authoritative storage for meal photos.
+Cloudflare D1 is the authoritative database for user and fitness records. Meal photos stay on the phone, in Apple Photos.
 
 Do not maintain permanent photo storage on fitlogr infrastructure.
 
@@ -219,7 +218,6 @@ Do not maintain permanent photo storage on fitlogr infrastructure.
 - Use `TOKEN_ENCRYPTION_KEY` as a Base64-encoded 256-bit encryption key.
 - Use `SESSION_SECRET` for secure session signing where applicable.
 - Maintain secure application sessions independently of Google access tokens.
-- Centralize Google Photos API operations through the backend.
 - Handle revoked permissions and account reconnection gracefully.
 
 ## Photo Discovery
@@ -237,7 +235,9 @@ The iPhone app reads Apple Photos on the device. A photo the on-device filter re
 
 Older app builds can still opt into a Google Photos album upload. The iPhone app sends `upload_to_google_photos: false`. Sign-in from this app requests only `openid`, `email`, and `profile`.
 
-### Google Photos Integration
+### Google Photos Integration (legacy)
+
+The iPhone app from 0.2.0 on does not use any of this. The server keeps it for older builds.
 
 - Automatically create a dedicated `fitlogr` album.
 - Upload meal photos using the Google Photos Library API.
@@ -251,19 +251,19 @@ Google Photos automatic backup of the entire device library is not required.
 
 ### OAuth Scopes
 
-Required:
+Requested by the iPhone app (0.2.0 and later):
 
 ```text
 openid
 email
 profile
-https://www.googleapis.com/auth/photoslibrary.appendonly
-https://www.googleapis.com/auth/photoslibrary.readonly.appcreateddata
 ```
 
-Optional, for historical imports:
+Requested only by older builds, for the legacy Google Photos album and picker:
 
 ```text
+https://www.googleapis.com/auth/photoslibrary.appendonly
+https://www.googleapis.com/auth/photoslibrary.readonly.appcreateddata
 https://www.googleapis.com/auth/photospicker.mediaitems.readonly
 ```
 

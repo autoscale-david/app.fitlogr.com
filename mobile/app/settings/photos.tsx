@@ -8,6 +8,17 @@ import { getClassifier, CLASSIFIER_POLICY_VERSION } from "../../services/engine/
 import { openFitlogrDatabase } from "../../services/db";
 import { Share } from "react-native";
 
+function passLine(pass: PassLogEntry): string {
+  const when = new Date(pass.ranAt);
+  const time = Number.isNaN(when.getTime())
+    ? pass.ranAt
+    : when.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const parts = [`${time} · ${pass.reason}`, `${Math.max(1, Math.round(pass.durationMs / 1000))}s`];
+  if (pass.counts) parts.push(`${pass.counts.checked} checked, ${pass.counts.analysed} analysed, ${pass.counts.meals} meals, ${pass.counts.waiting} waiting`);
+  if (pass.error) parts.push(pass.error);
+  return parts.join(" · ");
+}
+
 export default function PhotoLogScreen() {
   const [days, setDays] = useState<AuditDay[]>([]);
   const [passes, setPasses] = useState<PassLogEntry[]>([]);
@@ -48,10 +59,13 @@ export default function PhotoLogScreen() {
       <Text style={ui.meta}>
         {totals.photos} photos checked · {totals.food} looked like food · {totals.meals} meals
       </Text>
-      {passes.slice(0, 8).map((pass) => (
-        <Text key={pass.ranAt} style={ui.meta}>
-          {pass.ranAt.slice(11, 16)} {pass.reason} · {Math.round(pass.durationMs / 1000)}s
-          {pass.error ? ` · ${pass.error}` : ""}
+      <Text style={ui.cardTitle}>Activity</Text>
+      <Text style={ui.meta}>
+        The last {passes.length} times fitlogr checked for photos and Health data. "(background)" means iOS woke the app while it was closed.
+      </Text>
+      {passes.map((pass, index) => (
+        <Text key={`${pass.ranAt}-${index}`} style={ui.meta}>
+          {passLine(pass)}
         </Text>
       ))}
       <Pressable

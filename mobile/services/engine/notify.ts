@@ -33,9 +33,30 @@ export async function ensureNotificationPermission(): Promise<boolean> {
 }
 
 export function listenForNotificationOpens(open: (date: string) => void): () => void {
-  const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+  let handled: string | null = null;
+  const handle = (response: Notifications.NotificationResponse) => {
+    const id = response.notification.request.identifier;
+    if (id === handled) return;
+    handled = id;
     const date = response.notification.request.content.data?.date;
     if (typeof date === "string") open(date);
-  });
-  return () => subscription.remove();
+  };
+  const subscription = Notifications.addNotificationResponseReceivedListener(handle);
+  // The usual case: iOS had closed the app, and the tap is what launched it. That tap happened
+  // before this listener existed, so it is read here instead.
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const launch = Notifications.getLastNotificationResponse();
+    if (launch) {
+      Notifications.clearLastNotificationResponse();
+      // After the first screen is up; navigating before that is ignored.
+      timer = setTimeout(() => handle(launch), 400);
+    }
+  } catch {
+    // Not available on this platform.
+  }
+  return () => {
+    if (timer) clearTimeout(timer);
+    subscription.remove();
+  };
 }

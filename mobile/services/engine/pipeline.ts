@@ -151,7 +151,8 @@ const DEFAULT_FRESH_MS = 36 * 60 * 60 * 1000;
  * One photo pass. Recent photos are classified and analysed first, so today's meal is never stuck
  * behind months of backlog; then older photos are classified and the queue drains newest first.
  * A 429 stores a resume time and stops. One bad photo is recorded and the pass continues.
- * Final rows are not read again and are not modified.
+ * Final rows are not read again and are not modified, with one exception: a photo kept on the
+ * phone under an older policy is decided again from its stored labels.
  */
 export async function runPipeline(input: PipelineInput): Promise<PipelineResult> {
   const clock = input.clock ?? Date.now;
@@ -189,6 +190,20 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
       }
       run.checked += 1;
       const existing = input.rows.get(photo.id);
+      if (existing && keptUnderOlderPolicy(existing, input.policyVersion)) {
+        // The policy changed since this photo was kept on the phone. Its labels are stored, so the
+        // new policy is applied without reading the photo again. It can only move towards being sent.
+        const decision = input.decide(existing.labels);
+        await save({
+          ...existing,
+          verdict: decision.verdict,
+          policyVersion: input.policyVersion,
+          aiState: decision.send ? "queued" : "not_sent",
+          attempts: 0,
+          analysedAt: decision.send ? null : existing.analysedAt ?? null,
+        });
+        continue;
+      }
       if (existing && isFinalAudit(existing)) continue;
       if (existing?.aiState === "queued") continue;
       // An analysis error keeps its labels: queue it again when its wait is over, without classifying again.
@@ -322,6 +337,10 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
   // (offline, an outage, a cancelled import). Keeping it would report a limit that is not there.
   if (canSend && !run.hitLimit) resumeAtMs = null;
   return { counts: final, resumeAtMs, logged, stoppedForBudget: run.stoppedForBudget || run.paused };
+}
+
+function keptUnderOlderPolicy(row: PipelineRow, policyVersion: string): boolean {
+  return row.aiState === "not_sent" && row.verdict !== "screenshot" && row.labels.length > 0 && row.policyVersion !== policyVersion;
 }
 
 function overBudget(started: number, budgetMs: number, now: number): boolean {
