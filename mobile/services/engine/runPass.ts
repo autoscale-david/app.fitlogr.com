@@ -2,6 +2,7 @@ import { AppState } from "react-native";
 import { AI_PHOTO_CONSENT_VERSION, alertsForPass, effectiveSnapshot } from "@fitlogr/shared";
 import { SessionExpired } from "../api";
 import { localDateISO } from "../dates";
+import { debugLog, describeError, flushDebugLog } from "../debugLog";
 import { loadDay, openFitlogrDatabase, readGoals, readMode, readSetting, writeSetting } from "../db";
 import { syncAppleHealth, syncHealthHistory } from "../health";
 import { readSession } from "../session";
@@ -129,6 +130,7 @@ function scheduleResume(resumeAtMs: number | null): void {
   // A time already past means the limit is over, and the pass that just ran was free to send.
   if (!resumeAtMs || resumeAtMs <= Date.now()) return;
   const delay = Math.min(Math.max(resumeAtMs - Date.now(), 0) + 2000, 6 * 60 * 60 * 1000);
+  debugLog("pass", `rate limited: will continue in ${Math.round(delay / 1000)}s if the app stays open`);
   resumeTimer = setTimeout(() => {
     resumeTimer = null;
     if (AppState.currentState === "active") void runPass({ reason: "foreground", active: true });
@@ -172,6 +174,7 @@ async function publishAlerts(
     notifyUsedUp: (await readSetting(db, "notify_used_up")) !== "0",
   });
   if (usedUpDate) await writeSetting(db, "used_up_date", usedUpDate);
+  debugLog("alert", `${photos.logged.length} meal(s) logged -> ${alerts.length} alert(s): ${alerts.map((alert) => (alert.inApp ? "in app" : "notification")).join(", ") || "none"}`);
   await postAlerts(alerts);
   for (const alert of alerts) {
     if (alert.inApp) emit({ type: "alert", body: alert.body });
@@ -198,7 +201,23 @@ function sessionEnded(): PassResult {
   return { ran: false, photos: null, error: "session" };
 }
 
+/** Runs the pass and makes sure its log lines are on disk before iOS can suspend the app again. */
 async function execute(request: PassRequest & { budgetMs: number }, onLeftForeground: () => void): Promise<PassResult> {
+  const budget = Number.isFinite(request.budgetMs) ? `${Math.round(request.budgetMs / 1000)}s` : "none";
+  debugLog("pass", `start ${request.reason} · active ${request.active !== false} · app ${AppState.currentState} · budget ${budget}`);
+  try {
+    const result = await executePass(request, onLeftForeground);
+    if (!result.ran) debugLog("pass", `end ${request.reason}: did not run (${result.error ?? "not signed in, or sample mode"})`);
+    return result;
+  } catch (error) {
+    debugLog("pass", `end ${request.reason}: threw ${describeError(error)}`);
+    throw error;
+  } finally {
+    await flushDebugLog();
+  }
+}
+
+async function executePass(request: PassRequest & { budgetMs: number }, onLeftForeground: () => void): Promise<PassResult> {
   const started = Date.now();
   const db = await openFitlogrDatabase();
   if ((await readMode(db)) !== "account") return { ran: false, photos: null, error: null };
@@ -210,12 +229,15 @@ async function execute(request: PassRequest & { budgetMs: number }, onLeftForegr
     await writeSetting(db, "last_synced_at", new Date().toISOString());
   } catch (error) {
     if (error instanceof SessionExpired) return sessionEnded();
+    debugLog("pass", `account sync failed: ${describeError(error)}`);
   }
   try {
-    await syncAppleHealth(db, { force: request.reason !== "foreground", upload: true });
+    const health = await syncAppleHealth(db, { force: request.reason !== "foreground", upload: true });
+    debugLog("pass", `apple health: ${health.connected ? "connected" : `not connected (${health.permission})`}`);
   } catch (error) {
     if (error instanceof SessionExpired) return sessionEnded();
     // Health data can be unreadable while the phone is locked. The next pass tries again.
+    debugLog("pass", `apple health sync failed: ${describeError(error)}`);
   }
   if (isLong(request.reason)) {
     const storedDays = Number(await readSetting(db, HISTORY_DAYS_KEY));
@@ -224,9 +246,11 @@ async function execute(request: PassRequest & { budgetMs: number }, onLeftForegr
       await ensureHealthHistory(db, days);
     } catch (error) {
       if (error instanceof SessionExpired) return sessionEnded();
+      debugLog("pass", `apple health history failed: ${describeError(error)}`);
     }
   }
   if ((await readSetting(db, "ai_photo_consent_version")) !== AI_PHOTO_CONSENT_VERSION) {
+    debugLog("pass", `end ${request.reason}: no photo step, photo analysis has not been agreed to`);
     emit({ type: "state" });
     return { ran: true, photos: null, error: null };
   }
@@ -248,8 +272,9 @@ async function execute(request: PassRequest & { budgetMs: number }, onLeftForegr
     for (const meal of photos.logged) emit({ type: "meal", meal });
     try {
       await publishAlerts(db, request, photos, before);
-    } catch {
+    } catch (alertError) {
       // A notification that could not be posted must not fail the pass that logged the meal.
+      debugLog("alert", `could not post: ${describeError(alertError)}`);
     }
     if (active && isLong(request.reason)) scheduleResume(photos.counts.waiting > 0 ? photos.resumeAtMs : null);
   } catch (caught) {
@@ -259,7 +284,12 @@ async function execute(request: PassRequest & { budgetMs: number }, onLeftForegr
     }
     // The library or Health data can be unreadable while the phone is locked.
     error = caught instanceof Error ? caught.message : "This pass could not read the phone";
+    debugLog("pass", `photo step failed: ${describeError(caught)}`);
   }
+  debugLog(
+    "pass",
+    `end ${request.reason} in ${Date.now() - started} ms: ${photos ? `${photos.message}${photos.access ? ` · access ${photos.access}` : ""}` : "no photo result"}`,
+  );
   // Always sent, so a "Checking your photos" line never outlives the pass.
   emit({ type: "progress", counts: photos?.counts ?? EMPTY_COUNTS, message: photos?.message ?? "", running: false });
   // "(background)" in the log is how to tell that iOS really woke the app with the screen off.

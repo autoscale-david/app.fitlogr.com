@@ -249,6 +249,14 @@ export async function migrate(db: SQLiteDatabase): Promise<void> {
       error TEXT
     );
   `);
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS debug_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      at TEXT NOT NULL,
+      tag TEXT NOT NULL,
+      message TEXT NOT NULL
+    );
+  `);
   const seeded = await db.getFirstAsync<{ value: string }>(
     "SELECT value FROM settings WHERE key = ?",
     "seeded",

@@ -3,6 +3,8 @@ import { AppState } from "react-native";
 import type { SQLiteDatabase } from "expo-sqlite";
 import { AI_PHOTO_CONSENT_VERSION, type DailyInsight, type TrendsResponse } from "@fitlogr/shared";
 import { api, SessionExpired } from "./api";
+import { debugLog, describeError, shortId } from "./debugLog";
+import { buildLabel } from "./debugReport";
 import { getHealthProvider, readHealthConnection, syncAppleHealth, syncHealthHistory, type HealthConnection } from "./health";
 import { AuthCancelled, signInWithGoogle } from "./auth";
 import {
@@ -224,6 +226,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (AppState.currentState === "active") await migrateKeychain();
         const session = await readSession();
         let nextMode = await readMode(database);
+        debugLog("app", `start · build ${buildLabel()} · app ${AppState.currentState} · mode ${nextMode} · session ${session.refreshToken ? "present" : "none"}`);
         if (session.refreshToken && nextMode !== "account") {
           await enterAccountMode(database);
           nextMode = "account";
@@ -251,6 +254,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
       })
       .catch((error: unknown) => {
+        debugLog("app", `start failed: ${describeError(error)}`);
         console.error("Failed to open fitlogr database", error);
       });
     return () => {
@@ -496,7 +500,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       },
       addMealPhoto: async (uri, captured) => {
         if (!db || mode !== "account") return "Sign in with Google before analyzing a meal photo.";
-        const prepared = await prepareMealImage(uri);
+        debugLog("photo", "photo added by hand: preparing");
+        let prepared: Awaited<ReturnType<typeof prepareMealImage>>;
+        try {
+          prepared = await prepareMealImage(uri);
+        } catch (error) {
+          debugLog("photo", `photo added by hand could not be prepared: ${describeError(error)}`);
+          throw error;
+        }
+        debugLog("photo", `prepared ${prepared.width}x${prepared.height} · id ${shortId(prepared.sha256)}`);
         const when = captured ?? capturedToday();
         const classifier = getClassifier();
         let onDeviceVerdict: string | undefined;
@@ -515,6 +527,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           onDeviceVerdict,
           onDeviceLabels,
         });
+        debugLog("photo", `photo added by hand -> ${result.kind}: ${result.message}`);
         // A photo added by hand appears in the photo log too, with what the on-device check said about it.
         await recordImport(db, {
           assetId: prepared.sha256,

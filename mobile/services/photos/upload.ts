@@ -1,6 +1,8 @@
+import { File } from "expo-file-system";
 import type { SQLiteDatabase } from "expo-sqlite";
 import {
   AI_PHOTO_CONSENT_VERSION,
+  encodePhotoUpload,
   explicitPickReopens,
   type AnalyzePhotoResponse,
   type CheckHashesResponse,
@@ -8,6 +10,7 @@ import {
 } from "@fitlogr/shared";
 import { ApiError, OfflineError, SessionExpired, api } from "../api";
 import { deviceTimeZone, localDateISO } from "../dates";
+import { debugLog, describeError, shortId } from "../debugLog";
 import { readSetting, writeServerMeal, writeSetting, type MealItemRecord } from "../db";
 import type { PreparedMealImage } from "./prepare";
 
@@ -114,10 +117,9 @@ export async function importPreparedPhoto(
       ...(input.onDeviceVerdict ? { on_device_verdict: input.onDeviceVerdict } : {}),
       ...(input.onDeviceLabels ? { on_device_labels: topLabels(input.onDeviceLabels) } : {}),
     };
-    const form = new FormData();
-    form.append("metadata", JSON.stringify(metadata));
-    form.append("image", { uri: image.uri, name: "meal.jpg", type: "image/jpeg" } as unknown as Blob);
-    const analyzed = await api.upload<AnalyzePhotoResponse>("/photos/analyze", form);
+    const bytes = await new File(image.uri).bytes();
+    const analyzed = await api.upload<AnalyzePhotoResponse>("/photos/analyze", encodePhotoUpload(metadata, bytes));
+    debugLog("photo", `${shortId(assetId)} analysed: ${analyzed.outcome}, ${analyzed.classification ?? "?"}, ${analyzed.estimate?.kcal ?? "?"} kcal`);
     if (analyzed.meal) {
       await writeServerMeal(db, {
         id: analyzed.meal.id,
@@ -160,9 +162,10 @@ export async function importPreparedPhoto(
   } catch (error) {
     if (error instanceof OfflineError) {
       await remember(db, assetId, image, input.capturedAt, "pending", null);
-      return { kind: "offline", message: "You're offline. fitlogr will send this photo when you reconnect." };
+      return { kind: "offline", message: "fitlogr could not reach its server. It will send this photo when the connection is back." };
     }
     if (error instanceof SessionExpired) throw error;
+    debugLog("photo", `${shortId(assetId)} failed: ${describeError(error)}`);
     if (error instanceof ApiError && error.status === 429) {
       // Not remembered: the photo is sent again once the limit resets.
       const wait = error.retryAfterSeconds ?? 60;

@@ -2,6 +2,7 @@ import type { SQLiteDatabase } from "expo-sqlite";
 import { AppState } from "react-native";
 import { SessionExpired } from "../api";
 import { localDateISO } from "../dates";
+import { debugLog, shortId } from "../debugLog";
 import { readSetting, writeSetting } from "../db";
 import { libraryAccess, prepareLibraryPhoto, walkLibraryPhotos, type LibraryAccess } from "../photos/library";
 import { importPreparedPhoto, rateLimitMessage, type ImportResult } from "../photos/upload";
@@ -40,14 +41,17 @@ export async function runPhotoPipeline(
   const classifier = getClassifier();
   const empty: PipelineCounts = { checked: 0, lookLikeFood: 0, analysed: 0, waiting: 0, errors: 0, meals: 0 };
   if (!classifier.available) {
-    return { counts: empty, resumeAtMs: null, logged: [], stoppedForBudget: false, access: null, message: "Automatic photo scanning needs the fitlogr iPhone app." };
+    debugLog("photos", "classifier native module is missing from this build: automatic scanning is off");
+    return { counts: empty, resumeAtMs: null, logged: [], stoppedForBudget: false, access: null, message: CLASSIFIER_MISSING };
   }
   let access: LibraryAccess;
   try {
     access = await libraryAccess(options.ask);
-  } catch {
-    return { counts: empty, resumeAtMs: null, logged: [], stoppedForBudget: false, access: null, message: "Automatic photo scanning needs the fitlogr iPhone app." };
+  } catch (error) {
+    debugLog("photos", "photo library permission could not be read", error);
+    return { counts: empty, resumeAtMs: null, logged: [], stoppedForBudget: false, access: null, message: "The photo library could not be read on this phone." };
   }
+  debugLog("photos", `library access ${access} (asked: ${options.ask})`);
   if (access !== "full") {
     const message =
       access === "limited"
@@ -68,6 +72,17 @@ export async function runPhotoPipeline(
   const resumeRaw = await readSetting(db, RESUME_AT_KEY);
   const resumeAtMs = resumeRaw ? Number(resumeRaw) : null;
   const thumbs = new Map<string, string>();
+  const newest = discovered.reduce((latest, photo) => Math.max(latest, photo.capturedAtMs), 0);
+  debugLog(
+    "photos",
+    `window ${days} days: ${discovered.length} photos in the library, ${rows.size} already in the log, newest ${newest ? new Date(newest).toISOString() : "none"}` +
+      (resumeAtMs && resumeAtMs > Date.now() ? ` · rate limit until ${new Date(resumeAtMs).toISOString()}` : ""),
+  );
+  // A sample of what the classifier said, and every failure up to a cap, so the log stays readable
+  // during an import of thousands of photos.
+  const verdicts = new Map<string, number>();
+  let samples = 0;
+  let failures = 0;
   const result = await runPipeline({
     discovered,
     rows,
@@ -77,9 +92,30 @@ export async function runPhotoPipeline(
     source: "library",
     classifierId: classifier.id,
     policyVersion: CLASSIFIER_POLICY_VERSION,
-    classify: (photo) => classifier.classifyAsset(photo.id),
-    decide: decideLabels,
-    analyze: async (photo, row) => analyzePhoto(db, photo, row, options.signal, thumbs, options.onMeal),
+    classify: async (photo) => {
+      const result = await classifier.classifyAsset(photo.id);
+      if ("error" in result) {
+        failures += 1;
+        if (failures <= 15) debugLog("classify", `${shortId(photo.id)} could not be read: ${result.error}`);
+      } else if (samples < 12) {
+        samples += 1;
+        const top = [...result.labels].sort((a, b) => b.confidence - a.confidence).slice(0, 4);
+        debugLog("classify", `${shortId(photo.id)} -> ${decideLabels(result.labels).verdict}: ${top.map((label) => `${label.id} ${Math.round(label.confidence * 100)}%`).join(", ") || "no labels"}`);
+      }
+      return result;
+    },
+    decide: (labels) => {
+      const decision = decideLabels(labels);
+      verdicts.set(decision.verdict, (verdicts.get(decision.verdict) ?? 0) + 1);
+      return decision;
+    },
+    analyze: async (photo, row) => {
+      const outcome = await analyzePhoto(db, photo, row, options.signal, thumbs, options.onMeal);
+      if (outcome.kind !== "meal" && outcome.kind !== "skip") {
+        debugLog("photo", `${shortId(photo.id)} -> ${outcome.kind}${outcome.local ? " (could not load)" : ""}${outcome.message ? `: ${outcome.message}` : ""}`);
+      }
+      return outcome;
+    },
     toLocalDate: (ms) => localDateISO(new Date(ms)),
     // Saved row by row: iOS can suspend the app mid-pass, and the next pass must pick up where this one stopped.
     persist: (row) => saveAuditRow(db, row, thumbs.get(row.id) ?? null),
@@ -99,10 +135,15 @@ export async function runPhotoPipeline(
   if (result.resumeAtMs) await writeSetting(db, RESUME_AT_KEY, String(result.resumeAtMs));
   else await writeSetting(db, RESUME_AT_KEY, "");
   options.onProgress?.(result.counts);
+  if (verdicts.size > 0 || failures > 0) {
+    debugLog("classify", `this pass: ${[...verdicts].map(([verdict, count]) => `${verdict} ${count}`).join(", ") || "none decided"}${failures ? ` · ${failures} could not be read` : ""}`);
+  }
   const waitSeconds = result.resumeAtMs ? Math.ceil((result.resumeAtMs - Date.now()) / 1000) : 0;
   const message = waitSeconds > 0 && result.counts.waiting > 0 ? `${pipelineMessage(result.counts)}. ${rateLimitMessage(waitSeconds)}` : pipelineMessage(result.counts);
   return { ...result, access, message };
 }
+
+const CLASSIFIER_MISSING = "This build is missing the on-device photo check, so automatic scanning is off. Install a newer build.";
 
 export function pipelineMessage(counts: PipelineCounts): string {
   return `${group(counts.checked)} photos checked · ${group(counts.lookLikeFood)} look like food · ${group(counts.analysed)} analysed · ${group(counts.waiting)} waiting`;

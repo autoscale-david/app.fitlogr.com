@@ -1,6 +1,7 @@
 import { Platform } from "react-native";
 import * as Notifications from "expo-notifications";
 import type { LogAlert } from "@fitlogr/shared";
+import { debugLog } from "../debugLog";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -15,8 +16,12 @@ export async function postAlerts(alerts: readonly LogAlert[]): Promise<void> {
   const pending = alerts.filter((alert) => !alert.inApp);
   if (pending.length === 0 || Platform.OS === "web") return;
   const permission = await Notifications.getPermissionsAsync();
-  if (permission.status !== "granted") return;
+  if (permission.status !== "granted") {
+    debugLog("alert", `${pending.length} notification(s) not posted: permission is ${permission.status}`);
+    return;
+  }
   for (const alert of pending) {
+    debugLog("alert", `posting: ${alert.title} / ${alert.body}`);
     await Notifications.scheduleNotificationAsync({
       content: { title: alert.title, body: alert.body, data: { date: alert.localDate } },
       trigger: null,

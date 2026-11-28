@@ -7,11 +7,11 @@ import { formatSyncedAt, SessionExpiredBanner } from "../../components/AccountBa
 import { Segmented } from "../../components/planControls";
 import { initials, SummaryRow, ui } from "../../components/settingsUi";
 import { localDateISO } from "../../services/dates";
+import { buildLabel } from "../../services/debugReport";
 import { AuthCancelled, useStore } from "../../services/store";
 import { useGoalsDraft } from "../../services/useGoalsDraft";
 import { colors } from "../../theme";
 
-const APP_VERSION_LABEL = "fitlogr v1.12";
 const UNIT_OPTIONS = [
   { value: "imperial" as const, label: "Imperial" },
   { value: "metric" as const, label: "Metric" },
@@ -63,6 +63,7 @@ export default function SettingsScreen() {
         />
         <SummaryRow title="My Data" lines={dataSummary(store)} onPress={() => router.push("/settings/data")} />
         <SummaryRow title="Calorie Plan" lines={[plan.title, plan.today]} onPress={() => router.push("/settings/plan")} />
+        <SummaryRow title="Debug logs" lines={["Copy a report of what the app did"]} onPress={() => router.push("/settings/debug")} />
       </View>
 
       <View style={[ui.card, styles.unitsRow]}>
@@ -86,7 +87,7 @@ export default function SettingsScreen() {
 
       <View style={styles.footer}>
         <Image source={require("../../assets/logo.png")} style={styles.logo} resizeMode="contain" accessibilityLabel="fitlogr" />
-        <Text style={styles.copyright}>{`(C) ${new Date().getFullYear()} - ${APP_VERSION_LABEL}`}</Text>
+        <Text style={styles.copyright}>{`(C) ${new Date().getFullYear()} - fitlogr ${buildLabel()}`}</Text>
       </View>
     </ScrollView>
   );

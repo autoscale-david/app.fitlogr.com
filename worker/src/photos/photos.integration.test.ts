@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { PHOTO_LIMITS, totalsFromVisionItems } from "@fitlogr/shared";
+import { PHOTO_LIMITS, encodePhotoUpload, totalsFromVisionItems } from "@fitlogr/shared";
 import { GOOGLE_SCOPES } from "../config";
 import { bytesToBase64Url, encodeUtf8, jsonToBase64Url, sha256Base64Url, sha256Hex } from "../encoding";
 import { createApp } from "../app";
@@ -430,18 +430,9 @@ function jpeg(seed: number): Uint8Array {
   return new Uint8Array([0xff, 0xd8, 0xff, seed, 0xd9]);
 }
 
+/** The exact encoder the phone uses, so these tests prove the server reads what the phone sends. */
 function multipart(metadata: unknown, image: Uint8Array): { body: Uint8Array; contentType: string } {
-  const boundary = "----fitlogrboundary";
-  const encoder = new TextEncoder();
-  const prefix = encoder.encode(
-    `--${boundary}\r\nContent-Disposition: form-data; name="metadata"\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Disposition: form-data; name="image"; filename="meal.jpg"\r\nContent-Type: image/jpeg\r\n\r\n`,
-  );
-  const suffix = encoder.encode(`\r\n--${boundary}--\r\n`);
-  const body = new Uint8Array(prefix.length + image.length + suffix.length);
-  body.set(prefix, 0);
-  body.set(image, prefix.length);
-  body.set(suffix, prefix.length + image.length);
-  return { body, contentType: `multipart/form-data; boundary=${boundary}` };
+  return encodePhotoUpload(metadata, image);
 }
 
 async function sha256HexBytes(bytes: Uint8Array): Promise<string> {

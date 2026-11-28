@@ -202,3 +202,5 @@ export type {
   NormalizedHealthRecordType,
   StoredHealthRecordType,
 } from "./health";
+export { encodePhotoUpload } from "./multipart";
+export type { EncodedUpload } from "./multipart";

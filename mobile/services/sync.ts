@@ -4,6 +4,7 @@ import type { Goals, MealItemRecord, MealRecord } from "./db";
 import { deleteSyncedWeight, readGoals, readSetting, removeMeal, writeGoals, writeServerMeal, writeSetting, writeSyncedWeight } from "./db";
 import { deviceTimeZone, localDateISO } from "./dates";
 import { ApiError, OfflineError, SessionExpired, api } from "./api";
+import { debugLog, describeError } from "./debugLog";
 import { randomUuid } from "./encoding";
 import * as Crypto from "expo-crypto";
 
@@ -152,10 +153,11 @@ async function drainOutbox(db: SQLiteDatabase, force: boolean): Promise<number> 
           await removeMeal(db, row.entity_id);
         } else if (!(row.method === "DELETE" && error.status === 404)) {
           rejected += 1;
-          console.warn("fitlogr dropped a change the server rejected", row.method, row.path, error.status, error.message);
+          debugLog("sync", `dropped a change the server rejected: ${row.method} ${row.path} -> ${error.status} ${error.message}`);
         }
         continue;
       }
+      debugLog("sync", `change not sent, will retry: ${row.method} ${row.path} (try ${row.retry_count + 1}): ${describeError(error)}`);
       const retryCount = row.retry_count + 1;
       const delay = BACKOFF_SECONDS[Math.min(retryCount, BACKOFF_SECONDS.length - 1)] ?? 3600;
       await db.runAsync("UPDATE sync_outbox SET retry_count = ?, next_retry_at = ? WHERE id = ?", retryCount, new Date(Date.now() + delay * 1000).toISOString(), row.id);

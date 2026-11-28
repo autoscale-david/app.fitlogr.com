@@ -13,7 +13,7 @@ const config: ExpoConfig = {
   slug: "fitlogr",
   owner: "davidcgweb",
   scheme: "fitlogr",
-  version: "0.2.0",
+  version: "0.2.1",
   orientation: "portrait",
   icon: "./assets/logo.png",
   userInterfaceStyle: "dark",
@@ -96,6 +96,10 @@ const config: ExpoConfig = {
     url: `https://u.expo.dev/${EAS_PROJECT_ID}`,
   },
   extra: {
+    // Set by EAS Build. Shown in Settings so it is clear which commit a build on a phone came from.
+    buildCommit: process.env.EAS_BUILD_GIT_COMMIT_HASH ?? null,
+    buildProfile: process.env.EAS_BUILD_PROFILE ?? null,
+    builtAt: new Date().toISOString(),
     apiBaseUrl:
       process.env.EXPO_PUBLIC_API_BASE_URL ?? "https://fitlogr.com/api",
     eas: {
