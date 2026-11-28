@@ -419,6 +419,21 @@ npm run dev:mobile -- --tunnel
 
 Apple Health and Health Connect need an EAS development build. Expo Go uses the on-screen sample activity instead.
 
+### iPhone build (EAS)
+
+Automatic photo scanning, Apple Health and notifications need a native build. Expo Go cannot run them.
+
+```bash
+cd mobile
+npx eas-cli build --platform ios --profile preview
+```
+
+EAS builds whatever is checked out, so check out the branch you mean to test first. Settings shows the version and the commit the build came from at the bottom of the screen. Raise `version` in `mobile/app.config.ts` whenever native code changes: the over-the-air update channel is keyed to the version, and an update published for an older build must not reach a newer one.
+
+### Debugging a build on a phone
+
+Settings → Debug logs shows one text report: the build commit, whether the on-device photo classifier is linked, permissions, changes waiting to sync, photo-log totals, recent passes, and the last 600 log lines (requests with status and timing, each photo's result, Apple Health wake-ups, errors). "Copy or share the report" opens the share sheet. The report holds no token, email address or photo. Log lines are written with `debugLog()` in `mobile/services/debugLog.ts`.
+
 ### API and website
 
 ```bash
