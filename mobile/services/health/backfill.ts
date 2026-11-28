@@ -13,7 +13,7 @@ export interface HealthBackfillResult {
   message: string;
 }
 
-export async function syncHealthHistory(db: SQLiteDatabase, days: number): Promise<HealthBackfillResult> {
+export async function syncHealthHistory(db: SQLiteDatabase, days: number, options?: { ask?: boolean }): Promise<HealthBackfillResult> {
   const provider = getHealthProvider();
   const window = Math.min(365, Math.max(1, Math.round(days)));
   if (provider.id !== "healthkit") {
@@ -25,7 +25,7 @@ export async function syncHealthHistory(db: SQLiteDatabase, days: number): Promi
       message: "Apple Health history import runs in the native iOS preview build. Expo Go does not include HealthKit.",
     };
   }
-  const permission = await provider.requestPermissions();
+  const permission = options?.ask === false ? await provider.getPermissionState() : await provider.requestPermissions();
   if (permission !== "authorized") {
     return { status: "denied", days: window, records: 0, workouts: 0, message: "Apple Health access is off. Enable weight, calories, steps, and workouts." };
   }

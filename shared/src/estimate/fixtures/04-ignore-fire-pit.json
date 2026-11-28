@@ -1,0 +1,12 @@
+{
+  "assumption": "Nighttime patio with a lit fire pit, string lights, and outdoor seating. There is no food and no exercise readout, so this is ignore and 0 kcal.",
+  "classification": "ignore",
+  "is_meal": false,
+  "confidence": 0.98,
+  "meal_name": null,
+  "suggested_meal_type": null,
+  "notes": "Outdoor fire pit, not food or a workout.",
+  "reason": "Fire pit and patio, no food and no workout.",
+  "burn_kcal": 0,
+  "items": []
+}

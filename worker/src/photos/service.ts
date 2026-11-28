@@ -1,6 +1,7 @@
 import {
   AnalyzePhotoMetadataSchema,
   PHOTO_LIMITS,
+  publishedEstimate,
   atwaterWarning,
   explicitPickReopens,
   isConfirmedMeal,
@@ -19,6 +20,8 @@ import {
   type PhotoUrlResponse,
 } from "@fitlogr/shared";
 import { VisionFailed, analyzeMealVision, visionConfigFromEnv, type VisionAttempt } from "../ai/openrouter";
+import { visionLimits } from "../config";
+import { getGoogleConnection } from "../db/accounts";
 import { getMeal } from "../db/meals";
 import { recomputeDailyIntake } from "../db/summaries";
 import type { Env } from "../env";
@@ -81,7 +84,7 @@ export async function analyzeUploadedPhoto(
     return duplicateResult(db, userId, metadata, match.photo_id, match.status, now);
   }
 
-  await enforceRateLimit(db, userId, now);
+  await enforceRateLimit(db, userId, now, visionLimits(env));
   const photoId = metadata.client_photo_id && /^[A-Za-z0-9_-]{8,80}$/.test(metadata.client_photo_id) ? metadata.client_photo_id : uuidv7(now.getTime());
   const config = visionConfigFromEnv(env);
   let analysis: MealVision;
@@ -115,11 +118,15 @@ export async function analyzeUploadedPhoto(
       googleStatus: "none",
       duplicateOf: null,
       stamp,
+      analysis,
     });
+    const estimate = publishedEstimate(analysis);
     return {
       status: 200,
       body: {
         outcome: "not_meal",
+        classification: analysis.classification,
+        estimate,
         photo: await photoReference(db, userId, photoId),
         meal: null,
       },
@@ -133,27 +140,29 @@ export async function analyzeUploadedPhoto(
   let albumId: string | null = null;
   let googleStatus: GooglePhotoStatus = "none";
   let reconnect = false;
-  try {
-    const uploaded = await uploadMealPhoto(
-      db,
-      env,
-      userId,
-      deps.fetch,
-      now,
-      file.bytes,
-      `${mealName} — ${totals.calories_kcal} kcal (fitlogr estimate)`,
-      `fitlogr-${photoId}.jpg`,
-    );
-    mediaItemId = uploaded.mediaItemId;
-    albumId = uploaded.albumId;
-    googleStatus = "uploaded";
-  } catch (error) {
-    if (error instanceof ApiError && error.code === "GOOGLE_QUOTA_EXCEEDED") googleStatus = "quota_exceeded";
-    else if (error instanceof ApiError && error.code === GOOGLE_RECONNECT) {
-      googleStatus = "failed";
-      reconnect = true;
-    } else if (error instanceof ApiError && error.code === "GOOGLE_UPSTREAM_ERROR") googleStatus = "failed";
-    else throw error;
+  if (await shouldUploadAlbum(db, userId, metadata.upload_to_google_photos)) {
+    try {
+      const uploaded = await uploadMealPhoto(
+        db,
+        env,
+        userId,
+        deps.fetch,
+        now,
+        file.bytes,
+        `${mealName} — ${totals.calories_kcal} kcal (fitlogr estimate)`,
+        `fitlogr-${photoId}.jpg`,
+      );
+      mediaItemId = uploaded.mediaItemId;
+      albumId = uploaded.albumId;
+      googleStatus = "uploaded";
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "GOOGLE_QUOTA_EXCEEDED") googleStatus = "quota_exceeded";
+      else if (error instanceof ApiError && error.code === GOOGLE_RECONNECT) {
+        googleStatus = "failed";
+        reconnect = true;
+      } else if (error instanceof ApiError && error.code === "GOOGLE_UPSTREAM_ERROR") googleStatus = "failed";
+      else throw error;
+    }
   }
 
   const notes = [analysis.notes, atwaterWarning(items)].filter((note): note is string => Boolean(note)).join(" ").slice(0, 500);
@@ -171,6 +180,7 @@ export async function analyzeUploadedPhoto(
     googleStatus,
     duplicateOf: null,
     stamp,
+    analysis,
   });
   await db
     .prepare(
@@ -234,6 +244,8 @@ export async function analyzeUploadedPhoto(
     status: 201,
     body: {
       outcome: "meal",
+      classification: analysis.classification,
+      estimate: publishedEstimate(analysis),
       photo: await photoReference(db, userId, photoId),
       meal: await getMeal(db, userId, mealId),
       ...(reconnect ? { google_reconnect_required: true } : {}),
@@ -335,6 +347,17 @@ export async function excludePhoto(db: D1Database, userId: string, photoId: stri
   return { photo_id: photoId, status: "excluded", meal_id: meal?.id ?? null };
 }
 
+/**
+ * Absent keeps today's album upload. True uploads only when the stored token has a Photos scope.
+ * False never calls Google Photos.
+ */
+async function shouldUploadAlbum(db: D1Database, userId: string, flag: boolean | undefined): Promise<boolean> {
+  if (flag === false) return false;
+  if (flag !== true) return true;
+  const connection = await getGoogleConnection(db, userId);
+  return connection.status === "active" && connection.scopes.some((scope) => scope.includes("photoslibrary"));
+}
+
 async function duplicateResult(
   db: D1Database,
   userId: string,
@@ -375,11 +398,16 @@ async function duplicateResult(
   };
 }
 
-async function enforceRateLimit(db: D1Database, userId: string, now: Date): Promise<void> {
+async function enforceRateLimit(
+  db: D1Database,
+  userId: string,
+  now: Date,
+  limits: { daily: number; burst: number },
+): Promise<void> {
   const dayWindowMs = 24 * 60 * 60 * 1000;
-  const daily = await countVision(db, userId, now, dayWindowMs, PHOTO_LIMITS.dailyVision);
-  const burst = await countVision(db, userId, now, PHOTO_LIMITS.burstWindowMs, PHOTO_LIMITS.burstVision);
-  if (daily.count < PHOTO_LIMITS.dailyVision && burst.count < PHOTO_LIMITS.burstVision) return;
+  const daily = await countVision(db, userId, now, dayWindowMs, limits.daily);
+  const burst = await countVision(db, userId, now, PHOTO_LIMITS.burstWindowMs, limits.burst);
+  if (daily.count < limits.daily && burst.count < limits.burst) return;
   await insertAi(db, {
     userId,
     model: "rate-limit",
@@ -393,8 +421,8 @@ async function enforceRateLimit(db: D1Database, userId: string, now: Date): Prom
     now,
   });
   const waits = [
-    daily.count >= PHOTO_LIMITS.dailyVision ? daily.retryAfterSeconds : 0,
-    burst.count >= PHOTO_LIMITS.burstVision ? burst.retryAfterSeconds : 0,
+    daily.count >= limits.daily ? daily.retryAfterSeconds : 0,
+    burst.count >= limits.burst ? burst.retryAfterSeconds : 0,
   ];
   throw new RateLimitError(Math.max(1, ...waits));
 }
@@ -505,7 +533,16 @@ async function insertPhoto(
     id: string;
     userId: string;
     deviceId: string | null;
-    metadata: { content_sha256: string; perceptual_hash?: string | null; captured_at: string; local_date: string; timezone: string; source?: string };
+    metadata: {
+      content_sha256: string;
+      perceptual_hash?: string | null;
+      captured_at: string;
+      local_date: string;
+      timezone: string;
+      source?: string;
+      on_device_verdict?: string;
+      on_device_labels?: { id: string; confidence: number }[];
+    };
     status: PhotoStatus;
     isMeal: boolean;
     confidence: number | null;
@@ -514,15 +551,19 @@ async function insertPhoto(
     googleStatus: GooglePhotoStatus;
     duplicateOf: string | null;
     stamp: string;
+    analysis?: MealVision;
   },
 ): Promise<void> {
+  const estimate = input.analysis ? JSON.stringify(publishedEstimate(input.analysis)) : null;
+  const labels = input.metadata.on_device_labels ? JSON.stringify(input.metadata.on_device_labels) : null;
   await db
     .prepare(
       `INSERT INTO photos (
          id, user_id, device_id, content_sha256, perceptual_hash, captured_at, local_date, timezone, source,
          status, is_meal, meal_confidence, google_media_item_id, google_album_id, google_status,
-         duplicate_of_photo_id, created_at, updated_at, deleted_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+         duplicate_of_photo_id, ai_classification, ai_estimate_json, device_verdict, device_labels_json,
+         created_at, updated_at, deleted_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
     )
     .bind(
       input.id,
@@ -541,6 +582,10 @@ async function insertPhoto(
       input.albumId,
       input.googleStatus,
       input.duplicateOf,
+      input.analysis?.classification ?? null,
+      estimate,
+      input.metadata.on_device_verdict ?? null,
+      labels,
       input.stamp,
       input.stamp,
     )

@@ -1,0 +1,37 @@
+{
+  "scene_check": "The image shows a pastry with jam and cream cheese filling on a small plate alongside a paper cup of latte with latte art on a wooden table.",
+  "console_windows": [],
+  "portion_notes": "The pastry is on a small white plate (~18 cm diameter), and the latte is in a standard cafe paper cup (~12 fl oz / 355 ml).",
+  "classification": "meal",
+  "is_meal": true,
+  "confidence": 0.99,
+  "meal_name": "Pastry and Latte",
+  "suggested_meal_type": "breakfast",
+  "notes": null,
+  "reason": "The photo shows edible food and a caloric beverage ready to be consumed.",
+  "burn_kcal": null,
+  "items": [
+    {
+      "name": "Daned pastry with jam and cream cheese",
+      "quantity": 1,
+      "unit": "piece",
+      "estimated_grams": 110,
+      "protein_g": 5,
+      "carbs_g": 52,
+      "fat_g": 14,
+      "calories_kcal": 354,
+      "confidence": 0.95
+    },
+    {
+      "name": "Latte with whole milk",
+      "quantity": 1,
+      "unit": "cup",
+      "estimated_grams": 355,
+      "protein_g": 8,
+      "carbs_g": 12,
+      "fat_g": 8,
+      "calories_kcal": 152,
+      "confidence": 0.95
+    }
+  ]
+}

@@ -15,7 +15,7 @@ export class AuthCancelled extends Error {
   }
 }
 
-export async function signInWithGoogle(options?: { includePickerScope?: boolean }) {
+export async function signInWithGoogle() {
   const verifierBytes = await Crypto.getRandomBytesAsync(32);
   const verifier = bytesToBase64Url(verifierBytes);
   const digest = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, verifier, {
@@ -34,7 +34,7 @@ export async function signInWithGoogle(options?: { includePickerScope?: boolean 
     client_challenge: challenge,
     timezone: deviceTimeZone(),
     device,
-    include_picker_scope: options?.includePickerScope === true,
+    include_photos_scopes: false,
   });
   WebBrowser.maybeCompleteAuthSession();
   const result = await WebBrowser.openAuthSessionAsync(started.authorize_url, redirectUri);

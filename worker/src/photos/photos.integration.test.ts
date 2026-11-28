@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { totalsFromVisionItems } from "@fitlogr/shared";
+import { PHOTO_LIMITS, totalsFromVisionItems } from "@fitlogr/shared";
 import { GOOGLE_SCOPES } from "../config";
 import { bytesToBase64Url, encodeUtf8, jsonToBase64Url, sha256Base64Url, sha256Hex } from "../encoding";
 import { createApp } from "../app";
@@ -29,7 +29,8 @@ let database: D1Database;
 let pending: { nonce: string; sub: string; email: string; name: string; refreshToken: string } | null = null;
 let refreshMode: "ok" | "revoked" = "ok";
 let mediaMode: "ok" | "missing" | "quota" = "ok";
-let visionMode: "meal" | "not_meal" | "bad_json" = "meal";
+let visionMode: "meal" | "not_meal" | "workout" | "ignore" | "bad_json" = "meal";
+let burstLimit: string | undefined;
 let openRouterCalls = 0;
 let uploadCalls = 0;
 let batchCalls = 0;
@@ -55,6 +56,7 @@ beforeEach(() => {
   refreshMode = "ok";
   mediaMode = "ok";
   visionMode = "meal";
+  burstLimit = undefined;
   openRouterCalls = 0;
   uploadCalls = 0;
   batchCalls = 0;
@@ -144,8 +146,10 @@ describe("meal photo analysis", () => {
     expect(body.meal).toBeNull();
     expect(body.photo.google_media_item_id).toBeNull();
     expect(uploadCalls).toBe(0);
-    const row = await database.prepare("SELECT status, google_status FROM photos WHERE id = ?").bind(body.photo.id).first<{ status: string; google_status: string }>();
-    expect(row).toEqual({ status: "analyzed_non_meal", google_status: "none" });
+    const row = await database.prepare("SELECT status, google_status, ai_classification FROM photos WHERE id = ?").bind(body.photo.id).first<{ status: string; google_status: string; ai_classification: string }>();
+    expect(row).toEqual({ status: "analyzed_non_meal", google_status: "none", ai_classification: "ignore" });
+    expect(body.classification).toBe("ignore");
+    expect(body.outcome).toBe("not_meal");
     const meals = await database.prepare("SELECT COUNT(*) AS n FROM meals").first<{ n: number }>();
     expect(meals?.n).toBe(0);
 
@@ -241,6 +245,87 @@ describe("meal photo analysis", () => {
     expect((await replay.json()).results[0].status).toBe("excluded");
   });
 
+  it("skips Google Photos when the phone opts out, and still uploads when the flag is absent", async () => {
+    const user = await signIn("optout");
+    await consent(user.access_token);
+    const optedOut = await analyze(user.access_token, jpeg(8), "00000000000000ff", { upload_to_google_photos: false });
+    expect(optedOut.status).toBe(201);
+    const saved = await optedOut.json();
+    expect(saved.outcome).toBe("meal");
+    expect(saved.photo.google_media_item_id).toBeNull();
+    expect(saved.photo.google_status).toBe("none");
+    expect(saved.google_reconnect_required).toBeUndefined();
+    expect(uploadCalls).toBe(0);
+    const album = await database.prepare("SELECT COUNT(*) AS n FROM user_google_photos WHERE user_id = ?").bind(user.userId).first<{ n: number }>();
+    expect(album?.n).toBe(0);
+
+    const legacy = await analyze(user.access_token, jpeg(9), "ffffffffffffffff");
+    expect(legacy.status).toBe(201);
+    expect((await legacy.json()).photo.google_status).toBe("uploaded");
+    expect(uploadCalls).toBe(1);
+  });
+
+  it("does not upload when the phone asks but the token has no Photos scope", async () => {
+    const user = await signIn("scoped");
+    await consent(user.access_token);
+    await database.prepare("UPDATE user_oauth_tokens SET scopes = ? WHERE user_id = ?").bind("openid email profile", user.userId).run();
+    const skipped = await analyze(user.access_token, jpeg(10), "aaaaaaaaaaaaaaaa", { upload_to_google_photos: true });
+    expect(skipped.status).toBe(201);
+    const body = await skipped.json();
+    expect(body.outcome).toBe("meal");
+    expect(body.photo.google_status).toBe("none");
+    expect(body.google_reconnect_required).toBeUndefined();
+    expect(uploadCalls).toBe(0);
+  });
+
+  it("stores a workout and an ignore without logging them as meals", async () => {
+    const user = await signIn("classes");
+    await consent(user.access_token);
+    visionMode = "workout";
+    const workout = await analyze(user.access_token, jpeg(11), "0101010101010101", {
+      on_device_verdict: "workout",
+      on_device_labels: [{ id: "exercise_machine", confidence: 0.42 }],
+    });
+    expect(workout.status).toBe(200);
+    const workoutBody = await workout.json();
+    expect(workoutBody.outcome).toBe("not_meal");
+    expect(workoutBody.classification).toBe("workout");
+    expect(workoutBody.meal).toBeNull();
+    expect(workoutBody.estimate).toMatchObject({ kind: "workout", kcal: 420, confidence: 0.88 });
+    const workoutRow = await database
+      .prepare("SELECT status, ai_classification, ai_estimate_json, device_verdict, device_labels_json FROM photos WHERE id = ?")
+      .bind(workoutBody.photo.id)
+      .first<{ status: string; ai_classification: string; ai_estimate_json: string; device_verdict: string; device_labels_json: string }>();
+    expect(workoutRow?.status).toBe("analyzed_non_meal");
+    expect(workoutRow?.ai_classification).toBe("workout");
+    expect(JSON.parse(workoutRow?.ai_estimate_json ?? "{}").kcal).toBe(420);
+    expect(workoutRow?.device_verdict).toBe("workout");
+    expect(JSON.parse(workoutRow?.device_labels_json ?? "[]")).toEqual([{ id: "exercise_machine", confidence: 0.42 }]);
+    const meals = await database.prepare("SELECT COUNT(*) AS n FROM meals WHERE user_id = ?").bind(user.userId).first<{ n: number }>();
+    expect(meals?.n).toBe(0);
+
+    visionMode = "ignore";
+    const ignored = await analyze(user.access_token, jpeg(12), "1010101010101010");
+    expect(ignored.status).toBe(200);
+    const ignoredBody = await ignored.json();
+    expect(ignoredBody.outcome).toBe("not_meal");
+    expect(ignoredBody.classification).toBe("ignore");
+    expect(ignoredBody.estimate).toMatchObject({ kind: "ignore", kcal: 0 });
+    const ignoredRow = await database.prepare("SELECT ai_classification FROM photos WHERE id = ?").bind(ignoredBody.photo.id).first<{ ai_classification: string }>();
+    expect(ignoredRow?.ai_classification).toBe("ignore");
+  });
+
+  it("uses VISION_BURST_LIMIT when it is set", async () => {
+    const user = await signIn("burstenv");
+    await consent(user.access_token);
+    burstLimit = "1";
+    const first = await analyze(user.access_token, jpeg(13), "2222222222222222");
+    expect(first.status).toBe(201);
+    const second = await analyze(user.access_token, jpeg(14), "3333333333333333");
+    expect(second.status).toBe(429);
+    expect(second.headers.get("retry-after")).toBeTruthy();
+  });
+
   it("requires consent and enforces the daily analysis limit", async () => {
     const user = await signIn("limit");
     const blocked = await analyze(user.access_token, jpeg(7), "eeeeeeeeeeeeeeee");
@@ -250,7 +335,7 @@ describe("meal photo analysis", () => {
 
     await consent(user.access_token);
     const now = new Date().toISOString();
-    for (let index = 0; index < 30; index += 1) {
+    for (let index = 0; index < PHOTO_LIMITS.burstVision; index += 1) {
       await database
         .prepare(
           `INSERT INTO ai_requests (id, user_id, request_type, model, fallback_used, latency_ms, status, created_at)
@@ -309,8 +394,9 @@ async function consent(token: string) {
   expect(response.status).toBe(200);
 }
 
-async function analyze(token: string, image: Uint8Array, dhash: string) {
+async function analyze(token: string, image: Uint8Array, dhash: string, extra: Record<string, unknown> = {}) {
   const metadata = {
+    ...extra,
     content_sha256: await sha256HexBytes(image),
     perceptual_hash: dhash,
     captured_at: "2026-11-23T19:30:00.000Z",
@@ -374,6 +460,7 @@ function env() {
     TOKEN_ENCRYPTION_KEY: btoa("0123456789abcdef0123456789abcdef"),
     SESSION_SECRET: "test-session-secret-with-enough-entropy",
     OPENROUTER_API_KEY: "test-openrouter-key",
+    ...(burstLimit ? { VISION_BURST_LIMIT: burstLimit } : {}),
     OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1",
     OPENROUTER_VISION_MODEL: "google/gemini-2.5-flash-lite",
     OPENROUTER_VISION_FALLBACK_MODELS: "openai/gpt-4o-mini",
@@ -425,9 +512,29 @@ async function mockFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
     if (visionMode === "bad_json" && body.model === "google/gemini-2.5-flash-lite") {
       return Response.json({ choices: [{ message: { content: "not-json" } }], usage: { prompt_tokens: 11, completion_tokens: 1 } });
     }
-    if (visionMode === "not_meal") {
+    if (visionMode === "not_meal" || visionMode === "ignore") {
       return Response.json({
-        choices: [{ message: { content: JSON.stringify({ classification: "not_meal", is_meal: false, confidence: 0.9, meal_name: null, suggested_meal_type: null, notes: "A dog", items: [] }) } }],
+        choices: [{ message: { content: JSON.stringify({ classification: visionMode === "ignore" ? "ignore" : "not_meal", is_meal: false, confidence: 0.9, meal_name: null, suggested_meal_type: null, notes: "A dog", reason: "Not food", burn_kcal: null, items: [] }) } }],
+        usage: { prompt_tokens: 20, completion_tokens: 8, cost: 0.00002 },
+      });
+    }
+    if (visionMode === "workout") {
+      return Response.json({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              classification: "workout",
+              is_meal: false,
+              confidence: 0.88,
+              meal_name: null,
+              suggested_meal_type: null,
+              notes: null,
+              reason: "Treadmill console",
+              burn_kcal: 420,
+              items: [{ name: "Treadmill", quantity: 1, unit: "session", calories_kcal: 420, protein_g: 0, carbs_g: 0, fat_g: 0, confidence: 0.8 }],
+            }),
+          },
+        }],
         usage: { prompt_tokens: 20, completion_tokens: 8, cost: 0.00002 },
       });
     }

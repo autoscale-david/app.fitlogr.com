@@ -1,7 +1,10 @@
 import "react-native-gesture-handler";
-import { Stack } from "expo-router";
+import { router, Stack } from "expo-router";
+import { useEffect } from "react";
 import { StatusBar } from "expo-status-bar";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import "../services/engine/background";
+import { listenForNotificationOpens } from "../services/engine/notify";
 import { StoreProvider } from "../services/store";
 import { colors } from "../theme";
 
@@ -10,6 +13,7 @@ function modalRoute(name: string): boolean {
 }
 
 export default function RootLayout() {
+  useEffect(() => listenForNotificationOpens((date) => router.push({ pathname: "/", params: { date } })), []);
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }}>
       <StoreProvider>

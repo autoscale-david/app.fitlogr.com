@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { PHOTO_LIMITS } from "@fitlogr/shared";
 import { PICKER_SCOPE } from "../config";
 import { encryptSecret, oauthTokenAad } from "../crypto";
 import { issueSession } from "../auth/sessions";
@@ -242,7 +243,7 @@ describe("history import and maintenance", () => {
     expect(deletedSessions).toBe(0);
 
     // Fill the burst window so the next photo is rate limited.
-    for (let index = 0; index < 30; index += 1) {
+    for (let index = 0; index < PHOTO_LIMITS.burstVision; index += 1) {
       await database
         .prepare(
           `INSERT INTO ai_requests (id, user_id, request_type, model, latency_ms, status, created_at)

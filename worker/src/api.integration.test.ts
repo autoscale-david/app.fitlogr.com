@@ -44,6 +44,18 @@ beforeEach(() => {
 });
 
 describe("stage 2 API", () => {
+  it("asks only for name and email when the phone turns Photos scopes off", async () => {
+    const started = await post("/api/auth/google/start", {
+      redirect_uri: REDIRECT,
+      client_challenge: "b".repeat(43),
+      include_photos_scopes: false,
+      include_picker_scope: true,
+    });
+    expect(started.status).toBe(200);
+    const authorize = new URL((await started.json()).authorize_url);
+    expect(authorize.searchParams.get("scope")).toBe("openid email profile");
+  });
+
   it("reports db_ok when D1 can run SELECT 1", async () => {
     const response = await app.request("https://fitlogr.com/api/health", {}, env());
     expect(response.status).toBe(200);

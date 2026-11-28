@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
-import { router, useFocusEffect } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   dayDotStatus,
@@ -42,7 +42,18 @@ export default function LogScreen() {
   const insets = useSafeAreaInsets();
   const store = useStore();
   const today = localDateISO();
+  const params = useLocalSearchParams<{ date?: string }>();
   const [selected, setSelected] = useState(today);
+  useEffect(() => {
+    const date = typeof params.date === "string" ? params.date : "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) setSelected(date);
+  }, [params.date]);
+  useEffect(() => {
+    if (!store.ready) return;
+    void store.readLocal("setup_done").then((done) => {
+      if (done !== "1") router.replace("/setup");
+    });
+  }, [store.ready, store]);
   const [week, setWeek] = useState<Record<string, WeekDayStatus>>({});
   const [day, setDay] = useState<DayLog | null>(null);
   const [editing, setEditing] = useState<DayKey | null>(null);
@@ -175,6 +186,12 @@ export default function LogScreen() {
           </Pressable>
         ) : null}
       </View>
+
+      {store.calorieNotice ? (
+        <Pressable style={styles.banner} onPress={() => store.dismissCalorieNotice()} accessibilityRole="button">
+          <Text style={styles.bannerText}>{store.calorieNotice}</Text>
+        </Pressable>
+      ) : null}
 
       {endedBanner && goals ? (
         <View style={styles.banner}>

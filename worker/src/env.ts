@@ -17,4 +17,7 @@ export interface Env {
   APP_URL?: string;
   API_BASE_URL?: string;
   ENVIRONMENT?: string;
+  /** Override the rolling vision caps. Absent uses the defaults (40 per 5 minutes, 400 per day). */
+  VISION_BURST_LIMIT?: string;
+  VISION_DAILY_LIMIT?: string;
 }
